@@ -334,3 +334,48 @@ func TestFindRoutesForGateway_ManagedGatewayEnqueuesListenerSetRoutes(t *testing
 	require.Len(t, requests, 1)
 	assert.Equal(t, "via-ls", requests[0].Name)
 }
+
+// TestFindRoutesForGateway_SkipsListenerSetsOfOtherGateways pins that a Gateway
+// event enqueues only routes on its own ListenerSets: a route attached through
+// a ListenerSet of another Gateway is left out, whether the Gateway is ours or
+// not, even when it carries this controller's status.
+func TestFindRoutesForGateway_SkipsListenerSetsOfOtherGateways(t *testing.T) {
+	t.Parallel()
+
+	lsKind := gatewayv1.Kind(kindListenerSet)
+	refs := []gatewayv1.ParentReference{{Kind: &lsKind, Name: "elsewhere-ls"}}
+	route := HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "elsewhere", Namespace: "default"},
+		Spec:       gatewayv1.HTTPRouteSpec{CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: refs}},
+		Status: gatewayv1.HTTPRouteStatus{RouteStatus: gatewayv1.RouteStatus{Parents: []gatewayv1.RouteParentStatus{
+			parentStatusFor(refs[0], "default", testListenerSetController, metav1.ConditionTrue, string(gatewayv1.RouteReasonAccepted)),
+		}}},
+	}}
+
+	for _, className := range []string{managedGatewayClass().Name, "other-class"} {
+		t.Run(className, func(t *testing.T) {
+			t.Parallel()
+
+			gc := managedGatewayClass()
+			gw := &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+				Spec:       gatewayv1.GatewaySpec{GatewayClassName: gatewayv1.ObjectName(className)},
+			}
+			own := &gatewayv1.ListenerSet{
+				ObjectMeta: metav1.ObjectMeta{Name: "own-ls", Namespace: "default"},
+				Spec:       gatewayv1.ListenerSetSpec{ParentRef: gatewayv1.ParentGatewayReference{Name: "gw"}},
+			}
+			elsewhere := &gatewayv1.ListenerSet{
+				ObjectMeta: metav1.ObjectMeta{Name: "elsewhere-ls", Namespace: "default"},
+				Spec:       gatewayv1.ListenerSetSpec{ParentRef: gatewayv1.ParentGatewayReference{Name: "another-gw"}},
+			}
+			otherClass := &gatewayv1.GatewayClass{
+				ObjectMeta: metav1.ObjectMeta{Name: "other-class"},
+				Spec:       gatewayv1.GatewayClassSpec{ControllerName: "other.example.com/ctrl"},
+			}
+			cli := buildGatewayFakeClient(t, gc, otherClass, gw, own, elsewhere)
+
+			assert.Empty(t, FindRoutesForGateway(context.Background(), cli, gw, testListenerSetController, []Route{route}))
+		})
+	}
+}
