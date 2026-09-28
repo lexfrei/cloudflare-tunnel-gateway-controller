@@ -751,6 +751,33 @@ func TestProxyDeployment_NoWSIdleTimeoutEnvWhenUnset(t *testing.T) {
 	}
 }
 
+// TestProxyDeployment_AllowXOriginalHost pins that a per-Gateway plane trusts
+// X-Original-Host exactly when the operator turned it on for the controller,
+// and never otherwise: GatewayConfig has no field for it, so a tenant cannot.
+func TestProxyDeployment_AllowXOriginalHost(t *testing.T) {
+	t.Parallel()
+
+	envNamed := func(input *render.Input) []corev1.EnvVar {
+		var found []corev1.EnvVar
+
+		for _, env := range render.ProxyDeployment(input).Spec.Template.Spec.Containers[0].Env {
+			if env.Name == "PROXY_ALLOW_X_ORIGINAL_HOST" {
+				found = append(found, env)
+			}
+		}
+
+		return found
+	}
+
+	assert.Empty(t, envNamed(testInput("edge")),
+		"a plane must strip X-Original-Host unless the operator enabled it")
+
+	enabled := testInput("edge")
+	enabled.Defaults.AllowXOriginalHost = true
+	assert.Equal(t, []corev1.EnvVar{{Name: "PROXY_ALLOW_X_ORIGINAL_HOST", Value: "true"}}, envNamed(enabled),
+		"a plane must follow the operator's allowXOriginalHost like the shared plane does")
+}
+
 // TestConfigService_Shape pins the headless config Service: pod IPs published
 // before readiness (the controller pushes config to not-yet-ready pods —
 // readiness depends on that very config), Gateway-scoped selector.
