@@ -22,8 +22,8 @@ type dataPlaneClaim struct {
 	Key       string
 	Namespace string
 	// CreatedAt decides who keeps a plane when a namespace is over the cap:
-	// oldest first, so a tenant's newest Gateway never evicts one already
-	// serving.
+	// oldest first, so a Gateway created now never evicts one already serving.
+	// An older Gateway that opts in later does; see overQuotaGateways.
 	CreatedAt time.Time
 	// UID breaks ties between Gateways created within the same second, which
 	// Kubernetes timestamp granularity makes ordinary.
@@ -38,6 +38,14 @@ type dataPlaneClaim struct {
 // the previous behaviour. Ordering is total and independent of the input order,
 // so every layer that asks reaches the same verdict and repeated reconciles do
 // not flap between admitting and refusing the same Gateway.
+//
+// Ordering is by age alone, with no possession term like the one
+// tunnelownership.incumbent applies, so an older Gateway opting in later
+// displaces a newer one already serving. Possession guards a tunnel against
+// another namespace, and every contender for a slot is in the same namespace.
+// Age and UID never change, so the verdict depends only on which Gateways the
+// listing holds; a possession term would make it depend on Gateway status that
+// one of the layers reading it writes.
 func overQuotaGateways(capacity *int32, claims []dataPlaneClaim) map[string]bool {
 	if capacity == nil {
 		return nil
