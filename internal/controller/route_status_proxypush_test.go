@@ -105,3 +105,25 @@ func TestBuildParentStatus_ParentNotEvaluatedReason(t *testing.T) {
 	assert.Equal(t, metav1.ConditionFalse, pushed.Status)
 	assert.Equal(t, routeReasonParentNotEvaluated, pushed.Reason)
 }
+
+// TestBuildParentStatus_PushFailureReasonWinsOverParentNotEvaluated covers a
+// route that is left out in one partition while another partition's push
+// keeps failing: the condition must still say a push failed, since that is the
+// problem the route being left out does not explain.
+func TestBuildParentStatus_PushFailureReasonWinsOverParentNotEvaluated(t *testing.T) {
+	t.Parallel()
+
+	notEvaluated := proxyPushDiag("this route was left out of its data plane's config")
+	notEvaluated.Reason = routeReasonParentNotEvaluated
+
+	for _, diags := range [][]proxy.RouteDiagnostic{
+		{notEvaluated, proxyPushDiag("could not push config")},
+		{proxyPushDiag("could not push config"), notEvaluated},
+	} {
+		status := buildParentStatusForDiag(diags, 1)
+
+		pushed := findCondition(status.Conditions, routeConditionProxyConfigPushed)
+		require.NotNil(t, pushed)
+		assert.Equal(t, routeReasonProxyConfigPushFailed, pushed.Reason)
+	}
+}

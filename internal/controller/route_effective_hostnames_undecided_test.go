@@ -72,8 +72,8 @@ type undecidedParentCase struct {
 
 // undecidedParentCases are the ways a parentRef can fail to say whether it
 // lends the route a hostname: the Gateway or the ListenerSet cannot be read,
-// binding validation against either errors, or the ListenerSet's parent
-// Gateway cannot be read.
+// binding validation against either errors, the ListenerSet's parent Gateway
+// cannot be read, or that Gateway's allowedListeners cannot be evaluated.
 func undecidedParentCases() []undecidedParentCase {
 	ourHost := gatewayv1.Hostname("ours.example.com")
 	entryHost := gatewayv1.Hostname("ls.example.com")
@@ -144,6 +144,28 @@ func undecidedParentCases() []undecidedParentCase {
 					gatewayClassFor("our-class", skipTestControllerName),
 					allowingListenerSets(gatewayUnderClass("ours", "our-class", nil)),
 					listenerSet)
+			},
+			route: toListenerSet,
+		},
+		{
+			name: "listenerset acceptance evaluation errors",
+			cli: func(t *testing.T) client.Client {
+				t.Helper()
+
+				gateway := gatewayUnderClass("ours", "our-class", nil)
+				gateway.Spec.AllowedListeners = &gatewayv1.AllowedListeners{
+					Namespaces: &gatewayv1.ListenerNamespaces{
+						From: new(gatewayv1.NamespacesFromSelector),
+						Selector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{
+							{Key: "team", Operator: "NotAnOperator"},
+						}},
+					},
+				}
+
+				return buildGatewayFakeClient(t,
+					gatewayClassFor("our-class", skipTestControllerName),
+					gateway,
+					listenerSetUnder("ls", "ours", &entryHost))
 			},
 			route: toListenerSet,
 		},
