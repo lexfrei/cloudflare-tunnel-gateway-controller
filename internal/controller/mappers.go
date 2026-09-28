@@ -880,7 +880,7 @@ func IsRouteAcceptedByGateway(
 	for _, ref := range route.GetParentRefs() {
 		binding, err := resolveRouteParentBinding(ctx, cli, validator, controllerName, ref, route.GetNamespace(), withRefFilters(routeInfoTemplate, ref), views)
 		if err != nil {
-			logging.FromContext(ctx).Error("failed to validate route binding",
+			logging.FromContext(ctx).Debug("failed to validate route binding",
 				"route", route.GetNamespace()+"/"+route.GetName(),
 				"error", err)
 
