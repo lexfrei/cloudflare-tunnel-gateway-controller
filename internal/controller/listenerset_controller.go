@@ -198,10 +198,12 @@ func (r *ListenerSetReconciler) reconcileStatus(
 		var entries []gatewayv1.ListenerEntryStatus
 
 		if acceptance.Accepted || acceptance.Reason == gatewayv1.ListenerSetReasonListenersNotValid {
-			// Either the ListenerSet is fully accepted, or it's been
-			// rejected only because individual entries failed (conflict or
-			// bad refs). Either way, the per-entry status is what users
-			// need — surface it from the merge view + refChecks.
+			// ListenersNotValid is an entry-level verdict, with Accepted
+			// True while some entry is usable and False when none is: the
+			// entries conflict, have unresolved refs, use an unservable
+			// protocol or have an invalid allowedRoutes selector. Then, as
+			// when fully accepted, the per-entry status is what users need
+			// — surface it from the merge view + refChecks.
 			entries = buildListenerSetEntryStatuses(&fresh, acceptance, fresh.Generation, now)
 		} else {
 			// Resource-level rejection (NotAllowed / Pending / Invalid) —
@@ -718,8 +720,9 @@ func buildListenerSetEntryStatuses(
 
 // buildListenerSetRejectedEntryStatuses produces a uniform per-entry status
 // when the ListenerSet has been rejected at the resource level (allowedListeners
-// said no, or all entries conflicted). Every entry reports the same reason
-// for clarity in `kubectl describe`.
+// said no, or the parent state is Pending). Every entry reports the same reason
+// for clarity in `kubectl describe`. A ListenersNotValid rejection is built per
+// entry by buildListenerSetEntryStatuses instead.
 func buildListenerSetRejectedEntryStatuses(
 	listenerSet *gatewayv1.ListenerSet,
 	result listenerSetAcceptanceResult,
@@ -966,8 +969,9 @@ func acceptedEntryConditions(
 	programmedReason := string(gatewayv1.ListenerReasonProgrammed)
 	programmedMessage := listenerMsgProgrammed
 
-	// An unservable protocol or an unresolved ref both mean the entry is not
-	// programmed; the protocol rejection is the more fundamental of the two.
+	// An unservable protocol, an invalid allowedRoutes selector or an
+	// unresolved ref each mean the entry is not programmed; the Accepted=False
+	// verdict of the first two is more fundamental than the ref.
 	switch {
 	case acceptedCondition.Status == metav1.ConditionFalse:
 		programmedStatus = metav1.ConditionFalse
