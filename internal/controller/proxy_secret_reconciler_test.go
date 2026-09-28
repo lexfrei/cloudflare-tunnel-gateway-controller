@@ -498,3 +498,70 @@ func TestProxySecretReconciler_UnrecordedDeploymentPredicate(t *testing.T) {
 	assert.False(t, pred.Update(update(recordedOnTemplate)),
 		"a revision stamped on the pod template counts as recorded")
 }
+
+// gatewayOwnedDeployment returns a proxy-labelled Deployment controlled by a
+// Gateway, the shape a per-Gateway data plane renders to.
+func gatewayOwnedDeployment(revision string) *appsv1.Deployment {
+	isController := true
+
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tenant-gw-proxy",
+			Namespace: "cloudflare-tunnel-system",
+			Labels:    map[string]string{"app.kubernetes.io/component": "proxy"},
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: "gateway.networking.k8s.io/v1",
+				Kind:       "Gateway",
+				Name:       "tenant-gw",
+				UID:        "gateway-uid",
+				Controller: &isController,
+			}},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{tokenRevisionAnnotation: revision},
+				},
+			},
+		},
+	}
+}
+
+// TestProxySecretReconciler_SkipsGatewayOwnedDeployment pins that a rotation
+// of the shared tunnel token leaves a per-Gateway data plane alone even when
+// it sits in the token Secret's namespace and carries the proxy label: that
+// plane reads its own token Secret, so rolling it restarts it for nothing.
+func TestProxySecretReconciler_SkipsGatewayOwnedDeployment(t *testing.T) {
+	t.Parallel()
+
+	stale := hashSecretData(map[string][]byte{"tunnel-token": []byte("previous-jwt")})
+	dep := gatewayOwnedDeployment(stale)
+	ownerRefs := dep.OwnerReferences
+
+	got := reconcileTokenSecret(t, map[string][]byte{"tunnel-token": []byte("rotated-jwt")}, dep)
+	require.Equal(t, ownerRefs, got.OwnerReferences, "the fixture must still be Gateway-owned")
+
+	assert.Equal(t, stale, got.Spec.Template.Annotations[tokenRevisionAnnotation],
+		"a Gateway-owned Deployment must not be rolled by the shared token")
+	assert.NotContains(t, got.Annotations, tokenRevisionAnnotation,
+		"a Gateway-owned Deployment must not have a shared-token revision recorded")
+}
+
+// TestProxySecretReconciler_PredicateSkipsGatewayOwnedDeployment pins that a
+// per-Gateway Deployment's events do not enqueue the shared token Secret.
+func TestProxySecretReconciler_PredicateSkipsGatewayOwnedDeployment(t *testing.T) {
+	t.Parallel()
+
+	r := &ProxySecretReconciler{
+		TokenSecretNamespace: "cloudflare-tunnel-system",
+		TokenSecretName:      "cloudflare-tunnel-token",
+		DeploymentLabelKey:   "app.kubernetes.io/component",
+		DeploymentLabelValue: "proxy",
+	}
+
+	dep := gatewayOwnedDeployment("")
+	dep.Spec.Template.Annotations = nil
+
+	assert.False(t, r.matchesUnrecordedProxyDeployment().Create(event.CreateEvent{Object: dep}),
+		"a Gateway-owned Deployment must not enqueue the shared token Secret")
+}
