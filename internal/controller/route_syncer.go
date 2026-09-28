@@ -1992,10 +1992,12 @@ func (s *RouteSyncer) bindOneParent(
 		logger.Error("failed to resolve route parentRef",
 			"route", routeNamespace+"/"+routeName, "refIdx", refIdx, "error", err)
 
+		// The error stays in the log: it can quote the parent Gateway's spec,
+		// which the route's authors may not be allowed to read.
 		bindingInfo.bindingResults[refIdx] = routebinding.BindingResult{
 			Accepted: false,
 			Reason:   gatewayv1.RouteReasonPending,
-			Message:  truncateConditionMessage("The controller could not evaluate this parent: " + err.Error()),
+			Message:  "The controller could not evaluate this parent; the controller log names the error",
 		}
 
 		return true, false
