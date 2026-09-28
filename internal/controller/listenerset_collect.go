@@ -128,13 +128,9 @@ func listenerSetEntriesAccepted(
 ) bool {
 	for i := range listenerSet.Spec.Listeners {
 		entry := &listenerSet.Spec.Listeners[i]
-		mergedEntry := findMergedEntry(merged, listenerSet, entry.Name)
 
-		if mergedEntry != nil && mergedEntry.ConflictReason != "" {
-			continue
-		}
-
-		if !servableListenerProtocol(entry.Protocol) || routebinding.NamespaceSelectorInvalid(entry.AllowedRoutes) {
+		// Refs are resolved only for an entry that passes the other checks.
+		if listenerSetEntryProblem(merged, listenerSet, entry, nil) != "" {
 			continue
 		}
 
