@@ -305,6 +305,8 @@ func Run(ctx context.Context, cfg *Config) error {
 		return err
 	}
 
+	logInstalledSchemaGaps(ctx, mgr.GetAPIReader(), logger)
+
 	// Create metrics collector and register with controller-runtime
 	metricsCollector := cfmetrics.NewCollector(ctrlMetrics.Registry)
 

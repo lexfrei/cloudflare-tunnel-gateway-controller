@@ -274,6 +274,19 @@ func listenerSetParentGateway(
 	cli client.Client,
 	listenerSet *gatewayv1.ListenerSet,
 ) (*gatewayv1.Gateway, bool) {
+	gateway, err := getListenerSetParentGateway(ctx, cli, listenerSet)
+
+	return gateway, err == nil
+}
+
+// getListenerSetParentGateway reads the ListenerSet's parent Gateway and
+// returns the read error, so a caller can tell an absent parent from one that
+// could not be read.
+func getListenerSetParentGateway(
+	ctx context.Context,
+	cli client.Client,
+	listenerSet *gatewayv1.ListenerSet,
+) (*gatewayv1.Gateway, error) {
 	parentNamespace := listenerSet.Namespace
 	if listenerSet.Spec.ParentRef.Namespace != nil && *listenerSet.Spec.ParentRef.Namespace != "" {
 		parentNamespace = string(*listenerSet.Spec.ParentRef.Namespace)
@@ -283,10 +296,10 @@ func listenerSetParentGateway(
 
 	key := client.ObjectKey{Name: string(listenerSet.Spec.ParentRef.Name), Namespace: parentNamespace}
 	if err := cli.Get(ctx, key, &gateway); err != nil {
-		return nil, false
+		return nil, errors.Wrap(err, "reading ListenerSet parent Gateway")
 	}
 
-	return &gateway, true
+	return &gateway, nil
 }
 
 // gatewayIsManaged is route acceptance's reading of classifyGatewayClass: only

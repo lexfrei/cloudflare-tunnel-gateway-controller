@@ -1142,7 +1142,7 @@ func (s *ProxySyncer) buildProxyConfig(
 	// bound listener covers is dropped (→ 404), and a route with no hostnames
 	// inherits the listener's hostname instead of becoming a catch-all. Rewrite
 	// in-memory before handing to the converter; the input routes are untouched.
-	routes = withEffectiveHostnames(ctx, s.k8sClient, s.controllerName, routes, views)
+	routes, undecided := withEffectiveHostnames(ctx, s.k8sClient, s.controllerName, routes, views)
 
 	// A RequestRedirect filter that leaves scheme empty must default to the
 	// scheme of the request, which behind the tunnel means the parent
@@ -1156,6 +1156,7 @@ func (s *ProxySyncer) buildProxyConfig(
 	// protocol resolution (e.g. h2c from Service appProtocol), and
 	// BackendTLSPolicy lookup for the proxy → backend TLS hop.
 	cfg := proxy.ConvertHTTPRoutes(ctx, routes, s.clusterDomain, s.backendValidator, s.protocolResolver, s.tlsResolver, s.gatewayCertResolver)
+	cfg.Diagnostics = append(cfg.Diagnostics, undecided...)
 
 	// Mark each invalid backendRef (a nonexistent Service) so the proxy returns
 	// 500 for that backend's traffic fraction instead of dialing a dead address
@@ -1175,7 +1176,7 @@ func (s *ProxySyncer) buildProxyConfig(
 		// is dropped, and a route with no hostnames inherits the listener's
 		// hostname instead of becoming a catch-all answering every Host
 		// (including hostnames owned by other routes).
-		grpcRoutes = withEffectiveHostnamesGRPC(ctx, s.k8sClient, s.controllerName, grpcRoutes, views)
+		grpcRoutes, undecided = withEffectiveHostnamesGRPC(ctx, s.k8sClient, s.controllerName, grpcRoutes, views)
 
 		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator, s.protocolResolver, s.tlsResolver, s.gatewayCertResolver)
 		cfg.Rules = append(cfg.Rules, grpcCfg.Rules...)
@@ -1183,6 +1184,7 @@ func (s *ProxySyncer) buildProxyConfig(
 		// shadow detection below attributes every flattened rule correctly.
 		cfg.Provenance = append(cfg.Provenance, grpcCfg.Provenance...)
 		cfg.Diagnostics = append(cfg.Diagnostics, grpcCfg.Diagnostics...)
+		cfg.Diagnostics = append(cfg.Diagnostics, undecided...)
 
 		// Mark invalid gRPC backendRefs the same way as HTTP. Matching is by
 		// service host:port across all rules, so no rule-offset bookkeeping is
