@@ -447,6 +447,16 @@ func buildShadowedCondition(
 // tunnelSharedReason picks the TunnelShared condition reason: across
 // namespaces when any of the route's shares crosses one, since that is the
 // share that crosses a tenant boundary, within one namespace otherwise.
+func tunnelSharedReason(diagnostics []proxy.RouteDiagnostic) string {
+	for _, diag := range diagnostics {
+		if diag.Target == proxy.DiagnosticTunnelShared && diag.Reason == routeReasonTunnelSharedAcrossNamespaces {
+			return routeReasonTunnelSharedAcrossNamespaces
+		}
+	}
+
+	return routeReasonTunnelSharedWithinNamespace
+}
+
 // proxyConfigPushedReason names why ProxyConfigPushed is False: a failed push,
 // unless every diagnostic behind it is a route left out over its parents.
 func proxyConfigPushedReason(diagnostics []proxy.RouteDiagnostic) string {
@@ -457,16 +467,6 @@ func proxyConfigPushedReason(diagnostics []proxy.RouteDiagnostic) string {
 	}
 
 	return routeReasonParentNotEvaluated
-}
-
-func tunnelSharedReason(diagnostics []proxy.RouteDiagnostic) string {
-	for _, diag := range diagnostics {
-		if diag.Target == proxy.DiagnosticTunnelShared && diag.Reason == routeReasonTunnelSharedAcrossNamespaces {
-			return routeReasonTunnelSharedAcrossNamespaces
-		}
-	}
-
-	return routeReasonTunnelSharedWithinNamespace
 }
 
 // buildDiagnosticCondition aggregates the messages of all diagnostics with the

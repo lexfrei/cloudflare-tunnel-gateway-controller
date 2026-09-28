@@ -440,10 +440,9 @@ func gatewayOwnedElsewhere(
 // Whose a ListenerSet is follows from its PARENT Gateway's GatewayClass, since
 // a ListenerSet names no class of its own. An absent parent is programmed by
 // nobody, so it excludes the ListenerSet unless controllerName is empty. A
-// parent whose read failed returns the error: it is neither ours nor someone
-// else's. A failed acceptance evaluation keeps the ListenerSet: dropping it
-// could leave a hostname-less route with nothing to narrow it to, and such a
-// route answers every Host.
+// parent whose read failed, or whose allowedListeners cannot be evaluated,
+// returns the error: neither answers whether the ListenerSet is served, and
+// route acceptance refuses the parentRef on the same evaluation error.
 func listenerSetExcluded(
 	ctx context.Context,
 	cli client.Client,
@@ -465,8 +464,11 @@ func listenerSetExcluded(
 	}
 
 	acceptance, err := validator.EvaluateListenerSetAcceptance(ctx, parent, listenerSet)
+	if err != nil {
+		return false, errors.Wrap(err, "evaluating ListenerSet acceptance")
+	}
 
-	return err == nil && !acceptance.Accepted, nil
+	return !acceptance.Accepted, nil
 }
 
 // nonConflictedSections drops, from sections, any matched listener whose
