@@ -379,3 +379,42 @@ func TestFindRoutesForGateway_SkipsListenerSetsOfOtherGateways(t *testing.T) {
 		})
 	}
 }
+
+// TestFindRoutesForGateway_ListenerSetListErrorKeepsDirectRoutes pins the
+// failure path of the ListenerSet lookup: when ListenerSets cannot be listed,
+// the routes naming the Gateway directly are still enqueued and the routes
+// attached only through a ListenerSet are left for the next event.
+func TestFindRoutesForGateway_ListenerSetListErrorKeepsDirectRoutes(t *testing.T) {
+	t.Parallel()
+
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "default"},
+		Spec:       gatewayv1.ListenerSetSpec{ParentRef: gatewayv1.ParentGatewayReference{Name: "other-gw"}},
+	}
+	cli := staleStatusClient(t, interceptor.Funcs{
+		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if _, ok := list.(*gatewayv1.ListenerSetList); ok {
+				return assert.AnError
+			}
+
+			return c.List(ctx, list, opts...)
+		},
+	}, ls)
+
+	var gateway gatewayv1.Gateway
+	require.NoError(t, cli.Get(context.Background(), types.NamespacedName{Name: "other-gw", Namespace: "default"}, &gateway))
+
+	direct := HTTPRouteWrapper{&gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "direct", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{CommonRouteSpec: gatewayv1.CommonRouteSpec{
+			ParentRefs: []gatewayv1.ParentReference{{Name: "other-gw"}},
+		}},
+		Status: gatewayv1.HTTPRouteStatus{RouteStatus: staleParentStatus()},
+	}}
+
+	routes := append([]Route{direct}, listenerSetStaleRoutes()...)
+
+	requests := FindRoutesForGateway(context.Background(), cli, &gateway, staleStatusController, routes)
+	require.Len(t, requests, 1)
+	assert.Equal(t, "direct", requests[0].Name)
+}
