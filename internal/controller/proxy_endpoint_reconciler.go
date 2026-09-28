@@ -95,8 +95,9 @@ func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Non-fatal: the next endpoint-change event (or the next HTTPRoute
-	// reconcile) gets another chance. A failure surfaces as an error so
-	// controller-runtime exponentially backs off.
+	// reconcile) gets another chance. A superseded replay requeues shortly;
+	// any other failure surfaces as an error so controller-runtime
+	// exponentially backs off.
 	return replayResult(r.ProxySyncer.ResyncEndpoints(ctx, r.ProxyEndpoints), "resync proxy endpoints")
 }
 
