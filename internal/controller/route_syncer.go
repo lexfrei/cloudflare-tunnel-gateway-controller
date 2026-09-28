@@ -236,9 +236,9 @@ func (sr *SyncResult) httpStatusEntries(
 	diagnostics []proxy.RouteDiagnostic,
 	updateFn func(ctx context.Context, route *gatewayv1.HTTPRoute, bi routeBindingInfo, fr []ingress.BackendRefError, diags []proxy.RouteDiagnostic, se error) error,
 ) []routeStatusEntry {
-	entries := buildStatusEntries(sr.HTTPRoutes, sr.HTTPRouteBindings, sr.HTTPFailedRefs, diagnostics, updateFn)
+	entries := buildStatusEntries(kindHTTPRouteDiag, sr.HTTPRoutes, sr.HTTPRouteBindings, sr.HTTPFailedRefs, diagnostics, updateFn)
 	// Rejected routes have no failed refs — they were rejected at binding level.
-	entries = append(entries, buildStatusEntries(sr.RejectedHTTPRoutes, sr.HTTPRouteBindings, nil, nil, updateFn)...)
+	entries = append(entries, buildStatusEntries(kindHTTPRouteDiag, sr.RejectedHTTPRoutes, sr.HTTPRouteBindings, nil, nil, updateFn)...)
 
 	return entries
 }
@@ -249,8 +249,8 @@ func (sr *SyncResult) grpcStatusEntries(
 	diagnostics []proxy.RouteDiagnostic,
 	updateFn func(ctx context.Context, route *gatewayv1.GRPCRoute, bi routeBindingInfo, fr []ingress.BackendRefError, diags []proxy.RouteDiagnostic, se error) error,
 ) []routeStatusEntry {
-	entries := buildStatusEntries(sr.GRPCRoutes, sr.GRPCRouteBindings, sr.GRPCFailedRefs, diagnostics, updateFn)
-	entries = append(entries, buildStatusEntries(sr.RejectedGRPCRoutes, sr.GRPCRouteBindings, nil, nil, updateFn)...)
+	entries := buildStatusEntries(kindGRPCRouteDiag, sr.GRPCRoutes, sr.GRPCRouteBindings, sr.GRPCFailedRefs, diagnostics, updateFn)
+	entries = append(entries, buildStatusEntries(kindGRPCRouteDiag, sr.RejectedGRPCRoutes, sr.GRPCRouteBindings, nil, nil, updateFn)...)
 
 	return entries
 }
@@ -260,8 +260,10 @@ type routeObject interface {
 	gatewayv1.HTTPRoute | gatewayv1.GRPCRoute
 }
 
-// buildStatusEntries creates routeStatusEntry slice from any route type.
+// buildStatusEntries creates routeStatusEntry slice from any route type. kind
+// is the RouteDiagnostic.Kind of T, which selects the route's own diagnostics.
 func buildStatusEntries[T routeObject](
+	kind string,
 	routes []T,
 	bindings map[string]routeBindingInfo,
 	failedRefs []ingress.BackendRefError,
@@ -290,7 +292,7 @@ func buildStatusEntries[T routeObject](
 			namespace:   namespace,
 			bindingInfo: bindings[routeKey],
 			failedRefs:  filterFailedRefs(failedRefs, namespace, name),
-			diagnostics: filterDiagnostics(diagnostics, namespace, name),
+			diagnostics: filterDiagnostics(diagnostics, kind, namespace, name),
 			update: func(ctx context.Context, bi routeBindingInfo, fr []ingress.BackendRefError, diags []proxy.RouteDiagnostic, se error) error {
 				return updateFn(ctx, route, bi, fr, diags, se)
 			},
@@ -391,9 +393,9 @@ func syncAndUpdateStatusCommon(ctx context.Context, params *syncUpdateParams) (c
 }
 
 // syncOutcome folds a sync's push outcome into what the reconcile returns: a
-// lost push race and a route left out because a parent could not be evaluated
-// each request a requeue, a sync error propagates unless a requeue interval is
-// already set, and a status update error propagates last.
+// lost push race and a route parent that could not be evaluated each request
+// a requeue, a sync error propagates unless a requeue interval is already set,
+// and a status update error propagates last.
 func syncOutcome(
 	result ctrl.Result,
 	lostRace bool,
@@ -462,6 +464,7 @@ func partitionRouteDiagnostics(
 
 	for i := range partition.HTTPRoutes {
 		diags = append(diags, proxy.RouteDiagnostic{
+			Kind:      kindHTTPRouteDiag,
 			Namespace: partition.HTTPRoutes[i].Namespace,
 			Name:      partition.HTTPRoutes[i].Name,
 			Target:    target,
@@ -472,6 +475,7 @@ func partitionRouteDiagnostics(
 
 	for i := range partition.GRPCRoutes {
 		diags = append(diags, proxy.RouteDiagnostic{
+			Kind:      kindGRPCRouteDiag,
 			Namespace: partition.GRPCRoutes[i].Namespace,
 			Name:      partition.GRPCRoutes[i].Name,
 			Target:    target,
@@ -664,17 +668,19 @@ func withLostRacePushRequeue(result ctrl.Result, lostRace bool) ctrl.Result {
 	return result
 }
 
-// withParentNotEvaluatedRequeue requests a retry when a route was left out of
-// the proxy config because a parent could not be evaluated and no other
-// parent lent it a hostname. The sync that left it out succeeded, so without
-// a requeue the route would stay unserved until an unrelated event re-ran it.
-// A pending requeue due sooner is kept.
+// withParentNotEvaluatedRequeue requests a retry when a parent of a route
+// could not be evaluated, so the route serves only the hostnames its other
+// parents lend, or none. The sync that narrowed it succeeded, so without a
+// requeue the missing hostnames would stay unserved until an unrelated event
+// re-ran it. A pending requeue due sooner is kept.
 func withParentNotEvaluatedRequeue(result ctrl.Result, diagnostics []proxy.RouteDiagnostic) ctrl.Result {
 	if result.RequeueAfter > 0 && result.RequeueAfter <= apiErrorRequeueDelay {
 		return result
 	}
 
-	for _, diag := range diagnostics {
+	for i := range diagnostics {
+		diag := &diagnostics[i]
+
 		if diag.Target == proxy.DiagnosticProxyConfigPush && diag.Reason == routeReasonParentNotEvaluated {
 			result.RequeueAfter = apiErrorRequeueDelay
 

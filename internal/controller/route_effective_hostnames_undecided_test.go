@@ -13,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/events"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -237,12 +238,14 @@ func assertParentNotEvaluated(t *testing.T, diags []proxy.RouteDiagnostic) {
 	assert.Equal(t, "r", diags[0].Name)
 	assert.Equal(t, proxy.DiagnosticProxyConfigPush, diags[0].Target)
 	assert.Equal(t, routeReasonParentNotEvaluated, diags[0].Reason)
-	assert.NotEmpty(t, diags[0].Message)
+	assert.Contains(t, diags[0].Message, "serves no requests", "the message says the route is not served at all")
 }
 
 // TestWithEffectiveHostnames_UndecidedParentBesideAnAcceptingOne pins that one
 // undecided parent does not take the route down when another parent lends it a
-// hostname: the route serves what is known to be accepted.
+// hostname: the route serves what is known to be accepted. The hostnames the
+// undecided parent might lend are missing meanwhile, so the route is reported
+// as ParentNotEvaluated, which also requeues the sync that brings them back.
 func TestWithEffectiveHostnames_UndecidedParentBesideAnAcceptingOne(t *testing.T) {
 	t.Parallel()
 
@@ -261,7 +264,51 @@ func TestWithEffectiveHostnames_UndecidedParentBesideAnAcceptingOne(t *testing.T
 	out, diags := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{ourHost}, out[0].Spec.Hostnames)
-	assert.Empty(t, diags, "a route that is still served is not reported as left out")
+	assertPartiallyServed(t, diags, kindHTTPRouteDiag)
+}
+
+// TestWithEffectiveHostnamesGRPC_UndecidedParentBesideAnAcceptingOne is the
+// GRPCRoute twin.
+func TestWithEffectiveHostnamesGRPC_UndecidedParentBesideAnAcceptingOne(t *testing.T) {
+	t.Parallel()
+
+	ourHost := gatewayv1.Hostname("ours.example.com")
+	otherHost := gatewayv1.Hostname("other.example.com")
+
+	cli := buildGatewayFakeClient(t,
+		gatewayClassFor("our-class", skipTestControllerName),
+		gatewayUnderClass("ours", "our-class", &ourHost),
+		invalidSelectorGateway("broken", &otherHost),
+	)
+
+	route := &gatewayv1.GRPCRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "team"},
+		Spec: gatewayv1.GRPCRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: parentRefsToGateways("ours", "broken")},
+		},
+	}
+
+	out, diags := withEffectiveHostnamesGRPC(context.Background(), cli, skipTestControllerName, []*gatewayv1.GRPCRoute{route}, nil)
+	require.Len(t, out, 1)
+	assert.Equal(t, []gatewayv1.Hostname{ourHost}, out[0].Spec.Hostnames)
+	assertPartiallyServed(t, diags, kindGRPCRouteDiag)
+}
+
+// assertPartiallyServed checks the report for a route that still serves the
+// hostnames its other parents lend: ParentNotEvaluated, with a message that
+// does not claim the route serves nothing.
+func assertPartiallyServed(t *testing.T, diags []proxy.RouteDiagnostic, kind string) {
+	t.Helper()
+
+	require.Len(t, diags, 1)
+	assert.Equal(t, kind, diags[0].Kind)
+	assert.Equal(t, "team", diags[0].Namespace)
+	assert.Equal(t, "r", diags[0].Name)
+	assert.Equal(t, proxy.DiagnosticProxyConfigPush, diags[0].Target)
+	assert.Equal(t, routeReasonParentNotEvaluated, diags[0].Reason)
+	assert.NotContains(t, diags[0].Message, "serves no requests")
+	assert.Equal(t, apiErrorRequeueDelay, withParentNotEvaluatedRequeue(ctrl.Result{}, diags).RequeueAfter,
+		"the sync that restores the missing hostnames is requeued")
 }
 
 // TestWithEffectiveHostnames_StableWhenGatewayMissing is the Gateway twin of
@@ -326,23 +373,98 @@ var (
 	errSecondPartitionRead = errors.New("reading ListenerSet: second partition")
 )
 
-// TestLeaveOutUndecidedRoute_OneEventPerRoute pins that a route left out in
+// TestReportUndecidedParent_OneEventPerRoute pins that a route left out in
 // several partitions in one sync is reported once. Each partition evaluates the
 // parents on its own and can fail on a different read, so a message carrying
 // the error would defeat the per-sync deduplication of the Warning Event and
 // the condition message.
-func TestLeaveOutUndecidedRoute_OneEventPerRoute(t *testing.T) {
+func TestReportUndecidedParent_OneEventPerRoute(t *testing.T) {
 	t.Parallel()
 
 	route := httpRouteTo()
 
 	diags := []proxy.RouteDiagnostic{
-		leaveOutUndecidedRoute(context.Background(), route, errFirstPartitionRead),
-		leaveOutUndecidedRoute(context.Background(), route, errSecondPartitionRead),
+		reportUndecidedParent(context.Background(), kindHTTPRouteDiag, route, errFirstPartitionRead, true),
+		reportUndecidedParent(context.Background(), kindHTTPRouteDiag, route, errSecondPartitionRead, true),
 	}
 
 	rec := events.NewFakeRecorder(10)
 	emitDiagnosticEvents(rec, route, diags)
 
 	assert.Len(t, drainEvents(rec), 1, "one Warning Event per route per sync")
+}
+
+// TestWithEffectiveHostnames_UndecidedParentBesideAFullyAcceptingOne covers a
+// route whose declared hostnames another parent already accepts in full. The
+// undecided parent can add nothing it declares, so the route is served as
+// written and is not reported: reporting it would carry a false condition and
+// requeue the sync for as long as the parent stays undecided.
+func TestWithEffectiveHostnames_UndecidedParentBesideAFullyAcceptingOne(t *testing.T) {
+	t.Parallel()
+
+	declared := gatewayv1.Hostname("a.example.com")
+
+	cli := buildGatewayFakeClient(t,
+		gatewayClassFor("our-class", skipTestControllerName),
+		gatewayUnderClass("ours", "our-class", nil),
+		invalidSelectorGateway("broken", nil),
+	)
+
+	route := httpRouteTo(declared)
+	route.Spec.ParentRefs = parentRefsToGateways("ours", "broken")
+
+	out, diags := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
+	require.Len(t, out, 1)
+	assert.Equal(t, []gatewayv1.Hostname{declared}, out[0].Spec.Hostnames)
+	assert.Empty(t, diags, "a route served with every hostname it declares is not reported")
+}
+
+// TestWithEffectiveHostnamesGRPC_UndecidedParentBesideAFullyAcceptingOne is
+// the GRPCRoute twin.
+func TestWithEffectiveHostnamesGRPC_UndecidedParentBesideAFullyAcceptingOne(t *testing.T) {
+	t.Parallel()
+
+	declared := gatewayv1.Hostname("a.example.com")
+
+	cli := buildGatewayFakeClient(t,
+		gatewayClassFor("our-class", skipTestControllerName),
+		gatewayUnderClass("ours", "our-class", nil),
+		invalidSelectorGateway("broken", nil),
+	)
+
+	route := &gatewayv1.GRPCRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "team"},
+		Spec: gatewayv1.GRPCRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: parentRefsToGateways("ours", "broken")},
+			Hostnames:       []gatewayv1.Hostname{declared},
+		},
+	}
+
+	out, diags := withEffectiveHostnamesGRPC(context.Background(), cli, skipTestControllerName, []*gatewayv1.GRPCRoute{route}, nil)
+	require.Len(t, out, 1)
+	assert.Equal(t, []gatewayv1.Hostname{declared}, out[0].Spec.Hostnames)
+	assert.Empty(t, diags, "a route served with every hostname it declares is not reported")
+}
+
+// TestWithEffectiveHostnames_UndecidedParentBesideAPartlyAcceptingOne covers
+// a route with declared hostnames that the evaluated parent covers only in
+// part: the rest may belong to the undecided parent, so the route is reported.
+func TestWithEffectiveHostnames_UndecidedParentBesideAPartlyAcceptingOne(t *testing.T) {
+	t.Parallel()
+
+	covered := gatewayv1.Hostname("a.example.com")
+
+	cli := buildGatewayFakeClient(t,
+		gatewayClassFor("our-class", skipTestControllerName),
+		gatewayUnderClass("ours", "our-class", &covered),
+		invalidSelectorGateway("broken", nil),
+	)
+
+	route := httpRouteTo(covered, "b.example.com")
+	route.Spec.ParentRefs = parentRefsToGateways("ours", "broken")
+
+	out, diags := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
+	require.Len(t, out, 1)
+	assert.Equal(t, []gatewayv1.Hostname{covered}, out[0].Spec.Hostnames)
+	assertPartiallyServed(t, diags, kindHTTPRouteDiag)
 }

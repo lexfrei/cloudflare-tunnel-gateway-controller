@@ -647,7 +647,7 @@ func TestRecordResync_DoesNotOverwriteANewerSkipKey(t *testing.T) {
 	newer := &proxy.Config{Version: replayed.Version + 1}
 	newerHash := hashProxyConfig(newer)
 
-	proxySyncer.recordPush(key, "", newerHash, newer, endpoints, nil)
+	proxySyncer.recordPush(nil, key, "", newerHash, newer, endpoints, nil)
 
 	// The replay lands second with the older document it read before unlocking.
 	proxySyncer.recordResync(key, replayed, observed, "", endpoints, false)
@@ -758,7 +758,7 @@ func TestRecordResync_DoesNotRestoreAKeyAConcurrentFailureCleared(t *testing.T) 
 
 	// A concurrent sync pushed and failed at some replicas, clearing the key so
 	// the next sync re-pushes unconditionally. lastCfg is untouched by that.
-	proxySyncer.recordPush(key, "", "", replayed, endpoints, errPartialPush)
+	proxySyncer.recordPush(nil, key, "", "", replayed, endpoints, errPartialPush)
 
 	// The replay lands afterwards with the document it read before unlocking.
 	proxySyncer.recordResync(key, replayed, observed, "", endpoints, false)
@@ -805,7 +805,7 @@ func TestRecordResync_EmptyObservedKeyIsNotAToken(t *testing.T) {
 
 	// An earlier partial failure cleared the key before the replay took its
 	// snapshot, so the replay starts from an empty key.
-	proxySyncer.recordPush(key, "", "", replayed, endpoints, errPartialPush)
+	proxySyncer.recordPush(nil, key, "", "", replayed, endpoints, errPartialPush)
 
 	proxySyncer.syncMu.Lock()
 	observed := proxySyncer.targets[key].lastRecordSeq
@@ -817,7 +817,7 @@ func TestRecordResync_EmptyObservedKeyIsNotAToken(t *testing.T) {
 	// A concurrent newer sync partially fails during the push window. The key
 	// is cleared again, so by value nothing has changed since the snapshot.
 	newer := &proxy.Config{Version: replayed.Version + 1}
-	proxySyncer.recordPush(key, "", "", newer, endpoints, errPartialPush)
+	proxySyncer.recordPush(nil, key, "", "", newer, endpoints, errPartialPush)
 
 	proxySyncer.recordResync(key, replayed, observed, "", endpoints, false)
 

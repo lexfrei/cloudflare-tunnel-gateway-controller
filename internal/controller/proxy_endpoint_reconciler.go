@@ -77,11 +77,7 @@ func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.Client.Get(ctx, req.NamespacedName, &slice); err != nil {
 		// Deleted or unreadable: we cannot attribute the event to one data
 		// plane, so replay every cached partition — cheap and correct.
-		if resyncErr := r.ProxySyncer.ResyncAllPartitions(ctx); resyncErr != nil {
-			return ctrl.Result{}, errors.Wrap(resyncErr, "resync all proxy partitions")
-		}
-
-		return ctrl.Result{}, nil
+		return replayResult(r.ProxySyncer.ResyncAllPartitions(ctx), "resync all proxy partitions")
 	}
 
 	// A per-Gateway data plane's EndpointSlice carries the Gateway label
@@ -92,28 +88,17 @@ func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// The label value cannot be attributed to a live Gateway (it is
 			// a truncated form of a name that no longer exists, or foreign):
 			// replay every cached partition — cheap and correct.
-			if resyncErr := r.ProxySyncer.ResyncAllPartitions(ctx); resyncErr != nil {
-				return ctrl.Result{}, errors.Wrap(resyncErr, "resync all proxy partitions")
-			}
-
-			return ctrl.Result{}, nil
+			return replayResult(r.ProxySyncer.ResyncAllPartitions(ctx), "resync all proxy partitions")
 		}
 
-		if err := r.ProxySyncer.ResyncPartition(ctx, key); err != nil {
-			return ctrl.Result{}, errors.Wrap(err, "resync per-gateway proxy partition")
-		}
-
-		return ctrl.Result{}, nil
+		return replayResult(r.ProxySyncer.ResyncPartition(ctx, key), "resync per-gateway proxy partition")
 	}
 
-	if err := r.ProxySyncer.ResyncEndpoints(ctx, r.ProxyEndpoints); err != nil {
-		// Non-fatal: the next endpoint-change event (or the next
-		// HTTPRoute reconcile) gets another chance. Surface as an
-		// error so controller-runtime exponentially backs off.
-		return ctrl.Result{}, errors.Wrap(err, "resync proxy endpoints")
-	}
-
-	return ctrl.Result{}, nil
+	// Non-fatal: the next endpoint-change event (or the next HTTPRoute
+	// reconcile) gets another chance. A superseded replay requeues shortly;
+	// any other failure surfaces as an error so controller-runtime
+	// exponentially backs off.
+	return replayResult(r.ProxySyncer.ResyncEndpoints(ctx, r.ProxyEndpoints), "resync proxy endpoints")
 }
 
 // partitionKeyForLabel maps a GatewayLabel value back onto the partition key
@@ -294,4 +279,48 @@ func isProbablyIP(host string) bool {
 	}
 
 	return true
+}
+
+// replayResult maps a replay's error onto the reconcile result. A replay that
+// every partition reports superseded requeues shortly with no error: the newer
+// document is cached or still being pushed, so the next replay carries it.
+// Any other failure keeps the error and controller-runtime's backoff.
+func replayResult(err error, action string) (ctrl.Result, error) {
+	if err == nil {
+		return ctrl.Result{}, nil
+	}
+
+	if onlySuperseded(err) {
+		return ctrl.Result{RequeueAfter: lostRacePushRequeueDelay}, nil
+	}
+
+	return ctrl.Result{}, errors.Wrap(err, action)
+}
+
+// onlySuperseded reports whether err is errReplaySuperseded, or a joined error
+// whose every branch is. It walks the chain one wrapper at a time instead of
+// using errors.Is, which would also match a single superseded branch of a
+// joined error whose other branch failed for real.
+func onlySuperseded(err error) bool {
+	for err != nil {
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			branches := joined.Unwrap()
+			for _, branch := range branches {
+				if !onlySuperseded(branch) {
+					return false
+				}
+			}
+
+			return len(branches) > 0
+		}
+
+		//nolint:err113,errorlint // compared one wrapper at a time on purpose; see above.
+		if err == errReplaySuperseded {
+			return true
+		}
+
+		err = errors.UnwrapOnce(err)
+	}
+
+	return false
 }

@@ -396,12 +396,13 @@ func diagnosticConditions(
 
 	wholeRuleIdx := make(map[int]struct{})
 
-	for _, diag := range diagnostics {
+	for i := range diagnostics {
+		diag := &diagnostics[i]
 		if diag.Target != proxy.DiagnosticAccepted {
 			continue
 		}
 
-		accepted = append(accepted, diag)
+		accepted = append(accepted, *diag)
 
 		if diag.WholeRule {
 			wholeRuleIdx[diag.RuleIndex] = struct{}{}
@@ -448,8 +449,8 @@ func buildShadowedCondition(
 // namespaces when any of the route's shares crosses one, since that is the
 // share that crosses a tenant boundary, within one namespace otherwise.
 func tunnelSharedReason(diagnostics []proxy.RouteDiagnostic) string {
-	for _, diag := range diagnostics {
-		if diag.Target == proxy.DiagnosticTunnelShared && diag.Reason == routeReasonTunnelSharedAcrossNamespaces {
+	for i := range diagnostics {
+		if diag := &diagnostics[i]; diag.Target == proxy.DiagnosticTunnelShared && diag.Reason == routeReasonTunnelSharedAcrossNamespaces {
 			return routeReasonTunnelSharedAcrossNamespaces
 		}
 	}
@@ -458,11 +459,10 @@ func tunnelSharedReason(diagnostics []proxy.RouteDiagnostic) string {
 }
 
 // proxyConfigPushedReason names why ProxyConfigPushed is False: a failed push,
-// unless every diagnostic behind it is a route left out because a parent
-// could not be evaluated.
+// unless every diagnostic behind it is a parent that could not be evaluated.
 func proxyConfigPushedReason(diagnostics []proxy.RouteDiagnostic) string {
-	for _, diag := range diagnostics {
-		if diag.Target == proxy.DiagnosticProxyConfigPush && diag.Reason != routeReasonParentNotEvaluated {
+	for i := range diagnostics {
+		if diag := &diagnostics[i]; diag.Target == proxy.DiagnosticProxyConfigPush && diag.Reason != routeReasonParentNotEvaluated {
 			return routeReasonProxyConfigPushFailed
 		}
 	}
@@ -488,7 +488,9 @@ func buildDiagnosticCondition(
 	messages := make([]string, 0, len(diagnostics))
 	seen := make(map[string]struct{})
 
-	for _, diag := range diagnostics {
+	for i := range diagnostics {
+		diag := &diagnostics[i]
+
 		if diag.Target != target {
 			continue
 		}
@@ -568,7 +570,9 @@ func droppedConfigMessage(diagnostics []proxy.RouteDiagnostic, partial bool) str
 	details := make([]string, 0, len(diagnostics))
 	seenMsg := make(map[string]struct{})
 
-	for _, diag := range diagnostics {
+	for i := range diagnostics {
+		diag := &diagnostics[i]
+
 		if _, ok := seenIdx[diag.RuleIndex]; !ok {
 			seenIdx[diag.RuleIndex] = struct{}{}
 
@@ -723,9 +727,11 @@ func buildResolvedRefsCondition(
 // reasons; the Accepted/PartiallyInvalid path, by contrast, does aggregate all
 // of its messages.
 func firstResolvedRefsDiagnostic(diagnostics []proxy.RouteDiagnostic) (proxy.RouteDiagnostic, bool) {
-	for _, diag := range diagnostics {
+	for i := range diagnostics {
+		diag := &diagnostics[i]
+
 		if diag.Target == proxy.DiagnosticResolvedRefs {
-			return diag, true
+			return *diag, true
 		}
 	}
 
@@ -755,15 +761,16 @@ const (
 const (
 	// routeConditionProxyConfigPushed is set False when the controller could not
 	// push this route's config to its data plane for a SUSTAINED run of attempts
-	// (#487) — the proxy serves 502 until the push recovers — or left the route
-	// out of that config because a parent could not be evaluated and no other
-	// parent lent it a hostname. It clears on the first sync without either
-	// (parent status is rebuilt each sync).
+	// (#487) — the proxy serves 502 until the push recovers — or when a parent
+	// of the route could not be evaluated, so the route serves only what its
+	// other parents lend. It clears on the first sync without either (parent
+	// status is rebuilt each sync).
 	routeConditionProxyConfigPushed  = "cf.k8s.lex.la/ProxyConfigPushed"
 	routeReasonProxyConfigPushFailed = "ProxyConfigPushFailed"
-	// routeReasonParentNotEvaluated sets the same condition False when the
-	// route was left out of its data plane's config because a parent could not
-	// be evaluated and no other parent lent it a hostname.
+	// routeReasonParentNotEvaluated sets the same condition False when a parent
+	// of the route could not be evaluated. The route serves only the hostnames
+	// its other parents lend, and is left out of its data plane's config when
+	// none lends one.
 	routeReasonParentNotEvaluated = "ParentNotEvaluated"
 	// routeConditionTunnelShared is set True when this route's per-Gateway data
 	// plane shares one Cloudflare Tunnel with another dedicated Gateway (#488).
@@ -816,7 +823,9 @@ func emitDiagnosticEvents(recorder events.EventRecorder, route runtime.Object, d
 	// (target, message) once per sync.
 	seen := make(map[string]struct{}, len(diagnostics))
 
-	for _, diag := range diagnostics {
+	for i := range diagnostics {
+		diag := &diagnostics[i]
+
 		dedupeKey := string(diag.Target) + "\x00" + diag.Message
 		if _, duplicate := seen[dedupeKey]; duplicate {
 			continue
@@ -841,7 +850,7 @@ func emitDiagnosticEvents(recorder events.EventRecorder, route runtime.Object, d
 			recorder.Eventf(route, nil, corev1.EventTypeWarning, eventReasonRouteShadowed, eventActionRouteSync, "%s", diag.Message)
 		case proxy.DiagnosticProxyConfigPush:
 			// Mirror the ProxyConfigPushed=False condition (#487).
-			recorder.Eventf(route, nil, corev1.EventTypeWarning, proxyConfigPushedReason([]proxy.RouteDiagnostic{diag}),
+			recorder.Eventf(route, nil, corev1.EventTypeWarning, proxyConfigPushedReason([]proxy.RouteDiagnostic{*diag}),
 				eventActionRouteSync, "%s", diag.Message)
 		case proxy.DiagnosticTunnelShared:
 			// Mirror the TunnelShared=True condition (#488).
@@ -923,12 +932,14 @@ func filterFailedRefs(allFailedRefs []ingress.BackendRefError, routeNamespace, r
 }
 
 // filterDiagnostics returns converter diagnostics that belong to the specified route.
-func filterDiagnostics(all []proxy.RouteDiagnostic, routeNamespace, routeName string) []proxy.RouteDiagnostic {
+func filterDiagnostics(all []proxy.RouteDiagnostic, routeKind, routeNamespace, routeName string) []proxy.RouteDiagnostic {
 	var result []proxy.RouteDiagnostic
 
-	for _, diag := range all {
-		if diag.Namespace == routeNamespace && diag.Name == routeName {
-			result = append(result, diag)
+	for i := range all {
+		diag := &all[i]
+
+		if diag.Kind == routeKind && diag.Namespace == routeNamespace && diag.Name == routeName {
+			result = append(result, *diag)
 		}
 	}
 
@@ -958,3 +969,9 @@ func newGRPCRouteAccessor() routeAccessor {
 		ruleCount:   func() int { return len(route.Spec.Rules) },
 	}
 }
+
+// kindHTTPRouteDiag and kindGRPCRouteDiag are the RouteDiagnostic.Kind values.
+const (
+	kindHTTPRouteDiag = "HTTPRoute"
+	kindGRPCRouteDiag = "GRPCRoute"
+)

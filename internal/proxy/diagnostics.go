@@ -22,12 +22,13 @@ const (
 	// Gateway API treats same-hostname routes as legal merging); the controller
 	// surfaces a dedicated condition plus a Warning Event on the losing route.
 	DiagnosticShadowed DiagnosticTarget = "Shadowed"
-	// DiagnosticProxyConfigPush means this route's config is not in force on its
-	// data plane. Either the controller could not push the generated config (a
-	// SUSTAINED proxy push failure, not a one-off blip), so requests 502 until
-	// the push recovers, or it left the route out of that config because a
-	// parent could not be evaluated and no other parent lent it a hostname, so
-	// the route answers no requests. The route stays Accepted in both cases.
+	// DiagnosticProxyConfigPush means this route's config is not fully in force
+	// on its data plane. Either the controller could not push the generated
+	// config (a SUSTAINED proxy push failure, not a one-off blip), so requests
+	// 502 until the push recovers, or a parent of the route could not be
+	// evaluated, so the route serves only the hostnames its other parents lend,
+	// or none when no other parent lends one. The route stays Accepted in both
+	// cases.
 	// The controller surfaces a dedicated condition plus a Warning Event on the
 	// affected route, with the reason carried by the diagnostic.
 	DiagnosticProxyConfigPush DiagnosticTarget = "ProxyConfigPush"
@@ -68,6 +69,10 @@ const (
 // Message must be explicit and actionable: it names the problem AND the fix in
 // plain words the operator can act on without reading the controller source.
 type RouteDiagnostic struct {
+	// Kind is the route kind, "HTTPRoute" or "GRPCRoute". An HTTPRoute and a
+	// GRPCRoute may share a namespace and name, so the status writer matches a
+	// diagnostic on all three.
+	Kind      string
 	Namespace string
 	Name      string
 	RuleIndex int
@@ -94,6 +99,7 @@ type RouteDiagnostic struct {
 // It is nil-safe: every method is a no-op on a nil receiver, so converter
 // helpers can be reached from call paths that do not collect diagnostics.
 type diagSink struct {
+	kind      string
 	namespace string
 	name      string
 	rule      int
@@ -101,11 +107,12 @@ type diagSink struct {
 }
 
 // route sets the identity stamped onto subsequently-added diagnostics.
-func (s *diagSink) route(namespace, name string) {
+func (s *diagSink) route(kind, namespace, name string) {
 	if s == nil {
 		return
 	}
 
+	s.kind = kind
 	s.namespace = namespace
 	s.name = name
 }
@@ -128,6 +135,7 @@ func (s *diagSink) add(target DiagnosticTarget, reason, message string, wholeRul
 	}
 
 	s.items = append(s.items, RouteDiagnostic{
+		Kind:      s.kind,
 		Namespace: s.namespace,
 		Name:      s.name,
 		RuleIndex: s.rule,
@@ -146,6 +154,7 @@ func (s *diagSink) event(eventType, message string) {
 	}
 
 	s.items = append(s.items, RouteDiagnostic{
+		Kind:      s.kind,
 		Namespace: s.namespace,
 		Name:      s.name,
 		RuleIndex: s.rule,

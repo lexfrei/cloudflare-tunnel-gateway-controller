@@ -174,7 +174,7 @@ func convertRoutesGeneric[R metav1.Object](
 	sink := &diagSink{}
 
 	for _, route := range sortRoutesByPrecedence(routes) {
-		sink.route(route.GetNamespace(), route.GetName())
+		sink.route(view.kind, route.GetNamespace(), route.GetName())
 		hostnames := convertHostnames(view.hostnames(route))
 		clientCert := resolveFirstParentClientCertFromRefs(ctx, view.parentRefs(route), route.GetNamespace(), gatewayCertResolver)
 

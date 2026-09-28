@@ -171,6 +171,7 @@ func shadowDiagnostics(claims []shadowClaim, winners map[shadowKey]shadowClaiman
 		emitted[dedupe] = struct{}{}
 
 		diags = append(diags, RouteDiagnostic{
+			Kind:      claim.claimant.provenance.Kind,
 			Namespace: claim.claimant.provenance.Namespace,
 			Name:      claim.claimant.provenance.Name,
 			RuleIndex: claim.claimant.provenance.RuleIndex,
