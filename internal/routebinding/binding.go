@@ -110,9 +110,9 @@ func makeBindingResult(
 // findMatchingEntries is the shared section/port match + accept iteration used
 // by both Gateway listener binding and ListenerSet entry binding. The accept
 // callback returns the per-entry route condition reason; entries with reason
-// == Accepted are collected into the matched-section list. The last
-// observed non-accepted reason becomes the fallback rejection reason when no
-// entry matches.
+// == Accepted are collected into the matched-section list. When no entry
+// matches, the last observed non-accepted reason is the rejection reason, and
+// NoMatchingParent is reserved for a sectionName or port that no entry has.
 //
 // An entry whose evaluation fails (an unparseable namespace selector) admits
 // nothing. Its error is returned in detail, and, when no entry matched, its name
@@ -166,10 +166,9 @@ func findMatchingEntries(
 	detail := strings.Join(entryErrors, "; ")
 
 	if len(matched) == 0 {
-		if routeSectionName != nil || routePort != nil {
-			return nil, gatewayv1.RouteReasonNoMatchingParent, invalid, detail
-		}
-
+		// No entry passed the sectionName and port filters: the parentRef
+		// names no listener. Otherwise an entry refused the route, and its
+		// reason says why, pinned or not.
 		if lastRejectionReason == "" {
 			return nil, gatewayv1.RouteReasonNoMatchingParent, invalid, detail
 		}
