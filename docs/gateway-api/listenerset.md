@@ -102,9 +102,9 @@ Per Gateway API spec the effective listener list is concatenated as follows:
 2. Listeners from attached ListenerSets, ordered by `metadata.creationTimestamp` (oldest first).
 3. Within the same timestamp, ListenerSets are ordered alphabetically by `namespace/name`.
 
-When two listeners share the same `(port, hostname)` tuple, the higher-precedence one wins; the lower-precedence one is marked `Conflicted: true` with reason `HostnameConflict` and `Accepted: false`. When two listeners share a port but disagree on `protocol`, the same precedence applies with reason `ProtocolConflict`. Gateway listeners always win conflicts against ListenerSets.
+When two listeners share the same `(port, hostname)` tuple, the higher-precedence one wins; the lower-precedence one is marked `Conflicted: true` with reason `HostnameConflict` and `Accepted: false`. When two listeners share a port but disagree on `protocol`, the same precedence applies with reason `ProtocolConflict`. Gateway listeners always win conflicts against ListenerSets. Two of the Gateway's own listeners have no precedence between them, so both are marked `Conflicted: true` and neither serves. A Gateway listener whose protocol this controller does not serve is refused as `UnsupportedProtocol` and takes no part in this: an `HTTP` listener next to a `TCP` one on the same port still serves.
 
-A ListenerSet with at least one conflict-free, fully-resolved (`ResolvedRefs: True`) listener still surfaces `Accepted: true` overall; only the individual conflicting or unresolved entries are rejected. A ListenerSet whose every listener conflicts, has unresolved refs, uses an unservable protocol or has an invalid `allowedRoutes.namespaces.selector` gets `Accepted: false / ListenersNotValid`.
+A ListenerSet with at least one conflict-free, fully-resolved (`ResolvedRefs: True`) listener still surfaces `Accepted: true` overall, with reason `ListenersNotValid` when another entry is unusable; only the individual conflicting or unresolved entries are rejected. A ListenerSet whose every listener conflicts, has unresolved refs, uses an unservable protocol or has an invalid `allowedRoutes.namespaces.selector` gets `Accepted: false / ListenersNotValid`.
 
 ## ReferenceGrant scoping
 
@@ -133,7 +133,7 @@ spec:
 | Type | Status | Reason | Description |
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Permitted by Gateway and at least one entry is valid |
-| `Accepted` | `True` | `ListenersNotValid` | At least one entry is valid, and another uses a protocol this controller does not serve or has an `allowedRoutes.namespaces.selector` that does not parse |
+| `Accepted` | `True` | `ListenersNotValid` | At least one entry is valid, and another is conflict-marked, has unresolved refs, uses a protocol this controller does not serve or has an `allowedRoutes.namespaces.selector` that does not parse |
 | `Accepted` | `False` | `NotAllowed` | Gateway's `spec.allowedListeners` rejects this ListenerSet. A `selector` that does not parse rejects every ListenerSet; the message says so without quoting the selector, the controller log names the parse error, and the parent Gateway gets an `InvalidAllowedListeners` Warning Event |
 | `Accepted` | `False` | `ListenersNotValid` | No entry is usable: each one is conflict-marked, has unresolved refs, uses a protocol this controller does not serve or has an `allowedRoutes.namespaces.selector` that does not parse |
 | `Programmed` | `True` | `Programmed` | Attached and programmed against the parent Gateway |
@@ -144,7 +144,7 @@ spec:
 | Type | Status | Reason | Description |
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Entry accepted |
-| `Accepted` | `False` | `HostnameConflict` | Same `(port, hostname)` claimed by a higher-precedence listener |
+| `Accepted` | `False` | `HostnameConflict` | Same `(port, hostname)` claimed by a Gateway listener or by an entry of an earlier ListenerSet |
 | `Accepted` | `False` | `ProtocolConflict` | Different protocol claimed for the same port |
 | `Accepted` | `False` | `UnsupportedValue` | `allowedRoutes.namespaces.from` is `Selector` and the selector does not parse, so the entry admits no route. The message says the selector is invalid without quoting it; `Programmed` is `False` with reason `Invalid` |
 | `Programmed` | `True` | `Programmed` | Entry programmed; routes can bind |
@@ -156,7 +156,7 @@ spec:
 
 ## AttachedRoutes
 
-Each per-entry status reports `attachedRoutes` — the number of Routes bound to that listener entry. Per the Gateway API spec, attachment depends solely on the entry's `allowedRoutes` and the Route's `parentRefs` (plus the Route's own `Accepted` state); the listener's own status does not change the count. A Route attached to an entry that is `Conflicted`, or whose `Programmed` is `False` because its TLS certificate ref failed to resolve, is still counted — the spec requires `attachedRoutes` to be set even when the entry's own `Accepted` condition is `False`. The field therefore measures binding and blast radius, not whether the entry currently serves traffic. A ListenerSet rejected at the resource level (not permitted by the parent Gateway's `allowedListeners`) reports `attachedRoutes: 0` for every entry, because the entries are not part of any merged Gateway.
+Each per-entry status reports `attachedRoutes`: the number of Routes attached to that listener entry and `Accepted` for the ListenerSet. Per the Gateway API spec, attachment depends on the entry's `allowedRoutes` and the Route's `parentRefs`, not on the entry's own status, and only Routes with `Accepted: True` are counted. A Route whose parentRef also matches a usable entry is counted through that same parentRef on a `Conflicted` entry too, and so is a Route on an entry whose `Programmed` is `False` because its TLS certificate ref failed to resolve. A Route whose only matching entries are `Conflicted` is rejected, so it counts nowhere. A Route that is `Accepted: False` with reason `Pending`, for example while a Cloudflare sync fails, is not counted either, so the count can drop while the Cloudflare API is unavailable. Each Route counts once per entry. The field therefore measures binding and blast radius, not whether the entry currently serves traffic. A ListenerSet rejected at the resource level (not permitted by the parent Gateway's `allowedListeners`) reports `attachedRoutes: 0` for every entry, because the entries are not part of any merged Gateway.
 
 ## DNS automation (external-dns)
 

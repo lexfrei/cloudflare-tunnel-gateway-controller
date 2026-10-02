@@ -33,6 +33,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/listenermerge"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/parentref"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
@@ -777,9 +778,8 @@ func (r *GatewayReconciler) buildListenerStatuses(
 ) []gatewayv1.ListenerStatus {
 	attachedRoutes := r.countAttachedRoutes(ctx, gateway)
 
-	// The merged view (cached) annotates each Gateway-owned listener that
-	// conflicts with a higher-precedence one, used below to emit the
-	// per-listener Conflicted condition.
+	// The merged view (cached) annotates each conflicted Gateway-owned
+	// listener, used below to emit the per-listener Conflicted condition.
 	gwView, _ := views.forGateway(ctx, gateway)
 
 	listenerStatuses := make([]gatewayv1.ListenerStatus, 0, len(gateway.Spec.Listeners))
@@ -870,9 +870,8 @@ func (r *GatewayReconciler) buildOneListenerStatus(
 
 	conditions := []metav1.Condition{acceptedCondition, programmedCondition, resolvedRefsCondition}
 
-	// A Gateway-owned listener that conflicts with a higher-precedence
-	// listener MUST carry Conflicted=True and is neither Accepted nor
-	// Programmed (gateway_types.go:168-170).
+	// A conflicted Gateway-owned listener MUST carry Conflicted=True and is
+	// neither Accepted nor Programmed (gateway_types.go:168-170).
 	conflicted := conflictedGatewayListenerConditions(
 		gwView, listener.Name, gateway.Generation, now, &resolvedRefsCondition,
 	)
@@ -1133,7 +1132,6 @@ func overrideListenerProgrammedForConfigError(
 	}
 }
 
-//nolint:gocognit,gocyclo,cyclop,dupl,funlen // complexity due to counting two route types
 func (r *GatewayReconciler) countAttachedRoutes(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
@@ -1147,81 +1145,70 @@ func (r *GatewayReconciler) countAttachedRoutes(
 
 	validator := routebinding.NewValidator(r.Client)
 
-	// Count HTTPRoutes with binding validation
 	var httpRouteList gatewayv1.HTTPRouteList
-
-	err := r.List(ctx, &httpRouteList)
-	if err != nil {
+	if err := r.List(ctx, &httpRouteList); err != nil {
 		logger.Error("failed to list HTTPRoutes for attached routes count", "error", err)
 	} else {
 		for i := range httpRouteList.Items {
 			route := &httpRouteList.Items[i]
-
-			for _, ref := range route.Spec.ParentRefs {
-				if !r.refMatchesGateway(ref, gateway, route.Namespace) {
-					continue
-				}
-
-				routeInfo := &routebinding.RouteInfo{
-					Name:        route.Name,
-					Namespace:   route.Namespace,
-					Hostnames:   route.Spec.Hostnames,
-					Kind:        routebinding.KindHTTPRoute,
-					SectionName: ref.SectionName,
-					Port:        ref.Port,
-				}
-
-				bindingResult, bindErr := validator.ValidateBinding(ctx, gateway, routeInfo)
-				if bindErr != nil || !bindingResult.Accepted {
-					continue
-				}
-
-				// Count this route for each matched listener
-				for _, listenerName := range bindingResult.MatchedListeners {
-					result[listenerName]++
-				}
-			}
+			r.countRouteOnGateway(ctx, validator, gateway, HTTPRouteWrapper{route}, result)
 		}
 	}
 
-	// Count GRPCRoutes with binding validation
 	var grpcRouteList gatewayv1.GRPCRouteList
-
-	err = r.List(ctx, &grpcRouteList)
-	if err != nil {
+	if err := r.List(ctx, &grpcRouteList); err != nil {
 		logger.Error("failed to list GRPCRoutes for attached routes count", "error", err)
 	} else {
 		for i := range grpcRouteList.Items {
 			route := &grpcRouteList.Items[i]
-
-			for _, ref := range route.Spec.ParentRefs {
-				if !r.refMatchesGateway(ref, gateway, route.Namespace) {
-					continue
-				}
-
-				routeInfo := &routebinding.RouteInfo{
-					Name:        route.Name,
-					Namespace:   route.Namespace,
-					Hostnames:   route.Spec.Hostnames,
-					Kind:        routebinding.KindGRPCRoute,
-					SectionName: ref.SectionName,
-					Port:        ref.Port,
-				}
-
-				bindingResult, bindErr := validator.ValidateBinding(ctx, gateway, routeInfo)
-				if bindErr != nil || !bindingResult.Accepted {
-					continue
-				}
-
-				// Count this route for each matched listener
-				for _, listenerName := range bindingResult.MatchedListeners {
-					result[listenerName]++
-				}
-			}
+			r.countRouteOnGateway(ctx, validator, gateway, GRPCRouteWrapper{route}, result)
 		}
 	}
 
 	return result
+}
+
+// countRouteOnGateway adds one route to the Gateway's per-listener
+// attachedRoutes. Per the vendored AttachedRoutes doc, attachment follows
+// allowedRoutes and parentRefs whatever the listener's own status, and only a
+// route Accepted for the Gateway counts. The Accepted verdict is read from the
+// route's own status, so every rejection counts: binding, conflicted
+// listeners, hostname ownership and cross-type conflicts. A route counts at
+// most once per listener however many of its parentRefs match it.
+func (r *GatewayReconciler) countRouteOnGateway(
+	ctx context.Context,
+	validator *routebinding.Validator,
+	gateway *gatewayv1.Gateway,
+	route Route,
+	result map[gatewayv1.SectionName]int32,
+) {
+	counted := make(map[gatewayv1.SectionName]bool)
+
+	for _, ref := range route.GetParentRefs() {
+		if !r.refMatchesGateway(ref, gateway, route.GetNamespace()) ||
+			!parentRefAcceptedInStatus(route.GetParentStatuses(), ref, route.GetNamespace(), r.ControllerName) {
+			continue
+		}
+
+		bindingResult, bindErr := validator.ValidateBinding(ctx, gateway, &routebinding.RouteInfo{
+			Name:        route.GetName(),
+			Namespace:   route.GetNamespace(),
+			Hostnames:   route.GetHostnames(),
+			Kind:        route.GetRouteKind(),
+			SectionName: ref.SectionName,
+			Port:        ref.Port,
+		})
+		if bindErr != nil || !bindingResult.Accepted {
+			continue
+		}
+
+		for _, listenerName := range bindingResult.MatchedListeners {
+			if !counted[listenerName] {
+				counted[listenerName] = true
+				result[listenerName]++
+			}
+		}
+	}
 }
 
 // refMatchesGateway reports whether a route parentRef names this Gateway
@@ -1755,41 +1742,37 @@ func refuseInvalidNamespaceSelector(accepted *metav1.Condition, allowedRoutes *g
 	accepted.Message = listenerMsgInvalidNamespaceSelector
 }
 
-// servableListenerProtocol reports whether this controller has a data plane for
-// the listener protocol. Only HTTP and HTTPS carry HTTPRoute / GRPCRoute through
-// the in-process proxy; TCP, TLS, UDP, and any unrecognised protocol have none
-// (Cloudflare Tunnel is HTTP-focused and terminates TLS at the edge). The single
-// source of truth for both the per-listener Accepted condition and the
-// Gateway-level ListenersNotValid aggregation below.
+// servableListenerProtocol is the single source of truth for the per-listener
+// Accepted condition, the Gateway-level ListenersNotValid aggregation below and
+// the conflict exemption in listenermerge.
 func servableListenerProtocol(protocol gatewayv1.ProtocolType) bool {
-	switch protocol {
-	case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
-		return true
-	case gatewayv1.TCPProtocolType, gatewayv1.TLSProtocolType, gatewayv1.UDPProtocolType:
-		return false
-	default:
-		// Any unrecognised protocol (e.g. the conformance suite's INVALID) has
-		// no data plane here either.
-		return false
-	}
+	return listenermerge.ServableProtocol(protocol)
 }
 
 // gatewayInvalidListeners summarises, across a Gateway's own listeners, how
-// many are invalid: a protocol this controller cannot serve, or an
-// allowedRoutes namespace selector that does not parse. Per the Gateway API
-// spec (gateway_types.go), a Gateway holding any invalid listener is marked
-// ListenersNotValid, and one holding no valid listener at all is
-// Accepted=False. Returns (any invalid, all invalid, the message naming the
-// causes present).
-func gatewayInvalidListeners(listeners []gatewayv1.Listener) (bool, bool, string) {
+// many are invalid: conflicted (named in conflicted), a protocol this
+// controller cannot serve, or an allowedRoutes namespace selector that does
+// not parse. Per the Gateway API spec (gateway_types.go), a Gateway holding
+// any invalid listener is marked ListenersNotValid, and one holding no valid
+// listener at all is Accepted=False. Returns (any invalid, all invalid, the
+// message naming the causes present).
+func gatewayInvalidListeners(
+	listeners []gatewayv1.Listener,
+	conflicted map[gatewayv1.SectionName]bool,
+) (bool, bool, string) {
 	if len(listeners) == 0 {
 		return false, false, ""
 	}
 
 	invalid, unsupported, badSelector := 0, 0, 0
 
+	var conflictedNames []string
+
 	for i := range listeners {
 		switch {
+		case conflicted[listeners[i].Name]:
+			conflictedNames = append(conflictedNames, string(listeners[i].Name))
+			invalid++
 		case !servableListenerProtocol(listeners[i].Protocol):
 			unsupported++
 			invalid++
@@ -1800,6 +1783,10 @@ func gatewayInvalidListeners(listeners []gatewayv1.Listener) (bool, bool, string
 	}
 
 	var causes []string
+
+	if len(conflictedNames) > 0 {
+		causes = append(causes, "Gateway has conflicted listeners: "+strings.Join(conflictedNames, ", "))
+	}
 
 	if unsupported > 0 {
 		causes = append(causes, "one or more listeners use a protocol this controller does not serve "+
@@ -1815,8 +1802,7 @@ func gatewayInvalidListeners(listeners []gatewayv1.Listener) (bool, bool, string
 
 // gatewayAcceptedCondition builds the Gateway-level Accepted condition. The
 // default is Accepted=True/Accepted; it is downgraded to ListenersNotValid when
-// the Gateway holds conflicted listeners (Gateway-owned or merged ListenerSet
-// entries clashing on hostname/protocol), listeners whose protocol this
+// the Gateway holds conflicted own listeners, listeners whose protocol this
 // controller cannot serve, or listeners whose allowedRoutes namespace
 // selector does not parse, and to Accepted=False when no listener is valid at
 // all (gateway_types.go).
@@ -1835,20 +1821,11 @@ func gatewayAcceptedCondition(
 		Message:            msgGatewayAccepted,
 	}
 
-	if conflictMsg, conflicted := gatewayConflictedListenersMessage(ctx, views, gateway); conflicted {
-		accepted.Status = metav1.ConditionFalse
-		accepted.Reason = string(gatewayv1.GatewayReasonListenersNotValid)
-		accepted.Message = conflictMsg
-
-		return accepted
-	}
-
-	// Scoped to the Gateway's OWN listeners by design: an unsupported-protocol
-	// listener contributed by an attached ListenerSet carries its verdict on the
-	// ListenerSet's own status, not on the parent Gateway's Accepted condition
-	// (unlike hostname/protocol CONFLICTS, which are cross-object and use the
-	// merged view above).
-	if anyInvalid, allInvalid, message := gatewayInvalidListeners(gateway.Spec.Listeners); anyInvalid {
+	// Scoped to the Gateway's OWN listeners by design: an invalid listener
+	// contributed by an attached ListenerSet carries its verdict on the
+	// ListenerSet's own status, not on the parent Gateway's Accepted condition.
+	conflicted := gatewayConflictedListeners(ctx, views, gateway)
+	if anyInvalid, allInvalid, message := gatewayInvalidListeners(gateway.Spec.Listeners, conflicted); anyInvalid {
 		accepted.Reason = string(gatewayv1.GatewayReasonListenersNotValid)
 		accepted.Message = message
 

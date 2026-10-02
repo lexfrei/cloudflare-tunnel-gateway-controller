@@ -12,7 +12,9 @@ import (
 
 // findRoutesAttachedToListenerSet returns reconcile requests for every route
 // in the slice whose parentRef targets the given ListenerSet AND whose
-// parent Gateway is managed by this controller.
+// parent Gateway is managed by this controller. When the parent is not ours,
+// it still returns the routes carrying this controller's status, so the route
+// reconcile can release those entries.
 //
 // Used by HTTPRoute / GRPCRoute reconcilers to enqueue routes when a
 // ListenerSet they depend on is created, edited, or deleted — without this
@@ -30,18 +32,16 @@ func findRoutesAttachedToListenerSet(
 	}
 
 	parent, found := listenerSetParentGateway(ctx, cli, listenerSet)
-	if !found {
-		return nil
-	}
-
-	if !isGatewayManagedByController(ctx, cli, parent, controllerName) {
-		return nil
-	}
+	managed := found && isGatewayManagedByController(ctx, cli, parent, controllerName)
 
 	requests := make([]reconcile.Request, 0)
 
 	for _, route := range routes {
 		if !routeTargetsListenerSet(route, listenerSet) {
+			continue
+		}
+
+		if !managed && !holdsOwnParentStatus(route.GetParentStatuses(), controllerName) {
 			continue
 		}
 

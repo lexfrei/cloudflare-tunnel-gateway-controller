@@ -217,6 +217,7 @@ func gatewayAcceptedProtocols(
 	validator *routebinding.Validator,
 	namespace, name string,
 	routeInfo *routebinding.RouteInfo,
+	views *listenerViewCache,
 ) ([]gatewayv1.ProtocolType, error) {
 	var gateway gatewayv1.Gateway
 	if err := cli.Get(ctx, client.ObjectKey{Name: name, Namespace: namespace}, &gateway); err != nil {
@@ -227,9 +228,9 @@ func gatewayAcceptedProtocols(
 		return nil, nil
 	}
 
-	result, err := validator.ValidateBinding(ctx, &gateway, routeInfo)
+	result, err := bindGatewayListeners(ctx, cli, validator, &gateway, routeInfo, views)
 	if err != nil || !result.Accepted {
-		return nil, errors.Wrap(err, "validating binding against Gateway")
+		return nil, err
 	}
 
 	protoByName := make(map[gatewayv1.SectionName]gatewayv1.ProtocolType, len(gateway.Spec.Listeners))

@@ -53,7 +53,7 @@ All HTTPRoute matching and filter behavior is performed by the in-process L7 pro
 | Field | Supported | Notes |
 | --- | --- | --- |
 | `spec.parentRefs` | Yes | References to Gateway |
-| `spec.parentRefs[].group` | Yes | Omit it or set `gateway.networking.k8s.io`. Any other value, including an explicit `""` (the core group), names some other resource: the route does not bind to this controller's Gateway or ListenerSet, is not counted in `attachedRoutes` and gets no new status entry. An entry this controller wrote earlier for that ref is dropped on the next status write when another parentRef of the route names a Gateway or ListenerSet this controller manages, and otherwise stays in `status.parents` until the ref is fixed |
+| `spec.parentRefs[].group` | Yes | Omit it or set `gateway.networking.k8s.io`. Any other value, including an explicit `""` (the core group), names some other resource: the route does not bind to this controller's Gateway or ListenerSet, is not counted in `attachedRoutes` and gets no new status entry. An entry this controller wrote earlier for that ref is removed from `status.parents` |
 | `spec.parentRefs[].name` | Yes | Gateway name |
 | `spec.parentRefs[].namespace` | Yes | Gateway namespace |
 | `spec.parentRefs[].sectionName` | Yes | Listener name (optional) |
@@ -207,8 +207,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | Type | Status | Reason | Description |
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Gateway accepted by controller |
-| `Accepted` | `False` | `ListenersNotValid` | One or more of the Gateway's own listeners conflict (carry `Conflicted=True`) |
-| `Accepted` | `True` or `False` | `ListenersNotValid` | One or more own listeners are invalid (unsupported protocol, or an `allowedRoutes.namespaces.selector` that does not parse); `False` only when no listener is valid |
+| `Accepted` | `True` or `False` | `ListenersNotValid` | One or more own listeners are invalid (they conflict and carry `Conflicted=True`, use an unsupported protocol, or have an `allowedRoutes.namespaces.selector` that does not parse); `False` only when no listener is valid |
 | `Programmed` | `True` | `Programmed` | Gateway configured in Cloudflare |
 
 ### Gateway Listener Conditions
@@ -216,16 +215,18 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | Type | Status | Reason | Description |
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Listener accepted |
-| `Accepted` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with a higher-precedence listener on the same port |
+| `Accepted` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with another listener of the Gateway on the same port. Every listener of a conflicting set is refused; none wins. A listener whose protocol is not served (`TCP`, `TLS`, `UDP`) is refused as `UnsupportedProtocol` instead and conflicts with no other listener |
 | `Accepted` | `False` | `UnsupportedValue` | `allowedRoutes.namespaces.from` is `Selector` and the selector does not parse, so the listener admits no route. The message says the selector is invalid without quoting it |
 | `Programmed` | `True` | `Programmed` | Listener programmed |
 | `Programmed` | `False` | `Invalid` | Listener has unresolved references, or is not `Accepted` |
-| `Programmed` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with a higher-precedence listener |
+| `Programmed` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with another listener of the Gateway |
 | `Conflicted` | `True` | `HostnameConflict` / `ProtocolConflict` | Listener clashes with another listener on hostname (same port + hostname) or protocol (different protocol on the same port) |
 | `ResolvedRefs` | `True` | `ResolvedRefs` | References resolved |
 | `ResolvedRefs` | `False` | `InvalidCertificateRef` | TLS certificate reference invalid |
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace TLS ref denied by ReferenceGrant |
 | `ResolvedRefs` | `False` | `InvalidRouteKinds` | Invalid route kind in allowedRoutes |
+
+A listener's `attachedRoutes` counts each Route attached to it that is `Accepted` for the Gateway, once per listener. A conflicted listener counts a Route when the same parentRef also matches a usable listener. A Route whose only matching listeners are conflicted is rejected, so it counts nowhere. A Route that is `Accepted: False` with reason `Pending`, for example while a Cloudflare sync fails, is not counted either, so the count can drop while the Cloudflare API is unavailable.
 
 ### HTTPRoute/GRPCRoute Conditions
 
@@ -239,3 +240,5 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | `ResolvedRefs` | `True` | `ResolvedRefs` | Backend references resolved |
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace reference denied |
 | `ResolvedRefs` | `False` | `BackendNotFound` | Backend Service not found |
+
+When none of a route's parentRefs leads to a Gateway this controller manages any more, for example because the route now points at another controller's Gateway, its Gateway moved to another GatewayClass, or its ListenerSet now points at another Gateway, the controller removes the `status.parents` entries it wrote for that route and leaves other controllers' entries alone. Deleting the GatewayClass itself does not trigger this yet: the routes keep their entries until the route or its Gateway changes, tracked by [#918](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/918).

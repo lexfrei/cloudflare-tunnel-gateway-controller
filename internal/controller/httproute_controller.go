@@ -117,6 +117,7 @@ func (r *HTTPRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		controllerName:  r.ControllerName,
 		componentName:   "httproute",
 		wrapRoute:       func(route *gatewayv1.HTTPRoute) Route { return HTTPRouteWrapper{route} },
+		newAccessor:     newHTTPRouteAccessor,
 		syncAndUpdate:   r.syncAndUpdateStatus,
 	})
 }
@@ -210,10 +211,12 @@ func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	})
 }
 
-// findRoutesForListenerSet enqueues every HTTPRoute managed by our controller
-// whose parentRef targets the given ListenerSet, so the route re-binds (and
-// recomputes its inherited hostnames) when the ListenerSet's listeners
-// change. Routes attached directly to the parent Gateway are intentionally
+// findRoutesForListenerSet enqueues every HTTPRoute whose parentRef targets
+// the given ListenerSet when its parent Gateway is ours, so the route re-binds
+// (and recomputes its inherited hostnames) when the ListenerSet's listeners
+// change. When the parent is not ours, only the routes carrying this
+// controller's status are enqueued, so their entries get released. Routes
+// attached directly to the parent Gateway are intentionally
 // NOT enqueued here: a Gateway-bound route inherits hostnames only from the
 // Gateway's own listeners, so it has no dependency on ListenerSet changes.
 //

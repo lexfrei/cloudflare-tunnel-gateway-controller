@@ -23,8 +23,14 @@
 //   - Protocol conflict: two listeners share the same port but disagree on
 //     protocol.
 //
-// In all cases the higher-precedence listener wins; the lower-precedence one
-// is annotated with ConflictReason.
+// A ListenerSet entry that conflicts loses to the higher-precedence listener
+// and is annotated with ConflictReason. Two of the Gateway's own listeners have
+// no precedence between them: the spec says an implementation MUST NOT pick
+// one conflicting Listener as the winner, so both are annotated. A Gateway
+// listener whose protocol this controller does not serve takes no part in
+// conflict detection: the spec says it SHOULD NOT be accepted and exempts it
+// from the conflict rule, so it neither claims its port nor refuses another
+// listener there.
 package listenermerge
 
 import (
@@ -181,42 +187,112 @@ func sortListenerSets(in []*gatewayv1.ListenerSet) []*gatewayv1.ListenerSet {
 }
 
 // annotateConflicts walks the merged view in precedence order and marks each
-// listener with a conflict reason if a higher-precedence listener has already
-// claimed the same (port, hostname) tuple (HostnameConflict) or used a
-// different protocol on the same port (ProtocolConflict).
+// listener with a conflict reason if an earlier listener has already claimed
+// the same (port, hostname) tuple (HostnameConflict) or used a different
+// protocol on the same port (ProtocolConflict).
 func annotateConflicts(merged []MergedListener) {
-	// First-seen protocol per port — used to detect ProtocolConflict.
-	protoSeen := make(map[gatewayv1.PortNumber]gatewayv1.ProtocolType)
-	// First-seen (port, hostname) — used to detect HostnameConflict.
-	hostnameSeen := make(map[hostnameKey]struct{})
+	// Protocols claimed on each port, each with its first claimant (index into
+	// merged). The Gateway's own listeners all claim theirs up front: they
+	// precede every ListenerSet entry, and no conflict among them has a winner,
+	// so an entry is checked against every protocol the Gateway uses there.
+	protoClaims := make(map[gatewayv1.PortNumber]map[gatewayv1.ProtocolType]int)
+	claimProtocol := func(i int) {
+		port := merged[i].Port
+		if protoClaims[port] == nil {
+			protoClaims[port] = make(map[gatewayv1.ProtocolType]int)
+		}
+
+		if _, ok := protoClaims[port][merged[i].Protocol]; !ok {
+			protoClaims[port][merged[i].Protocol] = i
+		}
+	}
+
+	for i := range merged {
+		if merged[i].ParentKind == ParentKindGateway && ServableProtocol(merged[i].Protocol) {
+			claimProtocol(i)
+		}
+	}
+
+	// First claimant of each (port, hostname) — used to detect HostnameConflict.
+	hostnameOwner := make(map[hostnameKey]int)
 
 	for i := range merged {
 		entry := &merged[i]
 
+		// A Gateway listener whose protocol is not served is refused as
+		// unsupported. The spec exempts it from the conflict rule, so it claims
+		// nothing and refuses nothing.
+		if entry.ParentKind == ParentKindGateway && !ServableProtocol(entry.Protocol) {
+			continue
+		}
+
 		// Protocol-conflict has precedence over hostname-conflict per spec.
-		if existing, ok := protoSeen[entry.Port]; ok && existing != entry.Protocol {
-			entry.ConflictReason = gatewayv1.ListenerReasonProtocolConflict
-			entry.ConflictMessage = "Listener conflicts on protocol with a higher-precedence listener on the same port"
+		if owner, ok := otherProtocolClaim(protoClaims[entry.Port], entry.Protocol); ok {
+			markConflict(merged, owner, i, gatewayv1.ListenerReasonProtocolConflict, "protocol")
 
 			continue
 		}
 
 		key := hostnameKey{port: entry.Port, hostname: hostnameValue(entry.Hostname)}
 
-		if _, taken := hostnameSeen[key]; taken {
-			entry.ConflictReason = gatewayv1.ListenerReasonHostnameConflict
-			entry.ConflictMessage = "Listener conflicts on hostname with a higher-precedence listener on the same port"
+		if owner, taken := hostnameOwner[key]; taken {
+			markConflict(merged, owner, i, gatewayv1.ListenerReasonHostnameConflict, "hostname")
 
 			continue
 		}
 
-		// Accepted — claim the port's protocol and the (port,hostname) slot.
-		if _, ok := protoSeen[entry.Port]; !ok {
-			protoSeen[entry.Port] = entry.Protocol
+		claimProtocol(i)
+		hostnameOwner[key] = i
+	}
+}
+
+// ServableProtocol reports whether this controller has a data plane for the
+// listener protocol. Only HTTP and HTTPS carry HTTPRoute / GRPCRoute through
+// the in-process proxy; TCP, TLS, UDP, and any unrecognised protocol have none
+// (Cloudflare Tunnel is HTTP-focused and terminates TLS at the edge).
+func ServableProtocol(protocol gatewayv1.ProtocolType) bool {
+	switch protocol {
+	case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
+		return true
+	case gatewayv1.TCPProtocolType, gatewayv1.TLSProtocolType, gatewayv1.UDPProtocolType:
+		return false
+	default:
+		// Any unrecognised protocol (e.g. the conformance suite's INVALID) has
+		// no data plane here either.
+		return false
+	}
+}
+
+// otherProtocolClaim returns a claimant of a protocol on the port other than
+// protocol, if any. Which one does not matter: every Gateway-owned listener on
+// a mixed port reaches this check itself, and an entry is refused either way.
+func otherProtocolClaim(claims map[gatewayv1.ProtocolType]int, protocol gatewayv1.ProtocolType) (int, bool) {
+	for claimed, index := range claims {
+		if claimed != protocol {
+			return index, true
+		}
+	}
+
+	return 0, false
+}
+
+// markConflict annotates merged[loser], which clashes with the earlier
+// claimant merged[owner]. When both are the Gateway's own listeners the owner
+// is annotated too, because neither may win.
+func markConflict(merged []MergedListener, owner, loser int, reason gatewayv1.ListenerConditionReason, field string) {
+	if merged[owner].ParentKind == ParentKindGateway && merged[loser].ParentKind == ParentKindGateway {
+		message := "Listener conflicts on " + field + " with another listener of this Gateway on the same port"
+
+		merged[loser].ConflictReason, merged[loser].ConflictMessage = reason, message
+		if merged[owner].ConflictReason == "" {
+			merged[owner].ConflictReason, merged[owner].ConflictMessage = reason, message
 		}
 
-		hostnameSeen[key] = struct{}{}
+		return
 	}
+
+	merged[loser].ConflictReason = reason
+	merged[loser].ConflictMessage = "Listener conflicts on " + field + " with a higher-precedence listener on the same port"
 }
 
 type hostnameKey struct {

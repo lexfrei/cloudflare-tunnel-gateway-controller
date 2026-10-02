@@ -171,6 +171,8 @@ func TestListenerSetReconciler_GRPCRouteCountedOncePerEntry(t *testing.T) {
 	}
 
 	scheme := newListenerSetScheme(t)
+	stampAccepted(testListenerSetController, metav1.ConditionTrue, route)
+
 	r, cli := newListenerSetReconcilerWithObjects(t, scheme, gc, gw, ls, route)
 
 	_, err := r.Reconcile(context.Background(), ctrl.Request{

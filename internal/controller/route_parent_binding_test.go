@@ -244,7 +244,7 @@ func TestResolveRouteParentBinding_ConflictedListenerSetEntryRejected(t *testing
 
 // TestResolveRouteParentBinding_ConflictedGatewayListenerRejected guards the
 // spec contract for the plain-Gateway path: a route pinned (via sectionName) to
-// a Gateway-owned listener that conflicts with a higher-precedence listener
+// a Gateway-owned listener that conflicts with another listener
 // MUST NOT be accepted (gateway_types.go:181-184). Mirrors the ListenerSet case.
 func TestResolveRouteParentBinding_ConflictedGatewayListenerRejected(t *testing.T) {
 	t.Parallel()
@@ -256,7 +256,7 @@ func TestResolveRouteParentBinding_ConflictedGatewayListenerRejected(t *testing.
 		Spec: gatewayv1.GatewaySpec{
 			GatewayClassName: gatewayv1.ObjectName(gc.Name),
 			Listeners: []gatewayv1.Listener{
-				// Two listeners share (port=80, hostname) → the second is Conflicted.
+				// Two listeners share (port=80, hostname) → both are Conflicted.
 				{
 					Name: "gw-l1", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &host,
 					AllowedRoutes: &gatewayv1.AllowedRoutes{

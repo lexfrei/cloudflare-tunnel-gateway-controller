@@ -125,10 +125,11 @@ func assertForeignGroupParentNotCounted(t *testing.T, foreignGroup gatewayv1.Gro
 		}
 	}
 
-	cli := setupGatewayFakeClient(gateway,
-		routeTo("bound", gatewayv1.ParentReference{Name: "gw"}),
-		routeTo("foreign", gatewayv1.ParentReference{Group: &foreignGroup, Kind: &gatewayKind, Name: "gw"}),
-	)
+	bound := routeTo("bound", gatewayv1.ParentReference{Name: "gw"})
+	foreign := routeTo("foreign", gatewayv1.ParentReference{Group: &foreignGroup, Kind: &gatewayKind, Name: "gw"})
+	stampAccepted("test-controller", metav1.ConditionTrue, bound, foreign)
+
+	cli := setupGatewayFakeClient(gateway, bound, foreign)
 
 	reconciler := &GatewayReconciler{Client: cli, Scheme: cli.Scheme(), ControllerName: "test-controller"}
 

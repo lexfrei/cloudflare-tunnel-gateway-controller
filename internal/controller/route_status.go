@@ -10,6 +10,7 @@ import (
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -1046,3 +1047,95 @@ const (
 	kindHTTPRouteDiag = "HTTPRoute"
 	kindGRPCRouteDiag = "GRPCRoute"
 )
+
+// holdsOwnParentStatus reports whether any status.parents entry was written by
+// controllerName.
+func holdsOwnParentStatus(parents []gatewayv1.RouteParentStatus, controllerName string) bool {
+	return slices.ContainsFunc(parents, func(parent gatewayv1.RouteParentStatus) bool {
+		return string(parent.ControllerName) == controllerName
+	})
+}
+
+// releaseOwnParentStatus removes controllerName's status.parents entries from a
+// route that names no Gateway this controller manages. RouteParentStatus asks
+// controllers to clean up their entries once they are no longer needed, and
+// nothing else visits such a route again. A parent that cannot be read leaves
+// the entries in place and returns the error, since a failed read says nothing
+// about whether the route is still ours.
+func releaseOwnParentStatus(
+	ctx context.Context,
+	cli client.Client,
+	controllerName string,
+	key types.NamespacedName,
+	newAccessor func() routeAccessor,
+) error {
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		accessor := newAccessor()
+		if err := cli.Get(ctx, key, accessor.obj); err != nil {
+			return errors.Wrap(client.IgnoreNotFound(err), "failed to get route")
+		}
+
+		routeStatus := accessor.routeStatus()
+		if !holdsOwnParentStatus(routeStatus.Parents, controllerName) {
+			return nil
+		}
+
+		ours, err := namesManagedGateway(ctx, cli, controllerName, accessor.parentRefs(), key.Namespace)
+		if err != nil || ours {
+			return err
+		}
+
+		routeStatus.Parents = slices.DeleteFunc(routeStatus.Parents, func(parent gatewayv1.RouteParentStatus) bool {
+			return string(parent.ControllerName) == controllerName
+		})
+
+		return errors.Wrap(cli.Status().Update(ctx, accessor.obj), "failed to update route status")
+	})
+
+	return errors.Wrap(err, "failed to release route parent status")
+}
+
+// namesManagedGateway reports whether any parentRef resolves to a Gateway
+// managed by controllerName, returning the error of any parent that could not
+// be read.
+func namesManagedGateway(
+	ctx context.Context,
+	cli client.Client,
+	controllerName string,
+	parentRefs []gatewayv1.ParentReference,
+	routeNamespace string,
+) (bool, error) {
+	for _, ref := range parentRefs {
+		gateway, found, err := lookupParentGatewayFromRef(ctx, cli, ref, routeNamespace)
+		if err != nil {
+			return false, err
+		}
+
+		if !found {
+			continue
+		}
+
+		managed, err := gatewayIsManaged(ctx, cli, controllerName, gateway)
+		if err != nil || managed {
+			return managed, err
+		}
+	}
+
+	return false, nil
+}
+
+// parentRefAcceptedInStatus reports whether the route's status holds an
+// Accepted=True entry written by controllerName for ref.
+func parentRefAcceptedInStatus(
+	parents []gatewayv1.RouteParentStatus,
+	ref gatewayv1.ParentReference,
+	routeNamespace, controllerName string,
+) bool {
+	want := statusParentRef(ref, routeNamespace)
+
+	return slices.ContainsFunc(parents, func(parent gatewayv1.RouteParentStatus) bool {
+		return string(parent.ControllerName) == controllerName &&
+			parentRefIdentityEqual(parent.ParentRef, want) &&
+			meta.IsStatusConditionTrue(parent.Conditions, string(gatewayv1.RouteConditionAccepted))
+	})
+}

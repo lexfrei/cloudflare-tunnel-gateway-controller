@@ -33,13 +33,15 @@ type reconcileRouteParams[T client.Object] struct {
 	controllerName  string
 	componentName   string
 	wrapRoute       func(T) Route
+	newAccessor     func() routeAccessor
 	syncAndUpdate   func(ctx context.Context) (ctrl.Result, error)
 }
 
 // reconcileRoute is the generic Reconcile implementation shared by
 // HTTPRouteReconciler and GRPCRouteReconciler. It eliminates duplication
 // between the two controllers that follow an identical reconcile pattern:
-// wait for startup → get route → check ownership → sync.
+// wait for startup → get route → check ownership → sync, or release this
+// controller's stale status entries when the route is not ours.
 func reconcileRoute[T client.Object](
 	ctx context.Context,
 	req ctrl.Request,
@@ -67,7 +69,8 @@ func reconcileRoute[T client.Object](
 
 	wrapped := params.wrapRoute(route)
 	if !routeReferencesOurGateways(ctx, params.k8sClient, params.controllerName, wrapped) {
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, releaseOwnParentStatus(ctx, params.k8sClient, params.controllerName,
+			req.NamespacedName, params.newAccessor)
 	}
 
 	logger.Info("reconciling " + params.componentName)

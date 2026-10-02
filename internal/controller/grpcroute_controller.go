@@ -186,6 +186,7 @@ func (r *GRPCRouteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		controllerName:  r.ControllerName,
 		componentName:   "grpcroute",
 		wrapRoute:       func(route *gatewayv1.GRPCRoute) Route { return GRPCRouteWrapper{route} },
+		newAccessor:     newGRPCRouteAccessor,
 		syncAndUpdate:   r.syncAndUpdateStatus,
 	})
 }
@@ -294,8 +295,10 @@ func (r *GRPCRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	})
 }
 
-// findRoutesForListenerSet enqueues every GRPCRoute managed by our
-// controller whose parentRef targets the given ListenerSet.
+// findRoutesForListenerSet enqueues every GRPCRoute whose parentRef targets
+// the given ListenerSet when its parent Gateway is ours. When the parent is
+// not ours, only the routes carrying this controller's status are enqueued,
+// so their entries get released.
 //
 //nolint:dupl // mirrored on purpose against HTTPRouteReconciler.findRoutesForListenerSet — different list/wrapper types prevent a clean generic
 func (r *GRPCRouteReconciler) findRoutesForListenerSet(

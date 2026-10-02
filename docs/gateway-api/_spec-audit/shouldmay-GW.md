@@ -7,7 +7,7 @@ Gateway API v1.6.1 (originally audited at v1.5.1; the v1.6.0 refresh's new GW-10
 | ID | Keyword | Verdict | Evidence | Notes |
 | --- | --- | --- | --- | --- |
 | GW-12 | SHOULD NOT | HONOURED-TESTED | `gateway_controller.go:816-840` buildListenerAcceptedCondition; test `gateway_listener_protocol_test.go:87` TestGatewayReconciler_UnsupportedListenerProtocol_AcceptedFalse (TCP case) | TCP/TLS/UDP listeners set Accepted=False / UnsupportedProtocol, not accepted. |
-| GW-22 | SHOULD | HONOURED-TESTED | `listenerset_view.go:59` gatewayConflictedListenersMessage (joins conflicted names); test `gateway_controller_test.go:775` asserts message contains "http2" | ListenersNotValid message names the conflicted listeners. |
+| GW-22 | SHOULD | HONOURED-TESTED | `gatewayInvalidListeners` (joins conflicted names); `TestGatewayReconciler_OwnConflictKeepsGatewayAccepted` asserts both names | ListenersNotValid message names the conflicted listeners. |
 | GW-23 | SHOULD | HONOURED-TESTED | `gateway_controller.go:319-323` + `listenerset_view.go:90` conflictedGatewayListenerConditions sets per-listener Conflicted=True; ListenerSet side `listenerset_protocol_test.go` / `listenerset_view_test.go:31` | Per-listener status indicates which are conflicted/not Accepted. |
 | GW-24 | SHOULD | HONOURED-TESTED | `proxy/router.go:174-200` Route(): exact host then wildcard then default, returns first match; test `proxy/integration_test.go:2007` TestHandler_WildcardHostnameRouting | A request resolves to at most one bucket. |
 | GW-25 | SHOULD | HONOURED-TESTED | `proxy/router.go:178-184` exactHosts tried before wildcardHosts; test `proxy/integration_test.go:2041` "exact host wins over wildcard" subtest | foo.example.com routed via exact listener over /*.example.com. |
@@ -30,7 +30,7 @@ Gateway API v1.6.1 (originally audited at v1.5.1; the v1.6.0 refresh's new GW-10
 | ID | Verdict | Evidence | Notes |
 | --- | --- | --- | --- |
 | GW-04 | OMITTED-INTENTIONAL | `gateway_controller.go:99-116` status-only reconciler; no multi-Gateway data-plane merge | One proxy data plane is shared chart-wide, but config is not "merged from multiple Gateways onto one data plane" in the spec sense — each Gateway's routes are synced independently. Tunnel architecture. |
-| GW-17 | OMITTED-INTENTIONAL | `gateway_controller.go:238-246` marks whole Gateway ListenersNotValid on any conflict; does not accept a partial conflict-free subset | Conflict handling rejects at Gateway level rather than accepting the partial set — the permitted MAY alternative is declined. |
+| GW-17 | IMPLEMENTED | `gatewayAcceptedCondition` keeps the Gateway Accepted=True/ListenersNotValid while a distinct listener remains; `bindGatewayListeners` serves only the conflict-free ones | The Gateway is accepted with the partial listener set that holds no conflicted listener. |
 | GW-29 | OMITTED-INTENTIONAL | No address merging; each Gateway gets its own tunnel-CNAME address (`gateway_controller.go:220`) | Tunnel architecture: no shared address pool. |
 | GW-32 | IMPLEMENTED | `gateway_controller.go:220-225` assigns the tunnel CNAME when no addresses specified; `conformance_test.go:65` SupportGatewayAddressEmpty | Implementation-specific auto-assignment of an address — exactly this MAY. |
 | GW-46 | IMPLEMENTED | `routebinding/binding.go:152-164` (namespace), `routebinding/kind.go:24-41` (kind) honour listener.AllowedRoutes | Namespace (Same/All/Selector) + route-kind filtering enforced. |

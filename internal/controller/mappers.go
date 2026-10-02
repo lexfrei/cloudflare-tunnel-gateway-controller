@@ -400,6 +400,7 @@ type Route interface {
 	GetNamespace() string
 	GetHostnames() []gatewayv1.Hostname
 	GetParentRefs() []gatewayv1.ParentReference
+	GetParentStatuses() []gatewayv1.RouteParentStatus
 	GetRouteKind() gatewayv1.Kind
 	// GetCrossNamespaceBackendNamespaces returns namespaces referenced by backends
 	// that differ from the route's own namespace.
@@ -704,6 +705,11 @@ func (w HTTPRouteWrapper) GetParentRefs() []gatewayv1.ParentReference {
 	return w.Spec.ParentRefs
 }
 
+// GetParentStatuses returns the parent entries of the HTTPRoute status.
+func (w HTTPRouteWrapper) GetParentStatuses() []gatewayv1.RouteParentStatus {
+	return w.Status.Parents
+}
+
 // GetRouteKind returns the route kind for HTTPRoute.
 func (w HTTPRouteWrapper) GetRouteKind() gatewayv1.Kind {
 	return routebinding.KindHTTPRoute
@@ -719,13 +725,19 @@ func (w GRPCRouteWrapper) GetParentRefs() []gatewayv1.ParentReference {
 	return w.Spec.ParentRefs
 }
 
+// GetParentStatuses returns the parent entries of the GRPCRoute status.
+func (w GRPCRouteWrapper) GetParentStatuses() []gatewayv1.RouteParentStatus {
+	return w.Status.Parents
+}
+
 // GetRouteKind returns the route kind for GRPCRoute.
 func (w GRPCRouteWrapper) GetRouteKind() gatewayv1.Kind {
 	return routebinding.KindGRPCRoute
 }
 
-// FindRoutesForGateway returns reconcile requests for routes that reference the given Gateway.
-// It checks whether the Gateway's GatewayClass is managed by the given controllerName.
+// FindRoutesForGateway returns reconcile requests for routes that reference the given Gateway,
+// directly or through one of its ListenerSets. For a Gateway whose GatewayClass is not managed
+// by controllerName, it returns only the routes carrying this controller's status.
 func FindRoutesForGateway(
 	ctx context.Context,
 	cli client.Client,
@@ -738,26 +750,73 @@ func FindRoutesForGateway(
 		return nil
 	}
 
-	if !isGatewayManagedByController(ctx, cli, gateway, controllerName) {
-		return nil
+	// Routes attached through the Gateway's ListenerSets are enqueued too: a
+	// Gateway spec change such as allowedListeners decides whether they are
+	// still admitted. A Gateway that is not ours enqueues only the routes
+	// carrying our status, so the route reconcile can release those entries.
+	managed := isGatewayManagedByController(ctx, cli, gateway, controllerName)
+
+	// Listed on first use: a foreign Gateway usually has no route carrying our
+	// status at all.
+	var listenerSets []*gatewayv1.ListenerSet
+
+	listed := false
+	onListenerSet := func(route Route) bool {
+		if !listed {
+			listenerSets, listed = listenerSetsOfGateway(ctx, cli, gateway), true
+		}
+
+		return slices.ContainsFunc(listenerSets, func(listenerSet *gatewayv1.ListenerSet) bool {
+			return routeTargetsListenerSet(route, listenerSet)
+		})
 	}
 
 	var requests []reconcile.Request
 
 	for _, route := range routes {
-		for _, ref := range route.GetParentRefs() {
-			if parentRefIsGateway(ref) && parentReferenceToKey(ref, route.GetNamespace()) == client.ObjectKeyFromObject(gateway) {
-				requests = append(requests, reconcile.Request{
-					Name:      route.GetName(),
-					Namespace: route.GetNamespace(),
-				})
+		if !managed && !holdsOwnParentStatus(route.GetParentStatuses(), controllerName) {
+			continue
+		}
 
-				break
-			}
+		if routeTargetsGateway(route, gateway) || onListenerSet(route) {
+			requests = append(requests, reconcile.Request{
+				Name:      route.GetName(),
+				Namespace: route.GetNamespace(),
+			})
 		}
 	}
 
 	return requests
+}
+
+// routeTargetsGateway reports whether any of the route's parentRefs names the
+// Gateway itself.
+func routeTargetsGateway(route Route, gateway *gatewayv1.Gateway) bool {
+	return slices.ContainsFunc(route.GetParentRefs(), func(ref gatewayv1.ParentReference) bool {
+		return parentRefIsGateway(ref) && parentReferenceToKey(ref, route.GetNamespace()) == client.ObjectKeyFromObject(gateway)
+	})
+}
+
+// listenerSetsOfGateway returns the ListenerSets whose parentRef names the
+// Gateway, or nil when they cannot be listed.
+func listenerSetsOfGateway(ctx context.Context, cli client.Client, gateway *gatewayv1.Gateway) []*gatewayv1.ListenerSet {
+	var list gatewayv1.ListenerSetList
+	if err := cli.List(ctx, &list); err != nil {
+		logging.FromContext(ctx).Warn("failed to list ListenerSets; routes attached through them are not enqueued",
+			"gateway", gateway.Namespace+"/"+gateway.Name, "error", err)
+
+		return nil
+	}
+
+	var out []*gatewayv1.ListenerSet
+
+	for i := range list.Items {
+		if listenerSetTargetsGateway(&list.Items[i], gateway) {
+			out = append(out, &list.Items[i])
+		}
+	}
+
+	return out
 }
 
 // FilterAcceptedRoutes returns reconcile requests for routes accepted by a Gateway

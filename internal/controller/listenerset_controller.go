@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/cockroachdb/errors"
@@ -33,6 +34,8 @@ const (
 	listenerSetMsgListenersBad = "No listener in this ListenerSet is usable: each one conflicts, " +
 		"has unresolved references, uses a protocol this controller does not serve " +
 		"or has an invalid allowedRoutes.namespaces.selector"
+	listenerSetMsgConflicted          = "One or more listeners in this ListenerSet conflict with another listener"
+	listenerSetMsgUnresolvedRefs      = "One or more listeners in this ListenerSet have unresolved references"
 	listenerSetMsgUnsupportedProtocol = "One or more listeners in this ListenerSet use a protocol " +
 		"this controller does not serve (only HTTP and HTTPS are supported)"
 	listenerSetMsgInvalidSelector = "One or more listeners in this ListenerSet have an invalid " +
@@ -331,15 +334,10 @@ func (r *ListenerSetReconciler) computeAcceptance(
 // Per the Gateway API spec (ListenerEntryStatus.AttachedRoutes), attachment
 // depends SOLELY on AllowedRoutes + ParentRefs plus the route's own Accepted
 // state: "the AttachedRoutes field count MUST be set for Listeners, even if the
-// Accepted condition of an individual Listener is set to False". Only the route's
-// binding-Accepted verdict gates the count; a listener's own status — whether
-// Conflicted, or Programmed=False because a TLS cert ref did not resolve — never
-// changes it. The count is observational (blast radius) and intentionally
-// decoupled from programming: a route on a Conflicted entry is counted here even
-// though the data plane drops it (see filterMatchedListenersByConflict in
-// route_parent_binding.go and dropConflictedSections in
-// route_effective_hostnames.go). Do not re-add a listener-status gate to "fix"
-// that apparent mismatch — the divergence is spec-mandated.
+// Accepted condition of an individual Listener is set to False", and "Routes
+// with any other value for the Accepted condition MUST NOT be included". A
+// listener's own status never removes a route it matched from the count; the
+// route's Accepted verdict for this ListenerSet is read from its own status.
 func (r *ListenerSetReconciler) countAttachedRoutesPerEntry(
 	ctx context.Context,
 	listenerSet *gatewayv1.ListenerSet,
@@ -362,7 +360,6 @@ func (r *ListenerSetReconciler) countAttachedRoutesPerEntry(
 	return out, nil
 }
 
-//nolint:dupl // mirrored on purpose against countAttachedGRPCRoutes — different list type prevents a generic
 func (r *ListenerSetReconciler) countAttachedHTTPRoutes(
 	ctx context.Context,
 	listenerSet *gatewayv1.ListenerSet,
@@ -376,17 +373,12 @@ func (r *ListenerSetReconciler) countAttachedHTTPRoutes(
 
 	for i := range routes.Items {
 		route := &routes.Items[i]
-		incrementListenerSetAttachedRoutes(
-			ctx, validator, listenerSet,
-			route.Namespace, route.Name, route.Spec.Hostnames,
-			routebinding.KindHTTPRoute, route.Spec.ParentRefs, counts,
-		)
+		incrementListenerSetAttachedRoutes(ctx, validator, r.ControllerName, listenerSet, HTTPRouteWrapper{route}, counts)
 	}
 
 	return nil
 }
 
-//nolint:dupl // mirrored on purpose against countAttachedHTTPRoutes — different list type prevents a generic
 func (r *ListenerSetReconciler) countAttachedGRPCRoutes(
 	ctx context.Context,
 	listenerSet *gatewayv1.ListenerSet,
@@ -400,11 +392,7 @@ func (r *ListenerSetReconciler) countAttachedGRPCRoutes(
 
 	for i := range routes.Items {
 		route := &routes.Items[i]
-		incrementListenerSetAttachedRoutes(
-			ctx, validator, listenerSet,
-			route.Namespace, route.Name, route.Spec.Hostnames,
-			routebinding.KindGRPCRoute, route.Spec.ParentRefs, counts,
-		)
+		incrementListenerSetAttachedRoutes(ctx, validator, r.ControllerName, listenerSet, GRPCRouteWrapper{route}, counts)
 	}
 
 	return nil
@@ -413,37 +401,35 @@ func (r *ListenerSetReconciler) countAttachedGRPCRoutes(
 func incrementListenerSetAttachedRoutes(
 	ctx context.Context,
 	validator *routebinding.Validator,
+	controllerName string,
 	listenerSet *gatewayv1.ListenerSet,
-	routeNamespace, routeName string,
-	hostnames []gatewayv1.Hostname,
-	kind gatewayv1.Kind,
-	parentRefs []gatewayv1.ParentReference,
+	route Route,
 	counts map[gatewayv1.SectionName]int32,
 ) {
+	routeNamespace := route.GetNamespace()
+
 	// A single route counts at most once per listener entry, even if it
 	// lists the same ListenerSet in multiple parentRefs (degenerate but
 	// legal). Track which sections this route already counted.
 	countedThisRoute := make(map[gatewayv1.SectionName]struct{})
 
-	for _, ref := range parentRefs {
-		if !parentRefSelectsListenerSet(ref, routeNamespace, listenerSet) {
+	for _, ref := range route.GetParentRefs() {
+		if !parentRefSelectsListenerSet(ref, routeNamespace, listenerSet) ||
+			!parentRefAcceptedInStatus(route.GetParentStatuses(), ref, routeNamespace, controllerName) {
 			continue
 		}
 
 		routeInfo := &routebinding.RouteInfo{
-			Name:        routeName,
+			Name:        route.GetName(),
 			Namespace:   routeNamespace,
-			Hostnames:   hostnames,
-			Kind:        kind,
+			Hostnames:   route.GetHostnames(),
+			Kind:        route.GetRouteKind(),
 			SectionName: ref.SectionName,
 			Port:        ref.Port,
 		}
 
-		// Count is gated only by the route's binding-Accepted verdict — the
-		// Gateway API "Routes with the Accepted condition set to True" rule. A
-		// listener's own status (Conflicted, or Programmed=False from an
-		// unresolved TLS cert ref) is never consulted; the spec requires the
-		// count to be set even when the listener is not Accepted.
+		// The Accepted gate above reads the route's own status; binding here
+		// only names the entries the ref attaches to.
 		result, err := validator.ValidateBindingForListenerSet(ctx, listenerSet, routeInfo)
 		if err != nil || !result.Accepted {
 			continue
@@ -519,55 +505,33 @@ func (r *ListenerSetReconciler) collectListenerEntryRefChecks(
 // ListenerSetReasonListenersNotValid:
 //
 //   - No usable entry → Accepted=False / Reason=ListenersNotValid.
-//   - A usable entry beside one with an unservable protocol or an invalid
-//     selector → Accepted=True / Reason=ListenersNotValid.
+//   - A usable entry beside an unusable one → Accepted=True /
+//     Reason=ListenersNotValid, naming each cause present.
 //   - Otherwise → Accepted=True / Reason=Accepted.
 func summariseListenerSet(
 	merged *listenermerge.MergeResult,
 	listenerSet *gatewayv1.ListenerSet,
 	refChecks map[gatewayv1.SectionName]listenerEntryRefsCheck,
 ) (bool, gatewayv1.ListenerSetConditionReason, string) {
-	usable, unsupportedProtocol, invalidSelector := false, false, false
+	usable := false
+
+	var causes []string
 
 	for i := range listenerSet.Spec.Listeners {
-		entry := &listenerSet.Spec.Listeners[i]
-		mergedEntry := findMergedEntry(merged, listenerSet, entry.Name)
-
-		if mergedEntry != nil && mergedEntry.ConflictReason != "" {
-			continue
-		}
-
-		if check, ok := refChecks[entry.Name]; ok && check.Status == metav1.ConditionFalse {
-			continue
-		}
-
-		if !servableListenerProtocol(entry.Protocol) {
-			unsupportedProtocol = true
+		problem := listenerSetEntryProblem(merged, listenerSet, &listenerSet.Spec.Listeners[i], refChecks)
+		if problem == "" {
+			usable = true
 
 			continue
 		}
 
-		if routebinding.NamespaceSelectorInvalid(entry.AllowedRoutes) {
-			invalidSelector = true
-
-			continue
+		if !slices.Contains(causes, problem) {
+			causes = append(causes, problem)
 		}
-
-		usable = true
 	}
 
 	if !usable {
 		return false, gatewayv1.ListenerSetReasonListenersNotValid, listenerSetMsgListenersBad
-	}
-
-	var causes []string
-
-	if unsupportedProtocol {
-		causes = append(causes, listenerSetMsgUnsupportedProtocol)
-	}
-
-	if invalidSelector {
-		causes = append(causes, listenerSetMsgInvalidSelector)
 	}
 
 	if len(causes) > 0 {
@@ -575,6 +539,33 @@ func summariseListenerSet(
 	}
 
 	return true, gatewayv1.ListenerSetReasonAccepted, "ListenerSet attached to parent Gateway"
+}
+
+// listenerSetEntryProblem returns the aggregate message for why an entry is
+// not usable, or "" when it is.
+func listenerSetEntryProblem(
+	merged *listenermerge.MergeResult,
+	listenerSet *gatewayv1.ListenerSet,
+	entry *gatewayv1.ListenerEntry,
+	refChecks map[gatewayv1.SectionName]listenerEntryRefsCheck,
+) string {
+	if mergedEntry := findMergedEntry(merged, listenerSet, entry.Name); mergedEntry != nil && mergedEntry.ConflictReason != "" {
+		return listenerSetMsgConflicted
+	}
+
+	if check, ok := refChecks[entry.Name]; ok && check.Status == metav1.ConditionFalse {
+		return listenerSetMsgUnresolvedRefs
+	}
+
+	if !servableListenerProtocol(entry.Protocol) {
+		return listenerSetMsgUnsupportedProtocol
+	}
+
+	if routebinding.NamespaceSelectorInvalid(entry.AllowedRoutes) {
+		return listenerSetMsgInvalidSelector
+	}
+
+	return ""
 }
 
 // listenerSetTargetsGateway returns true when the ListenerSet's spec.parentRef
@@ -731,14 +722,6 @@ func buildListenerSetRejectedEntryStatuses(
 	now metav1.Time,
 ) []gatewayv1.ListenerEntryStatus {
 	out := make([]gatewayv1.ListenerEntryStatus, 0, len(listenerSet.Spec.Listeners))
-
-	// Reason "NotAllowed" stamps the resource-level rejection on the entry
-	// level only when there is no per-entry merge view (i.e. the resource was
-	// disallowed). The per-entry reason for ListenersNotValid is more
-	// specific and built from the merge view.
-	if result.Reason == gatewayv1.ListenerSetReasonListenersNotValid && result.MergeResult != nil {
-		return buildListenerSetEntryStatuses(listenerSet, result, generation, now)
-	}
 
 	rejectionReason := listenerEntryReasonForListenerSetRejection(result.Reason)
 

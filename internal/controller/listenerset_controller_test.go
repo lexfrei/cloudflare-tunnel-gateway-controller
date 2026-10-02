@@ -216,12 +216,11 @@ func TestListenerSetReconciler_MarksAllListenersValidNotValidWhenAllConflict(t *
 	assert.Equal(t, string(gatewayv1.ListenerReasonHostnameConflict), entryConflicted.Reason)
 }
 
-// TestListenerSetReconciler_ConflictedEntryStillCountsAttachedRoutes pins that a
-// route attached to a conflicted ListenerSet entry is still counted in
-// AttachedRoutes. Per the Gateway API spec, attachment depends solely on
-// AllowedRoutes + ParentRefs; the listener's own status (here Conflicted /
-// Programmed=False) MUST NOT reduce the count.
-func TestListenerSetReconciler_ConflictedEntryStillCountsAttachedRoutes(t *testing.T) {
+// TestListenerSetReconciler_RouteRejectedByConflictNotCounted pins the other
+// half of the AttachedRoutes contract: the entry's own status does not decide
+// attachment, but only a route Accepted for the ListenerSet is counted, and a
+// route pinned to a conflicted entry is not accepted.
+func TestListenerSetReconciler_RouteRejectedByConflictNotCounted(t *testing.T) {
 	t.Parallel()
 
 	from := gatewayv1.NamespacesFromSame
@@ -267,6 +266,8 @@ func TestListenerSetReconciler_ConflictedEntryStillCountsAttachedRoutes(t *testi
 		},
 	}
 
+	stampAccepted(testListenerSetController, metav1.ConditionFalse, route)
+
 	r, cli := newListenerSetReconcilerWithObjects(t, newListenerSetScheme(t), gc, gw, ls, route)
 
 	_, err := r.Reconcile(context.Background(), ctrl.Request{
@@ -283,9 +284,10 @@ func TestListenerSetReconciler_ConflictedEntryStillCountsAttachedRoutes(t *testi
 	require.NotNil(t, entryConflicted)
 	assert.Equal(t, metav1.ConditionTrue, entryConflicted.Status)
 
-	// ...yet the attached route is still counted.
-	assert.Equal(t, int32(1), entry.AttachedRoutes,
-		"a route attached to a conflicted listener is still counted per Gateway API AttachedRoutes semantics")
+	// ...and the route, whose only match is that entry, is not Accepted, so the
+	// spec's "Routes with the Accepted condition set to True" rule leaves it out.
+	assert.Equal(t, int32(0), entry.AttachedRoutes,
+		"a route rejected because its only entry conflicts is not counted")
 }
 
 // TestListenerSetReconciler_UnresolvedTLSRefStillCountsAttachedRoutes pins that
@@ -344,6 +346,8 @@ func TestListenerSetReconciler_UnresolvedTLSRefStillCountsAttachedRoutes(t *test
 
 	scheme := newListenerSetScheme(t)
 	require.NoError(t, corev1.AddToScheme(scheme))
+	stampAccepted(testListenerSetController, metav1.ConditionTrue, route)
+
 	r, cli := newListenerSetReconcilerWithObjects(t, scheme, gc, gw, ls, route)
 
 	_, err := r.Reconcile(context.Background(), ctrl.Request{
@@ -706,4 +710,60 @@ func TestListenerSetReconciler_InvalidAllowedListenersSelector(t *testing.T) {
 
 	assert.Contains(t, logs.String(), `"level":"WARN"`)
 	assert.Contains(t, logs.String(), "BogusOperator", "the parse error is kept for the controller log")
+}
+
+// TestListenerSetAttachedRoutes_AcceptedRouteCountsOnConflictedEntry pins that
+// an entry's own status does not decide attachment: a route that also matches
+// a usable entry is Accepted, so it is counted on the conflicted entry too.
+func TestListenerSetAttachedRoutes_AcceptedRouteCountsOnConflictedEntry(t *testing.T) {
+	t.Parallel()
+
+	conflictHost := gatewayv1.Hostname("conflict.example.com")
+	fromAll := &gatewayv1.AllowedRoutes{Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()}}
+	lsKind := gatewayv1.Kind(kindListenerSet)
+	fromSame := gatewayv1.NamespacesFromSame
+
+	gc := managedGatewayClass()
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(gc.Name),
+			AllowedListeners: &gatewayv1.AllowedListeners{Namespaces: &gatewayv1.ListenerNamespaces{From: &fromSame}},
+			Listeners: []gatewayv1.Listener{
+				{Name: "gw-l1", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &conflictHost},
+			},
+		},
+	}
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: gatewayv1.ObjectName(gw.Name)},
+			Listeners: []gatewayv1.ListenerEntry{
+				{Name: "conflicted", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: &conflictHost, AllowedRoutes: fromAll},
+				{Name: "usable", Port: 8081, Protocol: gatewayv1.HTTPProtocolType, AllowedRoutes: fromAll},
+			},
+		},
+	}
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "infra"},
+		Spec: gatewayv1.HTTPRouteSpec{CommonRouteSpec: gatewayv1.CommonRouteSpec{
+			ParentRefs: []gatewayv1.ParentReference{{Kind: &lsKind, Name: gatewayv1.ObjectName(ls.Name)}},
+		}},
+	}
+
+	stampAccepted(testListenerSetController, metav1.ConditionTrue, route)
+
+	r, cli := newListenerSetReconcilerWithObjects(t, newListenerSetScheme(t), gc, gw, ls, route)
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: ls.Name, Namespace: ls.Namespace},
+	})
+	require.NoError(t, err)
+
+	counts := map[gatewayv1.SectionName]int32{}
+	for _, entry := range getListenerSet(t, cli, ls.Name, ls.Namespace).Status.Listeners {
+		counts[entry.Name] = entry.AttachedRoutes
+	}
+
+	assert.Equal(t, map[gatewayv1.SectionName]int32{"conflicted": 1, "usable": 1}, counts)
 }
