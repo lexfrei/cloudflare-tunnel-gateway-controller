@@ -277,7 +277,8 @@ func TestProxySyncer_ResyncEndpoints_ReplaysPartiallyPushedConfig(t *testing.T) 
 // TestProxySyncer_ResyncEndpoints_NoLastConfig pins the bootstrap-safe
 // no-op: before any SyncRoutes has succeeded the cache is empty, and
 // resyncEndpoints must not invent a config or hit the wire. A new pod
-// arriving in this window catches up on the next HTTPRoute reconcile.
+// arriving in this window is configured by the endpoint watcher's cold
+// start, ProxyEndpointReconciler.configureColdPartition, not by a replay.
 func TestProxySyncer_ResyncEndpoints_NoLastConfig(t *testing.T) {
 	t.Parallel()
 
