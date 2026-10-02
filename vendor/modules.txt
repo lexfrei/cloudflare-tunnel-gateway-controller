@@ -43,7 +43,7 @@ github.com/cenkalti/backoff/v5
 # github.com/cespare/xxhash/v2 v2.3.0
 ## explicit; go 1.11
 github.com/cespare/xxhash/v2
-# github.com/cloudflare/cloudflare-go/v7 v7.11.0
+# github.com/cloudflare/cloudflare-go/v7 v7.12.0
 ## explicit; go 1.22
 github.com/cloudflare/cloudflare-go/v7
 github.com/cloudflare/cloudflare-go/v7/abuse_reports
@@ -59,6 +59,7 @@ github.com/cloudflare/cloudflare-go/v7/alerting
 github.com/cloudflare/cloudflare-go/v7/api_gateway
 github.com/cloudflare/cloudflare-go/v7/argo
 github.com/cloudflare/cloudflare-go/v7/audit_logs
+github.com/cloudflare/cloudflare-go/v7/basin_catalog
 github.com/cloudflare/cloudflare-go/v7/billing
 github.com/cloudflare/cloudflare-go/v7/bot_management
 github.com/cloudflare/cloudflare-go/v7/botnet_feed
@@ -71,6 +72,7 @@ github.com/cloudflare/cloudflare-go/v7/client_certificates
 github.com/cloudflare/cloudflare-go/v7/cloud_connector
 github.com/cloudflare/cloudflare-go/v7/cloudforce_one
 github.com/cloudflare/cloudflare-go/v7/connectivity
+github.com/cloudflare/cloudflare-go/v7/containers
 github.com/cloudflare/cloudflare-go/v7/content_scanning
 github.com/cloudflare/cloudflare-go/v7/csam_scanner
 github.com/cloudflare/cloudflare-go/v7/custom_certificates
