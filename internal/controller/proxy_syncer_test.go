@@ -202,7 +202,7 @@ func TestProxySyncer_ResyncEndpoints_FailedPushLeavesWarnNotReplay(t *testing.T)
 	putsAfterSync := putCount.Load()
 	require.Positive(t, putsAfterSync, "the sync must have attempted a push")
 
-	err = syncer.ResyncEndpoints(context.Background(), []string{failing.URL + "/config"})
+	err = syncer.ResyncEndpointsForTest(context.Background(), []string{failing.URL + "/config"})
 	require.NoError(t, err, "a resync with nothing to replay is a no-op, not an error")
 
 	assert.Equal(t, putsAfterSync, putCount.Load(), "no replay must happen after a failed push")
@@ -268,7 +268,7 @@ func TestProxySyncer_ResyncEndpoints_ReplaysPartiallyPushedConfig(t *testing.T) 
 	require.Error(t, err, "the refusing replica fails the sync")
 	require.Positive(t, accepted.Version, "the accepting replica holds the built config")
 
-	require.NoError(t, syncer.ResyncEndpoints(context.Background(), []string{joining.URL + "/config"}))
+	require.NoError(t, syncer.ResyncEndpointsForTest(context.Background(), []string{joining.URL + "/config"}))
 
 	assert.Equal(t, int32(1), joinedPuts.Load(), "the joining replica must be sent the partially-pushed config")
 	assert.Equal(t, accepted.Version, joined.Version, "and it must be the config the sync built, not a rebuild")
@@ -276,7 +276,7 @@ func TestProxySyncer_ResyncEndpoints_ReplaysPartiallyPushedConfig(t *testing.T) 
 
 // TestProxySyncer_ResyncEndpoints_NoLastConfig pins the bootstrap-safe
 // no-op: before any SyncRoutes has succeeded the cache is empty, and
-// ResyncEndpoints must not invent a config or hit the wire. A new pod
+// resyncEndpoints must not invent a config or hit the wire. A new pod
 // arriving in this window catches up on the next HTTPRoute reconcile.
 func TestProxySyncer_ResyncEndpoints_NoLastConfig(t *testing.T) {
 	t.Parallel()
@@ -307,8 +307,8 @@ func TestProxySyncer_ResyncEndpoints_NoLastConfig(t *testing.T) {
 		slog.New(slog.NewTextHandler(&logBuf, nil)),
 	)
 
-	err := syncer.ResyncEndpoints(context.Background(), []string{configServer.URL + "/config"})
-	require.NoError(t, err, "ResyncEndpoints must be a no-op before the first SyncRoutes")
+	err := syncer.ResyncEndpointsForTest(context.Background(), []string{configServer.URL + "/config"})
+	require.NoError(t, err, "resyncEndpoints must be a no-op before the first SyncRoutes")
 
 	assert.Equal(t, int32(0), pushCount.Load(), "no push must happen when lastCfg is nil")
 	assert.Contains(t, logBuf.String(), "level=WARN", "the empty-cache no-op must be logged at WARN")
@@ -317,7 +317,7 @@ func TestProxySyncer_ResyncEndpoints_NoLastConfig(t *testing.T) {
 }
 
 // TestProxySyncer_ResyncEndpoints_ReplaysLastConfig pins issue #293's
-// fix: after a successful SyncRoutes, calling ResyncEndpoints with a
+// fix: after a successful SyncRoutes, calling resyncEndpoints with a
 // freshly-discovered endpoint pushes the cached config to it without
 // touching the HTTPRoute set. The cached version must be preserved
 // across the resync (no rebuild, no version bump).
@@ -392,7 +392,7 @@ func TestProxySyncer_ResyncEndpoints_ReplaysLastConfig(t *testing.T) {
 	// itself is unchanged (the headless Service hostname resolves to a
 	// new IP set), but the syncer treats endpoints as opaque strings, so
 	// re-pushing to the same URL is a sound proxy for the real scenario.
-	require.NoError(t, syncer.ResyncEndpoints(context.Background(), []string{endpoint}))
+	require.NoError(t, syncer.ResyncEndpointsForTest(context.Background(), []string{endpoint}))
 	require.Equal(t, int32(2), pushCount.Load(), "resync must push once more")
 
 	assert.Equal(t, firstReceived.Version, secondReceived.Version,
@@ -1362,7 +1362,7 @@ func TestProxySyncer_PartialPushFailureInvalidatesSkip(t *testing.T) {
 }
 
 // TestProxySyncer_ResyncSuccessUpdatesSkipKey pins the resync side of the
-// steady-state skip: after a successful ResyncEndpoints delivers the cached
+// steady-state skip: after a successful resyncEndpoints delivers the cached
 // config to a grown replica set, the next SyncRoutes with the identical
 // config and the same endpoints must NOT push again.
 func TestProxySyncer_ResyncSuccessUpdatesSkipKey(t *testing.T) {
@@ -1416,7 +1416,7 @@ func TestProxySyncer_ResyncSuccessUpdatesSkipKey(t *testing.T) {
 
 	// Replica B joins; the endpoint reconciler resyncs the cached config to
 	// the full set.
-	require.NoError(t, syncer.ResyncEndpoints(context.Background(), []string{endpointA, endpointB}))
+	require.NoError(t, syncer.ResyncEndpointsForTest(context.Background(), []string{endpointA, endpointB}))
 	require.Equal(t, int32(1), pushCountB.Load(), "resync must deliver the cached config to the new replica")
 
 	// The next route reconcile sees the same config and the same (grown)
@@ -1494,7 +1494,7 @@ func TestProxySyncer_ResyncPartialFailureInvalidatesSkip(t *testing.T) {
 
 	// Replica B restarts and its resync flakes: partial failure.
 	failB.Store(true)
-	require.Error(t, syncer.ResyncEndpoints(context.Background(), both),
+	require.Error(t, syncer.ResyncEndpointsForTest(context.Background(), both),
 		"a partially-failed resync must surface as an error")
 
 	// The next route reconcile must re-push even though the config and the

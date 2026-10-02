@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/stretchr/testify/assert"
@@ -267,30 +268,27 @@ func TestReplayResult(t *testing.T) {
 	superseded := errors.Wrap(errReplaySuperseded, "partition a")
 
 	tests := []struct {
-		name        string
-		err         error
-		wantRequeue bool
-		wantErr     bool
+		name      string
+		err       error
+		wantDelay time.Duration
+		wantErr   bool
 	}{
 		{name: "no error"},
-		{name: "superseded", err: superseded, wantRequeue: true},
-		{name: "wrapped superseded", err: errors.Wrap(superseded, "outer"), wantRequeue: true},
-		{name: "all partitions superseded", err: errors.Join(superseded, errors.Wrap(errReplaySuperseded, "b")), wantRequeue: true},
+		{name: "superseded", err: superseded, wantDelay: lostRacePushRequeueDelay},
+		{name: "wrapped superseded", err: errors.Wrap(superseded, "outer"), wantDelay: lostRacePushRequeueDelay},
+		{name: "all partitions superseded", err: errors.Join(superseded, errors.Wrap(errReplaySuperseded, "b")), wantDelay: lostRacePushRequeueDelay},
 		{name: "one partition failed", err: errors.Join(superseded, errPlainReplay), wantErr: true},
 		{name: "plain failure", err: errPlainReplay, wantErr: true},
+		{name: "missed pods", err: errors.Wrap(errReplayMissedPods, "partition a"), wantDelay: replayRetryDelay},
+		{name: "missed pods beside a failure", err: errors.Join(errors.Wrap(errReplayMissedPods, "a"), errPlainReplay), wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			result, err := replayResult(tt.err, "resync")
-			if tt.wantRequeue {
-				assert.Equal(t, lostRacePushRequeueDelay, result.RequeueAfter)
-			} else {
-				assert.Zero(t, result.RequeueAfter)
-			}
-
+			result, err := replayResult(context.Background(), tt.err, "resync")
+			assert.Equal(t, tt.wantDelay, result.RequeueAfter)
 			assert.Equal(t, tt.wantErr, err != nil, "error: %v", err)
 		})
 	}

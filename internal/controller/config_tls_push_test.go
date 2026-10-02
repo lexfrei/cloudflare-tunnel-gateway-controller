@@ -43,7 +43,7 @@ func TestPushToAPlaintextPlane_NamesTheReason(t *testing.T) {
 
 	endpoint := "https://" + strings.TrimPrefix(plain.URL, "http://") + "/config"
 	_, err := syncer.pushToEndpoints(context.Background(), slog.New(slog.DiscardHandler), &proxy.Config{Version: 1},
-		resolveEndpoints(context.Background(), []string{endpoint}), "token")
+		resolveEndpoints(context.Background(), net.DefaultResolver.LookupHost, []string{endpoint}), "token")
 	require.Error(t, err)
 
 	assert.Contains(t, proxyPushFailureMessage("tenant-a/edge", err), "does not speak TLS")
@@ -57,10 +57,14 @@ func TestRetainPartitions_DropsTLSPushersOfRemovedPlanes(t *testing.T) {
 	syncer := NewProxySyncer("cluster.local", "token", "", fake.NewClientBuilder().Build(),
 		slog.New(slog.DiscardHandler), WithConfigAPIAuthority(testAuthority(t)))
 
+	// Both names resolve to a port nothing listens on: the pushes fail at
+	// once, after each plane's pusher has been created.
+	syncer.lookupHost = func(context.Context, string) ([]string, error) { return []string{"127.0.0.1"}, nil }
+
 	_, _ = syncer.SyncRoutes(context.Background(), 0,
-		[]string{"https://shared-plane.invalid:8081/config"}, nil, nil, nil, nil)
+		[]string{"https://shared-plane.invalid:1/config"}, nil, nil, nil, nil)
 	_, _ = syncer.SyncPartition(context.Background(), 0, "tenant-a/edge", "token",
-		[]string{"https://tenant-plane.invalid:8081/config"}, nil, nil, nil, nil)
+		[]string{"https://tenant-plane.invalid:1/config"}, nil, nil, nil, nil)
 
 	require.Contains(t, syncer.tlsPushers, "tenant-plane.invalid")
 	require.Contains(t, syncer.tlsPushers, "shared-plane.invalid")

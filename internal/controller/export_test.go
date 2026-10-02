@@ -39,3 +39,9 @@ func (s *ProxySyncer) SyncPartition(
 	return s.syncPartition(ctx, configVersion, key, authToken,
 		endpoints, routes, grpcRoutes, failedRefs, grpcFailedRefs, clientCertParents{})
 }
+
+// ResyncEndpointsForTest lets the controller_test package drive the shared
+// plane's endpoint replay, without the EndpointSlice check.
+func (s *ProxySyncer) ResyncEndpointsForTest(ctx context.Context, endpoints []string) error {
+	return s.resyncEndpoints(ctx, endpoints, nil)
+}

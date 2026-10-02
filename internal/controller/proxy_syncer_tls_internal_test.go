@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -96,12 +97,14 @@ func TestPerGatewayConfigEndpoint_FollowsTLS(t *testing.T) {
 func TestResolveEndpoints_CarriesTheConfiguredHost(t *testing.T) {
 	t.Parallel()
 
-	resolved := resolveEndpoints(context.Background(), []string{
+	resolved := resolveEndpoints(context.Background(), net.DefaultResolver.LookupHost, []string{
 		"https://127.0.0.1:8081/config",
 		"https://unresolvable.invalid:8081/config",
 	})
 
 	require.Len(t, resolved, 2)
 	assert.Equal(t, "127.0.0.1", resolved[0].serverName)
-	assert.Equal(t, pushEndpoint{url: "https://unresolvable.invalid:8081/config", serverName: "unresolvable.invalid"}, resolved[1])
+	assert.Equal(t, "https://unresolvable.invalid:8081/config", resolved[1].url)
+	assert.Equal(t, "unresolvable.invalid", resolved[1].serverName)
+	assert.Error(t, resolved[1].err, "a name that did not resolve is never pushed to")
 }

@@ -15,7 +15,7 @@ This document describes all configuration options for the controller binary. For
 | `--leader-elect` | `CF_LEADER_ELECT` | `false` | Enable leader election for HA |
 | `--leader-election-namespace` | `CF_LEADER_ELECTION_NAMESPACE` | | Namespace for leader election lease |
 | `--leader-election-name` | `CF_LEADER_ELECTION_NAME` | `cloudflare-tunnel-gateway-controller-leader` | Leader election lease name |
-| `--proxy-endpoints` | `CF_PROXY_ENDPOINTS` | | Proxy config API endpoints for L7 proxy sync (required in v3). A host ending in `.svc` gets the resolved cluster domain appended, which is how the chart passes the proxy's headless Service |
+| `--proxy-endpoints` | `CF_PROXY_ENDPOINTS` | | Proxy config API endpoints for L7 proxy sync (required in v3). A host ending in `.svc` gets the resolved cluster domain appended, which is how the chart passes the proxy's headless Service. The Service each one names has requirements, see [Proxy Endpoints](#proxy-endpoints) |
 | `--proxy-auth-token` | `CF_PROXY_AUTH_TOKEN` | | Bearer token for proxy config push authentication, as a direct value. For callers outside the chart only -- the chart always sets `--proxy-auth-secret-ref` instead, for both the bring-your-own and generated cases. Overridden by `--proxy-auth-secret-ref` when both are set |
 | `--proxy-auth-secret-ref` | `CF_PROXY_AUTH_SECRET_REF` | | Shared-proxy config-API auth-token Secret to resolve, in `<namespace>/<name>` form, and use for the controller's own push auth. Resolved directly via the API, not a pod-level `secretKeyRef` (which the controller creating its own dependency would deadlock on). The single mechanism the chart uses for both the bring-your-own and generated cases; combine with `--proxy-auth-secret-generate` |
 | `--proxy-auth-secret-key` | `CF_PROXY_AUTH_SECRET_KEY` | `auth-token` | Data key to read within the `--proxy-auth-secret-ref` Secret |
@@ -41,6 +41,14 @@ This document describes all configuration options for the controller binary. For
 | `--render-network-policy` | `CF_RENDER_NETWORK_POLICY` | `true` | Render the per-Gateway config-API NetworkPolicy. Wired from the chart's `proxy.networkPolicy.enabled`. Set `false` on strict CNIs where node-sourced kubelet probes are blocked by the policy's `namespaceSelector` ingress rule; a previously-rendered policy is then deleted |
 
 For full distributed-tracing setup, see [Distributed Tracing](../operations/tracing.md).
+
+## Proxy Endpoints
+
+Each `--proxy-endpoints` URL names the Service the controller pushes proxy config to. The chart passes its own headless proxy Service, and the controller renders one per Gateway data plane; both meet the requirements below. A Service you bring yourself must meet them too.
+
+- It is headless (`clusterIP: None`), so its name resolves to every proxy pod. A ClusterIP Service name resolves to one virtual IP, so each push reaches a single pod and the other replicas never get a config.
+- It sets `publishNotReadyAddresses: true`, so DNS also returns NotReady pods. A joining proxy stays NotReady until it has its first config, so without the setting DNS never returns it and it never receives that config.
+- Its name resolves through the controller's own DNS. A name that only an egress proxy set in `HTTP_PROXY`/`HTTPS_PROXY` can resolve fails the push instead of being sent through that proxy.
 
 ## Environment Variables
 

@@ -150,6 +150,6 @@ func TestProxySyncer_TLS_ResyncUsesTheSamePin(t *testing.T) {
 
 	rogue := newTLSConfigServer(t, newTestAuthority(t), "127.0.0.1")
 
-	require.Error(t, syncer.ResyncEndpoints(context.Background(), []string{rogue.server.URL + "/config"}))
+	require.Error(t, syncer.ResyncEndpointsForTest(context.Background(), []string{rogue.server.URL + "/config"}))
 	assert.Equal(t, int32(0), rogue.puts.Load())
 }
