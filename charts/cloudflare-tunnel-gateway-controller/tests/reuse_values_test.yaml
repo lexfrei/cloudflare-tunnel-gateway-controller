@@ -133,3 +133,19 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].args
           content: "--hostname-ownership-enforce=true"
+
+  - it: should render no rule-name admission policy when the values carry no ruleNameUniquenessPolicy
+    template: validatingadmissionpolicy.yaml
+    set:
+      ruleNameUniquenessPolicy: null
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should render no hostname-ownership admission policy when the values carry no hostnameOwnershipPolicy
+    template: validatingadmissionpolicy-hostname-ownership.yaml
+    set:
+      hostnameOwnershipPolicy: null
+    asserts:
+      - hasDocuments:
+          count: 0
