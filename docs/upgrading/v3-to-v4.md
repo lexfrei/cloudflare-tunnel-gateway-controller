@@ -171,7 +171,9 @@ Affected: routes that spell the group as `""`. Omit `group`, or set it to `gatew
 
 ## Breaking: a route pinned to a refusing listener reports that listener's reason
 
-A route whose `sectionName` or `port` picks a listener that exists but refuses the route now reports that listener's reason, such as `NotAllowedByListeners` or `NoMatchingListenerHostname`. On v3 it reported `NoMatchingParent`, which now means only that the `sectionName` or `port` matches no listener.
+A route whose `sectionName` or `port` picks a listener that exists but refuses the route now reports that listener's reason, such as `NotAllowedByListeners` or `NoMatchingListenerHostname`. On v3 it reported `NoMatchingParent`.
+
+`NoMatchingParent` is still reported when the `sectionName` or `port` matches no listener, when every listener the route matched is conflicted, and when the route's parent ListenerSet is not allowed by its Gateway. Routes that on v3 were accepted only through [listeners in such a conflict](#breaking-conflicting-listeners-of-one-gateway-are-all-refused) therefore report `NoMatchingParent` after the upgrade.
 
 Affected: alerts and scripts that match `NoMatchingParent` on a route's `Accepted=False` condition. Match the listener reasons as well.
 
@@ -266,7 +268,9 @@ A route attached both to this controller's Gateway and to a Gateway of another G
 
 ## Behaviour change: an abandoned per-Gateway tunnel is emptied
 
-When no Gateway serves a per-Gateway tunnel any more, because its Gateway was deleted, opted out, was refused or switched to another token, the next route sync writes that tunnel an ingress document holding only the catch-all rule. On v3 the old document stayed. The GatewayClass tunnel is never emptied.
+When no Gateway serves a per-Gateway tunnel any more, because its Gateway was deleted, opted out, was refused or switched to another token, the next route sync writes that tunnel an ingress document holding only the catch-all rule. The GatewayClass tunnel is never emptied.
+
+The controller keeps the set of tunnels it serves in memory, so it empties only a tunnel it served and then lost while it was running. A tunnel abandoned before that, on v3 or while the controller restarts or changes leader, keeps its last document.
 
 ## Behaviour change: a non-default configAPIPort reaches per-Gateway planes
 
@@ -278,7 +282,7 @@ For an h2c backend, a rule's `timeouts.request` or `timeouts.backendRequest` now
 
 ## Behaviour change: a joining proxy pod is retried until the replay reaches it
 
-When a proxy pod joins, the controller replays the latest config to the addresses DNS returns for the plane's Service. It now checks that the replay reached every pod the EndpointSlice lists as neither terminating nor not ready, and retries a pod it missed after ten seconds. On v3 a replay that DNS sent only to the old pods counted as done, and the new pod waited for an unrelated sync.
+When a proxy pod joins, the controller replays the latest config to the addresses DNS returns for the plane's Service. For a headless proxy Service, such as the chart's or a per-Gateway plane's, it now checks that the replay reached every pod the EndpointSlice lists as neither terminating nor not ready, and retries a pod it missed after ten seconds. The check is skipped when none of the addresses DNS returned is in the slice, as for a `--proxy-endpoints` name of a ClusterIP Service. A Service split over several slices can leave a new pod in a slice that is skipped the same way, and that pod waits for a later replay or sync. On v3 a replay that DNS sent only to the old pods counted as done, and the new pod waited for an unrelated sync.
 
 The retry backoff for a replay that fails is capped at ten seconds. A pod that keeps refusing pushes is retried at that pace, and each failure is logged as a reconcile error of `proxy-endpoint-reconciler`. A plane scaled to zero has nothing to replay, and its replay succeeds.
 
@@ -294,7 +298,7 @@ A route parentRef whose binding cannot be evaluated, for example because the par
 
 ## Behaviour change: a route's diagnostics stay on the parent they concern
 
-A route's `status.parents[]` entry now carries only the diagnostics about the data plane that serves that parent, such as `cf.k8s.lex.la/ProxyConfigPushed` or `cf.k8s.lex.la/TunnelShared`. On v3 every parent showed all of them. Diagnostics about the route spec, such as `ResolvedRefs`, stay on every parent.
+A route's `status.parents[]` entry now carries only the diagnostics about the data plane that serves that parent, such as `cf.k8s.lex.la/ProxyConfigPushed`, `cf.k8s.lex.la/TunnelShared` or `cf.k8s.lex.la/RouteShadowed`. On v3 every parent showed all of them. Diagnostics about the route spec, such as `ResolvedRefs`, stay on every parent.
 
 ## Behaviour change: a transient read error keeps a Gateway's status
 
