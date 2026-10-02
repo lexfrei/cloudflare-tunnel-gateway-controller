@@ -1,6 +1,6 @@
 # Upgrading from v3 to v4
 
-v4 tightens defaults that were wrong in v3 and turns on TLS for the controller-to-proxy config API. There is no CR migration. Each section headed "Breaking" describes something that works on v3 and can stop after the upgrade, names who it reaches, and gives the change that keeps it working. Read them all before running `helm upgrade`, then follow the [upgrade procedure](#upgrade-procedure) at the end.
+v4 tightens defaults that were wrong in v3, turns on TLS for the controller-to-proxy config API, and brings route binding, listener conflicts and status reporting in line with the Gateway API spec. There is no CR migration. Each section headed "Breaking" describes something that works on v3 and can stop after the upgrade, names who it reaches, and gives the change that keeps it working. Read them all before running `helm upgrade`, then follow the [upgrade procedure](#upgrade-procedure) at the end.
 
 ## Breaking: Kubernetes 1.31 or later
 
@@ -159,7 +159,7 @@ A GatewayClass that names this controller now reports `Accepted=False` with reas
 
 A ref that sets `namespace` is no longer resolved: GatewayClassConfig is cluster-scoped, and Gateway API requires the namespace to be unset for a cluster-scoped referent. While a Gateway uses such a class, the controller programs no routes for any of its Gateways. Two classes in use whose refs differ only in `namespace` count as a [conflict](#breaking-gatewayclasses-in-use-must-agree-on-parametersref).
 
-Affected: a class whose `parametersRef` is missing, points elsewhere or sets `namespace`. Fix the ref and drop `namespace`. The `kubectl get gatewayclasses` command in the next section shows the fields to check.
+Affected: a class whose `parametersRef` is missing, points elsewhere or sets `namespace`. Fix the ref and drop `namespace`. The `kubectl get gatewayclasses` command in [GatewayClasses in use must agree on parametersRef](#breaking-gatewayclasses-in-use-must-agree-on-parametersref) shows the fields to check.
 
 In the chart, `gatewayClassConfig.name` with `gatewayClassConfig.create: false` now renders the class `parametersRef` to that name, so the class can point at a GatewayClassConfig managed outside the chart. On v3 the name was ignored without `create: true`. [GatewayClass Reference](../configuration/gatewayclassconfig.md#gatewayclass-reference) has the rule.
 
@@ -280,9 +280,7 @@ When a proxy pod joins, the controller replays the latest config to the addresse
 
 The retry backoff for a replay that fails is capped at ten seconds. A pod that keeps refusing pushes is retried at that pace, and each failure is logged as a reconcile error of `proxy-endpoint-reconciler`. A plane scaled to zero has nothing to replay, and its replay succeeds.
 
-## Behaviour change: a new data plane's first config
-
-<!-- Filled in when the cold-start change merges. -->
+<!-- The section on a new data plane's first config goes here once the cold-start change merges. -->
 
 ## Behaviour change: stale route status is released
 
@@ -323,7 +321,7 @@ Rotating the shared proxy's tunnel token Secret no longer rolls the per-Gateway 
     Apply the v1.6.x `standard-install.yaml` for the standard channel, or `experimental-install.yaml` for the experimental one. [Prerequisites](../getting-started/prerequisites.md#gateway-api-crds) has the standard command. Do not switch channels on the way. The v1.6 standard bundle installs the `safe-upgrades.gateway.networking.k8s.io` ValidatingAdmissionPolicy, which refuses experimental CRDs over standard ones, and applying standard CRDs over experimental ones drops the experimental fields from the schema.
 
 3. **Edit your values** for each breaking section that applies: `networkPolicy.ingress.from`, the controller `podDisruptionBudget`, `image` and `proxy.image` if they pin a v3 tag or digest, `proxy.websocket` timeouts written as zero, `proxy.websocket.idleTimeout` if sessions stay silent for more than an hour, and `proxy.configAPITLS.enabled` if you keep the plaintext config API.
-4. **Fix what lives outside the chart:** your own proxy scrape configs and PodMonitors (HTTPS without certificate verification), WebSocket backends that expect the Service address in `Host`, any `GatewayConfig.spec.image` pinned to a pre-v4 proxy image, GatewayClasses that disagree on `parametersRef`, and alerts on the `TunnelShared` reason.
+4. **Fix what lives outside the chart:** your own proxy scrape configs and PodMonitors (HTTPS without certificate verification), WebSocket backends that expect the Service address in `Host`, any `GatewayConfig.spec.image` pinned to a pre-v4 proxy image, GatewayClasses that disagree on `parametersRef` or whose `parametersRef` is missing or sets `namespace`, route parentRefs with `group: ""`, Gateways with two of their own listeners in conflict, selectors that do not parse, a `--proxy-endpoints` Service you bring yourself, and alerts or scripts on the `TunnelShared` reason, `NoMatchingParent`, `attachedRoutes`, the ListenerSet and Gateway `Accepted` reasons, and the `InvalidParameters` message text.
 5. **Re-apply the chart CRDs.** `helm upgrade` never updates them. Since v3.5 the CRDs changed only in field descriptions, but a cluster that last applied them before v3.5 is missing fields that v3.5 added. The command is in [CRD upgrades](index.md#crd-upgrades). Helm created these CRDs, so `kubectl apply` warns that each one is missing the `kubectl.kubernetes.io/last-applied-configuration` annotation. The warning is harmless: kubectl adds the annotation and applies the change.
 6. **Run the upgrade** with `--reset-then-reuse-values`, or with your full values file. Either one renders the v4 chart defaults under your overrides:
 
@@ -346,7 +344,8 @@ Rotating the shared proxy's tunnel token Secret no longer rolls the per-Gateway 
 - The controller log: an error about a CRD field the installed schema lacks means step 5 did not reach that CRD.
 - `ProxyConfigPushFailed` Warning Events on routes while old and new pods run side by side. A burst of them is expected in that window. Their text says matching requests are served 502, which overstates it: the data plane they name keeps serving the config it last received.
 - Route status: a sustained `cf.k8s.lex.la/ProxyConfigPushed=False` after the rollout finishes points at a push the TLS change broke, for example a plane on a pre-v4 image. The condition names the handshake failure.
-- Gateway status: `Accepted=False` with `InvalidParameters` names conflicting GatewayClasses, or comes with a `TunnelClaimRejected` Event for a tunnel claim Cloudflare did not confirm.
+- Gateway status: `Accepted=False` with `InvalidParameters` names conflicting GatewayClasses, or comes with a `TunnelClaimRejected` Event for a tunnel claim Cloudflare did not confirm. `ListenersNotValid` names conflicted listeners or selectors that do not parse.
+- GatewayClass status: `Accepted=False` with `InvalidParameters` names the `parametersRef` problem.
 - Prometheus targets: a controller or proxy target that went down points at `networkPolicy.ingress.from` or at a scrape config still on plain HTTP.
 
 ## What does not change
