@@ -47,11 +47,12 @@ const configMapKind = "ConfigMap"
 // ProxySyncer converts HTTPRoute resources to proxy config
 // and pushes it to enhanced-cloudflared replicas via HTTP API.
 //
-// lastCfg caches the most recent successfully-built config so the
+// lastCfg caches the most recent config a replica accepted so the
 // endpoint-watcher (see ProxyEndpointReconciler) can re-push to a
 // newly-joined proxy pod without waiting for the next HTTPRoute
-// reconcile. Before the first syncPartition call, lastCfg is nil and
-// resyncEndpoints is a no-op -- there is nothing to push yet.
+// reconcile. Until a replica accepts one, lastCfg is nil and
+// resyncEndpoints is a no-op; the endpoint watcher then pushes
+// lastBuiltCfg, the config the partition's last sync built, instead.
 // syncMu guards reads and writes of lastCfg, not the push between them:
 // pushes run lock-free, so a recorder must check that the document it
 // pushed is still the cached one before writing anything derived from it.
@@ -122,7 +123,11 @@ type ProxySyncer struct {
 // config or endpoint event, which re-pushes; the partition KEY never changes,
 // so a stale write can never redirect a tenant's config to another plane.
 type pushTarget struct {
-	lastCfg             *proxy.Config
+	lastCfg *proxy.Config
+	// lastBuiltCfg is the newest config a sync built for this partition,
+	// whether or not any replica accepted it. A cold-started plane is retried
+	// by pushing it, since building it again is a full route sync.
+	lastBuiltCfg        *proxy.Config
 	lastPushedHash      string
 	lastPushedToken     string
 	lastPushedEndpoints map[string]struct{}
@@ -952,6 +957,10 @@ func (s *ProxySyncer) recordPush(
 	s.recordSeq++
 	target.lastRecordSeq = s.recordSeq
 
+	if target.lastBuiltCfg == nil || cfg.Version > target.lastBuiltCfg.Version {
+		target.lastBuiltCfg = cfg
+	}
+
 	if pushErr != nil {
 		// A failed push may have PARTIALLY succeeded (the pusher fans out
 		// concurrently): some replicas may already hold the new config.
@@ -1334,8 +1343,9 @@ func (s *ProxySyncer) buildProxyConfig(
 // papering over.
 //
 // Before any replica has accepted a config lastCfg is nil and this is a
-// no-op: a plane with no cached config is not replayed, and the next route
-// sync configures it.
+// no-op -- nothing meaningful to push yet. The endpoint watcher configures
+// such a partition itself, before calling this; see
+// ProxyEndpointReconciler.configureColdPartition.
 //
 // Push errors are returned but not fatal: the endpoint watcher retries them.
 // A non-nil coverage also reports, through errReplayMissedPods, any of its
@@ -1467,6 +1477,97 @@ func (s *ProxySyncer) resyncTarget(
 
 	return fmt.Errorf("failed to resync config to %d/%d endpoints: %w",
 		len(pushErrors), len(resolved), errors.Join(pushErrors...))
+}
+
+// pushBuiltConfig pushes the partition's last built config to its endpoints,
+// for a partition no replica has accepted a config from yet. It reports
+// whether there was such a config to push, and a nil error when a replica
+// accepted it; an accepted one becomes the replay source. A push every
+// refusing endpoint lost to a newer one returns errReplaySuperseded, as a
+// replay does, and is not logged as a failure.
+func (s *ProxySyncer) pushBuiltConfig(ctx context.Context, key string) (bool, error) {
+	s.syncMu.Lock()
+	target, ok := s.targets[key]
+
+	var (
+		cfg       *proxy.Config
+		endpoints []string
+		authToken string
+	)
+
+	if ok {
+		cfg, endpoints, authToken = target.lastBuiltCfg, target.endpointURLs, target.authToken
+	}
+	s.syncMu.Unlock()
+
+	if cfg == nil {
+		return false, nil
+	}
+
+	results := s.push(ctx, cfg, resolveEndpoints(ctx, s.lookupHost, endpoints), authToken)
+	if len(results) == 0 {
+		return true, errors.Wrapf(errNoPushEndpoints, "partition %s", key)
+	}
+
+	var pushErrors []error
+
+	for _, result := range results {
+		if result.Err != nil {
+			pushErrors = append(pushErrors, result.Err)
+		}
+	}
+
+	if len(pushErrors) < len(results) {
+		s.syncMu.Lock()
+		if current, stillThere := s.targets[key]; stillThere {
+			current.cacheIfNewer(cfg)
+		}
+		s.syncMu.Unlock()
+	}
+
+	superseded := len(pushErrors) > 0 && s.replaySuperseded(key, cfg, pushErrors)
+	if !superseded {
+		logBuiltPushFailures(ctx, s.logger, key, results)
+	}
+
+	switch {
+	case len(pushErrors) < len(results):
+		return true, nil
+	case superseded:
+		return true, errors.Wrapf(errReplaySuperseded, "partition %s: every endpoint holds or is receiving a newer config", key)
+	default:
+		return true, errors.Join(pushErrors...)
+	}
+}
+
+// logBuiltPushFailures logs each endpoint that refused a built config.
+func logBuiltPushFailures(ctx context.Context, fallback *slog.Logger, key string, results []proxy.PushResult) {
+	logger := logging.FromContext(ctx)
+	if logger == slog.Default() {
+		logger = fallback
+	}
+
+	for _, result := range results {
+		if result.Err != nil {
+			logger.Error("failed to push config to endpoint",
+				"partition", key, "endpoint", result.Endpoint, "error", result.Err.Error())
+		}
+	}
+}
+
+// replaySource reports whether a sync has built a config for the partition,
+// and whether it has a config to replay, one that at least one replica
+// accepted.
+func (s *ProxySyncer) replaySource(key string) (bool, bool) {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+
+	target, ok := s.targets[key]
+	if !ok {
+		return false, false
+	}
+
+	return target.lastBuiltCfg != nil, target.lastCfg != nil
 }
 
 // resyncFailures logs and returns the per-endpoint errors of a replay push.
@@ -1673,6 +1774,9 @@ type pushEndpoint struct {
 	serverName string
 	err        error
 }
+
+// errNoPushEndpoints marks a built config that had no endpoint to go to.
+var errNoPushEndpoints = errors.New("no endpoints to push the built config to")
 
 // errNoAddresses marks a lookup that succeeded with an empty answer.
 var errNoAddresses = errors.New("no addresses")

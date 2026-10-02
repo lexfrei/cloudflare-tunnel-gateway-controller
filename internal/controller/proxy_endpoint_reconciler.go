@@ -4,11 +4,14 @@ import (
 	"context"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cockroachdb/errors"
 	"golang.org/x/time/rate"
 	discoveryv1 "k8s.io/api/discovery/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -58,10 +61,23 @@ type ProxyEndpointReconciler struct {
 	// syncer's resolveEndpoints does the DNS expansion to per-pod IPs.
 	ProxyEndpoints []string
 
+	// TriggerRouteSync runs a full route sync, the one that builds and pushes
+	// every partition's config. It is used when a slice lists pods but the
+	// partition has no config cached to replay. nil disables it.
+	TriggerRouteSync func(context.Context) (ctrl.Result, error)
+
 	// targets is parsed from ProxyEndpoints at SetupWithManager time and
 	// drives the EndpointSlice watch predicate. Each entry corresponds
 	// to one headless Service whose churn should trigger a resync.
 	targets []proxyServiceTarget
+
+	// coldSyncFailures maps a slice to the resourceVersion at which its
+	// cold-start route sync built nothing, so that version does not run the
+	// sync again. An entry matches only the version it recorded, so a stale
+	// one is harmless; it is dropped when its slice is deleted, which a removed
+	// plane's slice is with its Service. Guarded by coldSyncFailuresMu.
+	coldSyncFailuresMu sync.Mutex
+	coldSyncFailures   map[types.NamespacedName]string
 }
 
 // Reconcile implements reconcile.Reconciler. It is invoked whenever an
@@ -80,6 +96,10 @@ func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	var slice discoveryv1.EndpointSlice
 	if err := r.Client.Get(ctx, req.NamespacedName, &slice); err != nil {
+		if apierrors.IsNotFound(err) {
+			r.forgetColdSyncFailure(req.NamespacedName)
+		}
+
 		// Deleted or unreadable: we cannot attribute the event to one data
 		// plane, so replay every cached partition — cheap and correct.
 		return replayResult(ctx, r.ProxySyncer.ResyncAllPartitions(ctx), "resync all proxy partitions")
@@ -98,11 +118,140 @@ func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			return replayResult(ctx, r.ProxySyncer.ResyncAllPartitions(ctx), "resync all proxy partitions")
 		}
 
-		return replayResult(ctx, r.ProxySyncer.resyncPartitionCovering(ctx, key, coverage),
-			"resync per-gateway proxy partition")
+		return r.replay(ctx, key, coverage, "resync per-gateway proxy partition", func() error {
+			return r.ProxySyncer.resyncPartitionCovering(ctx, key, coverage)
+		})
 	}
 
-	return replayResult(ctx, r.ProxySyncer.resyncEndpoints(ctx, r.ProxyEndpoints, coverage), "resync proxy endpoints")
+	return r.replay(ctx, sharedPartitionKey, coverage, "resync proxy endpoints", func() error {
+		return r.ProxySyncer.resyncEndpoints(ctx, r.ProxyEndpoints, coverage)
+	})
+}
+
+// replay runs resync for the partition keyed by key. A partition no replica
+// has accepted a config from, while the slice lists pods, goes through
+// configureColdPartition first: its earlier sync reached no pod, and nothing
+// else would configure the one that joined.
+func (r *ProxyEndpointReconciler) replay(
+	ctx context.Context, key string, coverage *sliceCoverage, action string, resync func() error,
+) (ctrl.Result, error) {
+	if _, cached := r.ProxySyncer.replaySource(key); r.TriggerRouteSync != nil && len(coverage.want) > 0 && !cached {
+		if result, stop := r.configureColdPartition(ctx, key, coverage); stop {
+			return result, nil
+		}
+	}
+
+	return replayResult(ctx, resync(), action)
+}
+
+// configureColdPartition gets a config to a partition no replica has accepted
+// one from, and reports whether the reconcile stops with result; when it does
+// not, a replica holds the config and the normal replay follows. It pushes the
+// config the partition's last sync built, and runs a route sync only when none
+// was built yet: a sync reads every tunnel's configuration from Cloudflare.
+//
+// A built config that lost the push race to a newer one requeues shortly, as a
+// superseded replay does. Any other undelivered config is pushed again after
+// replayRetryDelay, or sooner when the sync asked for it, as a requeue rather
+// than an error, because the capped backoff starts at milliseconds.
+func (r *ProxyEndpointReconciler) configureColdPartition(
+	ctx context.Context, key string, coverage *sliceCoverage,
+) (ctrl.Result, bool) {
+	built, pushErr := r.ProxySyncer.pushBuiltConfig(ctx, key)
+
+	switch {
+	case !built:
+		return r.syncColdPartition(ctx, key, coverage)
+	case pushErr == nil:
+		return ctrl.Result{}, false
+	case onlyMarked(pushErr, errReplaySuperseded):
+		return ctrl.Result{RequeueAfter: lostRacePushRequeueDelay}, true
+	default:
+		return retryUndelivered(ctx, key, ctrl.Result{}), true
+	}
+}
+
+// syncColdPartition runs a route sync for a partition that has no built
+// config. A sync that builds none, because it failed before building or
+// produced no partition for this plane, is recorded against the slice version
+// and not run again for it: this reconcile comes back every ten seconds, and
+// without the record each return would run another full sync. The route sync
+// retrier owns the retry of that one global sync. The reconcile still
+// comes back after replayRetryDelay, which costs no Cloudflare call, and pushes
+// the config as soon as another sync has built it. A new version of the slice
+// runs the sync again.
+func (r *ProxyEndpointReconciler) syncColdPartition(
+	ctx context.Context, key string, coverage *sliceCoverage,
+) (ctrl.Result, bool) {
+	if failedAt, ok := r.coldSyncFailedAt(coverage.slice); ok && failedAt == coverage.sliceVersion {
+		return ctrl.Result{RequeueAfter: replayRetryDelay}, true
+	}
+
+	result, err := r.TriggerRouteSync(ctx)
+	if err != nil {
+		logging.FromContext(ctx).Error("route sync for a partition with no config to replay failed",
+			"partition", key, "error", err.Error())
+	}
+
+	// A sync can build and push the partition's config and still return an
+	// error for something else; the built config then takes the push retry.
+	built, delivered := r.ProxySyncer.replaySource(key)
+
+	switch {
+	case delivered:
+		return ctrl.Result{}, false
+	case built:
+		return retryUndelivered(ctx, key, result), true
+	default:
+		r.recordColdSyncFailure(coverage.slice, coverage.sliceVersion)
+
+		return ctrl.Result{RequeueAfter: replayRetryDelay}, true
+	}
+}
+
+// recordColdSyncFailure notes that the cold-start route sync run for the slice
+// built nothing while the slice was at version.
+func (r *ProxyEndpointReconciler) recordColdSyncFailure(slice types.NamespacedName, version string) {
+	r.coldSyncFailuresMu.Lock()
+	defer r.coldSyncFailuresMu.Unlock()
+
+	if r.coldSyncFailures == nil {
+		r.coldSyncFailures = make(map[types.NamespacedName]string)
+	}
+
+	r.coldSyncFailures[slice] = version
+}
+
+// coldSyncFailedAt returns the slice version the slice's cold-start route sync
+// last built nothing at, if it did.
+func (r *ProxyEndpointReconciler) coldSyncFailedAt(slice types.NamespacedName) (string, bool) {
+	r.coldSyncFailuresMu.Lock()
+	defer r.coldSyncFailuresMu.Unlock()
+
+	version, ok := r.coldSyncFailures[slice]
+
+	return version, ok
+}
+
+func (r *ProxyEndpointReconciler) forgetColdSyncFailure(slice types.NamespacedName) {
+	r.coldSyncFailuresMu.Lock()
+	defer r.coldSyncFailuresMu.Unlock()
+
+	delete(r.coldSyncFailures, slice)
+}
+
+// retryUndelivered requeues a partition whose built config no pod has taken
+// yet, after replayRetryDelay or the sooner requeue the sync asked for.
+func retryUndelivered(ctx context.Context, key string, syncResult ctrl.Result) ctrl.Result {
+	retryAfter := replayRetryDelay
+	if syncResult.RequeueAfter > 0 && syncResult.RequeueAfter < retryAfter {
+		retryAfter = syncResult.RequeueAfter
+	}
+
+	logging.FromContext(ctx).Warn("no proxy pod of the partition has taken its config yet; retrying",
+		"partition", key, "retryAfter", retryAfter.String())
+
+	return ctrl.Result{RequeueAfter: retryAfter}
 }
 
 // partitionKeyForLabel maps a GatewayLabel value back onto the partition key
@@ -368,6 +517,9 @@ type sliceCoverage struct {
 	want []string
 	// known holds every address the slice lists.
 	known []string
+	// slice and sliceVersion identify the slice and its resourceVersion.
+	slice        types.NamespacedName
+	sliceVersion string
 	// service is the Service the slice belongs to, when its label names one.
 	service    proxyServiceTarget
 	hasService bool
@@ -389,7 +541,7 @@ func (c *sliceCoverage) isSliceService(host string) bool {
 // special case: none of them matches a resolved address, so
 // sliceCoverage.missedBy skips the check.
 func replayCoverage(slice *discoveryv1.EndpointSlice) *sliceCoverage {
-	coverage := &sliceCoverage{}
+	coverage := &sliceCoverage{slice: client.ObjectKeyFromObject(slice), sliceVersion: slice.ResourceVersion}
 
 	if name := slice.Labels[discoveryv1.LabelServiceName]; name != "" {
 		coverage.service = proxyServiceTarget{name: name, namespace: slice.Namespace}

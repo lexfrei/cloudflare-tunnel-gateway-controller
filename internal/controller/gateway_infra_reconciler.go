@@ -97,12 +97,14 @@ type GatewayInfraReconciler struct {
 	// deleted.
 	RenderNetworkPolicy bool
 	// TriggerRouteSync runs a full route sync (cache + push to every
-	// partition). It is invoked once when a data plane is first CREATED so the
-	// new partition's config is cached and delivered — a per-Gateway proxy
-	// needs an initial config push to pass /readyz, and route reconciles are
-	// route-event-driven, so a data plane with no routes would otherwise never
-	// be synced. Nil is a no-op (unit tests without the route syncer wired).
-	TriggerRouteSync func(context.Context) error
+	// partition). It is invoked when a data plane's spec is created or changed
+	// so the new partition's config is built and delivered — a per-Gateway
+	// proxy needs an initial config push to pass /readyz, and route reconciles
+	// are route-event-driven, so a data plane with no routes would otherwise
+	// never be synced. In production it is routeSyncRetrier.Sync, which owns
+	// the retry of a sync that failed or asked for a requeue. Nil is a no-op
+	// (unit tests without the route syncer wired).
+	TriggerRouteSync func(context.Context) (ctrl.Result, error)
 	// ConfigAuthority issues the planes' config API certificates. Nil renders
 	// the plaintext config API.
 	ConfigAuthority *configtls.Authority
@@ -430,8 +432,8 @@ func (r *GatewayInfraReconciler) applyRendered(
 	// would otherwise leave the Cloudflare document and the proxy push on the
 	// OLD tunnel/token until an unrelated route or Secret event. A
 	// readiness-only reconcile returns None and does not re-sync, so this does
-	// not fire on every Deployment status flip. Best-effort: a failure here is
-	// retried by the next route reconcile; never fail the render over it.
+	// not fire on every Deployment status flip. Best-effort: the route sync
+	// retrier runs a failed sync again; never fail the render over it.
 	//
 	// This is a FULL (not partition-scoped) sync run synchronously inside this
 	// Reconcile, so on a many-route cluster a per-Gateway spec change couples
@@ -439,9 +441,8 @@ func (r *GatewayInfraReconciler) applyRendered(
 	// per-Gateway spec edits are rare; partition-scope the sync to this
 	// Gateway's data plane if that coupling becomes a latency concern at scale.
 	if deploymentOp != controllerutil.OperationResultNone && r.TriggerRouteSync != nil {
-		if err := r.TriggerRouteSync(ctx); err != nil {
-			log.FromContext(ctx).Info("route sync after data-plane render failed; will retry on next route reconcile",
-				"error", err.Error())
+		if _, err := r.TriggerRouteSync(ctx); err != nil {
+			log.FromContext(ctx).Error(err, "route sync after data-plane render failed; retrying")
 		}
 	}
 

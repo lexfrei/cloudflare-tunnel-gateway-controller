@@ -167,6 +167,128 @@ func TestRecordPush_FullDeliveryOfAnOlderConfigKeepsTheNewerCache(t *testing.T) 
 	assert.Same(t, newer, cached, "a fully delivered older config never replaces a newer cached one")
 }
 
+// TestRecordPush_KeepsTheNewestBuiltConfig pins the config a cold-started
+// plane is retried with: whatever the push outcome, an older snapshot that
+// records last never replaces a newer built config.
+func TestRecordPush_KeepsTheNewestBuiltConfig(t *testing.T) {
+	t.Parallel()
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	proxySyncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+
+	proxySyncer.syncMu.Lock()
+	proxySyncer.targetLocked(sharedPartitionKey)
+	proxySyncer.syncMu.Unlock()
+
+	refused := errors.New("no replica took the push")
+	newer := &proxy.Config{Version: 20}
+	older := &proxy.Config{Version: 10}
+
+	proxySyncer.recordPush(nil, sharedPartitionKey, "", "hash-newer", newer, nil, refused, false)
+	proxySyncer.recordPush(nil, sharedPartitionKey, "", "hash-older", older, nil, refused, false)
+
+	proxySyncer.syncMu.Lock()
+	built := proxySyncer.targets[sharedPartitionKey].lastBuiltCfg
+	proxySyncer.syncMu.Unlock()
+
+	assert.Same(t, newer, built)
+}
+
+// TestPushBuiltConfig_NeverReplacesANewerAcceptedConfig pins the ordering
+// between a pending built config and one a replica accepted: a pending config
+// that a pod takes becomes the replay source only when nothing newer was
+// accepted meanwhile.
+func TestPushBuiltConfig_NeverReplacesANewerAcceptedConfig(t *testing.T) {
+	t.Parallel()
+
+	healthy := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(healthy.Close)
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	proxySyncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+
+	pending := &proxy.Config{Version: 10}
+	accepted := &proxy.Config{Version: 20}
+
+	proxySyncer.syncMu.Lock()
+	target := proxySyncer.targetLocked(sharedPartitionKey)
+	target.endpointURLs = []string{healthy.URL + "/config"}
+	target.lastBuiltCfg = pending
+	target.lastCfg = accepted
+	proxySyncer.syncMu.Unlock()
+
+	built, err := proxySyncer.pushBuiltConfig(context.Background(), sharedPartitionKey)
+	require.True(t, built)
+	require.NoError(t, err)
+
+	proxySyncer.syncMu.Lock()
+	current := proxySyncer.targets[sharedPartitionKey].lastCfg
+	proxySyncer.syncMu.Unlock()
+
+	assert.Same(t, accepted, current, "an older pending config never replaces a newer accepted one")
+}
+
+// TestPushBuiltConfig_OneAcceptingReplicaIsDelivered pins that a built config
+// one replica takes is delivered even when another refuses it, as a sync's
+// push is: the accepting replica is the replay source for the other.
+func TestPushBuiltConfig_OneAcceptingReplicaIsDelivered(t *testing.T) {
+	t.Parallel()
+
+	healthy := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(healthy.Close)
+
+	failing := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(failing.Close)
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	proxySyncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+
+	pending := &proxy.Config{Version: 10}
+
+	proxySyncer.syncMu.Lock()
+	target := proxySyncer.targetLocked(sharedPartitionKey)
+	target.endpointURLs = []string{healthy.URL + "/config", failing.URL + "/config"}
+	target.lastBuiltCfg = pending
+	proxySyncer.syncMu.Unlock()
+
+	built, err := proxySyncer.pushBuiltConfig(context.Background(), sharedPartitionKey)
+	require.True(t, built)
+	require.NoError(t, err)
+
+	proxySyncer.syncMu.Lock()
+	current := proxySyncer.targets[sharedPartitionKey].lastCfg
+	proxySyncer.syncMu.Unlock()
+
+	assert.Same(t, pending, current)
+}
+
+// TestPushBuiltConfig_NoEndpointIsNotDelivered pins that a built config with
+// nowhere to go is not reported as delivered: a push that reached no replica
+// must look different from one a replica took.
+func TestPushBuiltConfig_NoEndpointIsNotDelivered(t *testing.T) {
+	t.Parallel()
+
+	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
+	proxySyncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+
+	proxySyncer.syncMu.Lock()
+	proxySyncer.targetLocked(sharedPartitionKey).lastBuiltCfg = &proxy.Config{Version: 10}
+	proxySyncer.syncMu.Unlock()
+
+	built, err := proxySyncer.pushBuiltConfig(context.Background(), sharedPartitionKey)
+	require.True(t, built)
+	require.Error(t, err)
+
+	_, delivered := proxySyncer.replaySource(sharedPartitionKey)
+	assert.False(t, delivered)
+}
+
 // raceBarrierProxy mimics the real proxy config API (api.go + Router.UpdateConfig:
 // 409 when a PUT version is below the current version, current version on GET),
 // with a two-PUT barrier so the two concurrent syncs are applied newer-first,

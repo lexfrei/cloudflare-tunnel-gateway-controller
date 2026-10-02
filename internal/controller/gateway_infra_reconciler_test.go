@@ -458,10 +458,10 @@ func TestGatewayInfraReconciler_TriggersRouteSyncOnCreate(t *testing.T) {
 	var syncs int
 
 	reconciler := newInfraReconciler(t, infraFixtures(t)...)
-	reconciler.TriggerRouteSync = func(context.Context) error {
+	reconciler.TriggerRouteSync = func(context.Context) (ctrl.Result, error) {
 		syncs++
 
-		return nil
+		return ctrl.Result{}, nil
 	}
 
 	reconcileEdge(t, reconciler)
@@ -470,6 +470,46 @@ func TestGatewayInfraReconciler_TriggersRouteSyncOnCreate(t *testing.T) {
 	// A second reconcile (no creation) must NOT re-trigger — avoid sync storms.
 	reconcileEdge(t, reconciler)
 	assert.Equal(t, 1, syncs, "a steady-state reconcile must not re-trigger a full route sync")
+}
+
+// TestGatewayInfraReconciler_RouteSyncFailureDoesNotFailTheRender pins that a
+// failed or requeue-asking route sync after a render leaves the render's own
+// result alone: the plane is rendered, and the retry of that global sync
+// belongs to the route sync retrier, so one broken tunnel cannot make every
+// re-rendered plane run its own retries.
+func TestGatewayInfraReconciler_RouteSyncFailureDoesNotFailTheRender(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name   string
+		result ctrl.Result
+		err    error
+	}{
+		{name: "the sync asked for a requeue", result: ctrl.Result{RequeueAfter: 15 * time.Second}},
+		{name: "the sync failed", err: errRouteSyncFailed},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var syncs int
+
+			reconciler := newInfraReconciler(t, infraFixtures(t)...)
+			reconciler.TriggerRouteSync = func(context.Context) (ctrl.Result, error) {
+				syncs++
+
+				return tt.result, tt.err
+			}
+
+			result, err := reconciler.Reconcile(context.Background(),
+				ctrl.Request{NamespacedName: types.NamespacedName{Name: "edge", Namespace: infraNamespace}})
+			require.NoError(t, err)
+			assert.Zero(t, result.RequeueAfter)
+			assert.Equal(t, 1, syncs)
+
+			reconcileEdge(t, reconciler)
+			assert.Equal(t, 1, syncs, "the infra reconcile does not retry the sync itself")
+		})
+	}
 }
 
 // TestGatewayInfraReconciler_OptOutSucceedsWithoutSecretDelete pins the
@@ -556,10 +596,10 @@ func TestGatewayInfraReconciler_RotationTriggersRouteSync(t *testing.T) {
 	reconciler := newInfraReconciler(t, infraFixtures(t)...)
 
 	var routeSyncs int
-	reconciler.TriggerRouteSync = func(context.Context) error {
+	reconciler.TriggerRouteSync = func(context.Context) (ctrl.Result, error) {
 		routeSyncs++
 
-		return nil
+		return ctrl.Result{}, nil
 	}
 
 	ctx := context.Background()
