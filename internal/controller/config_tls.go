@@ -334,12 +334,24 @@ func WithConfigAPIAuthority(authority *configtls.Authority) ProxySyncerOption {
 // push delivers cfg to every resolved endpoint. Under TLS each endpoint is
 // verified against its own configured host, and an http:// endpoint is
 // refused without a connection.
-func (s *ProxySyncer) push(ctx context.Context, cfg *proxy.Config, resolved []pushEndpoint, authToken string) []proxy.PushResult {
-	if s.configAuthority == nil {
-		return s.pusher.PushWithToken(ctx, cfg, endpointURLs(resolved), authToken)
+func (s *ProxySyncer) push(ctx context.Context, cfg *proxy.Config, endpoints []pushEndpoint, authToken string) []proxy.PushResult {
+	results := make([]proxy.PushResult, 0, len(endpoints))
+	resolved := make([]pushEndpoint, 0, len(endpoints))
+
+	for _, endpoint := range endpoints {
+		if endpoint.err != nil {
+			results = append(results, proxy.PushResult{Endpoint: endpoint.url, Err: endpoint.err})
+
+			continue
+		}
+
+		resolved = append(resolved, endpoint)
 	}
 
-	results := make([]proxy.PushResult, 0, len(resolved))
+	if s.configAuthority == nil {
+		return append(results, s.pusher.PushWithToken(ctx, cfg, endpointURLs(resolved), authToken)...)
+	}
+
 	byServerName := make(map[string][]string)
 
 	var serverNames []string

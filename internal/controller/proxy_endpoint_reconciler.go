@@ -4,14 +4,19 @@ import (
 	"context"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/cockroachdb/errors"
+	"golang.org/x/time/rate"
 	discoveryv1 "k8s.io/api/discovery/v1"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
@@ -34,8 +39,8 @@ type proxyServiceTarget struct {
 
 // ProxyEndpointReconciler watches EndpointSlices for the proxy headless
 // Services named in --proxy-endpoints. Whenever the endpoint set changes
-// (a new proxy pod becomes Ready, an old one drains, the Service is
-// rebuilt), it triggers ProxySyncer.ResyncEndpoints so the cached config
+// (a new proxy pod appears, an old one drains, the Service is
+// rebuilt), it triggers ProxySyncer.resyncEndpoints so the cached config
 // gets pushed to every replica -- including replicas that joined AFTER
 // the most recent HTTPRoute reconcile.
 //
@@ -49,7 +54,7 @@ type ProxyEndpointReconciler struct {
 	Client      client.Client
 	ProxySyncer *ProxySyncer
 	// ProxyEndpoints holds the raw --proxy-endpoints URLs. The reconciler
-	// passes them through to ProxySyncer.ResyncEndpoints unchanged; the
+	// passes them through to ProxySyncer.resyncEndpoints unchanged; the
 	// syncer's resolveEndpoints does the DNS expansion to per-pod IPs.
 	ProxyEndpoints []string
 
@@ -60,14 +65,14 @@ type ProxyEndpointReconciler struct {
 }
 
 // Reconcile implements reconcile.Reconciler. It is invoked whenever an
-// EndpointSlice for one of the proxy headless Services changes; the
-// concrete EndpointSlice contents are intentionally ignored -- we only
-// care that "something moved", at which point we hand the full
-// endpoint URL list off to ProxySyncer.ResyncEndpoints which re-resolves
-// DNS and pushes the cached config to every replica it finds.
+// EndpointSlice for one of the proxy headless Services changes, and hands the
+// full endpoint URL list off to ProxySyncer, which re-resolves DNS and pushes
+// the cached config to every replica it finds. The slice's own addresses are
+// checked against what the replay reached: DNS can lag the slice, and a pod
+// the replay missed would otherwise wait for the next full sync.
 func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := logging.Component(ctx, "proxy-endpoint-reconciler")
-	logger.Info("proxy EndpointSlice change observed; resyncing cached config",
+	logger.Info("replaying cached proxy config for EndpointSlice",
 		"endpointslice", req.String(),
 	)
 
@@ -77,8 +82,10 @@ func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.Client.Get(ctx, req.NamespacedName, &slice); err != nil {
 		// Deleted or unreadable: we cannot attribute the event to one data
 		// plane, so replay every cached partition — cheap and correct.
-		return replayResult(r.ProxySyncer.ResyncAllPartitions(ctx), "resync all proxy partitions")
+		return replayResult(ctx, r.ProxySyncer.ResyncAllPartitions(ctx), "resync all proxy partitions")
 	}
+
+	coverage := replayCoverage(&slice)
 
 	// A per-Gateway data plane's EndpointSlice carries the Gateway label
 	// (mirrored from its rendered Service); resync just that partition.
@@ -88,17 +95,14 @@ func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// The label value cannot be attributed to a live Gateway (it is
 			// a truncated form of a name that no longer exists, or foreign):
 			// replay every cached partition — cheap and correct.
-			return replayResult(r.ProxySyncer.ResyncAllPartitions(ctx), "resync all proxy partitions")
+			return replayResult(ctx, r.ProxySyncer.ResyncAllPartitions(ctx), "resync all proxy partitions")
 		}
 
-		return replayResult(r.ProxySyncer.ResyncPartition(ctx, key), "resync per-gateway proxy partition")
+		return replayResult(ctx, r.ProxySyncer.resyncPartitionCovering(ctx, key, coverage),
+			"resync per-gateway proxy partition")
 	}
 
-	// Non-fatal: the next endpoint-change event (or the next HTTPRoute
-	// reconcile) gets another chance. A superseded replay requeues shortly;
-	// any other failure surfaces as an error so controller-runtime
-	// exponentially backs off.
-	return replayResult(r.ProxySyncer.ResyncEndpoints(ctx, r.ProxyEndpoints), "resync proxy endpoints")
+	return replayResult(ctx, r.ProxySyncer.resyncEndpoints(ctx, r.ProxyEndpoints, coverage), "resync proxy endpoints")
 }
 
 // partitionKeyForLabel maps a GatewayLabel value back onto the partition key
@@ -153,9 +157,12 @@ func (r *ProxyEndpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return nil
 	}
 
+	options := replayControllerOptions()
+
 	if err := ctrl.NewControllerManagedBy(mgr).
 		Named("proxy-endpoint-reconciler").
 		For(&discoveryv1.EndpointSlice{}, builder.WithPredicates(r.endpointSliceMatchesProxy())).
+		WithOptions(options).
 		Complete(r); err != nil {
 		return errors.Wrap(err, "setup proxy endpoint reconciler")
 	}
@@ -227,23 +234,11 @@ func parseProxyServiceTargets(endpoints []string) []proxyServiceTarget {
 			continue
 		}
 
-		host := parsed.Hostname()
-		if host == "" {
+		target, ok := serviceTargetOfHost(parsed.Hostname())
+		if !ok {
 			continue
 		}
 
-		// Bare IP is unparseable as a Service ref; skip.
-		if strings.ContainsAny(host, ":") || isProbablyIP(host) {
-			continue
-		}
-
-		parts := strings.Split(host, ".")
-		if len(parts) < 2 {
-			// `service` alone -- no namespace info, skip.
-			continue
-		}
-
-		target := proxyServiceTarget{name: parts[0], namespace: parts[1]}
 		if _, ok := seen[target]; ok {
 			continue
 		}
@@ -254,6 +249,22 @@ func parseProxyServiceTargets(endpoints []string) []proxyServiceTarget {
 	}
 
 	return out
+}
+
+// serviceTargetOfHost reads the Service a cluster-DNS host name refers to:
+// `<svc>.<ns>`, `<svc>.<ns>.svc` or `<svc>.<ns>.svc.<cluster-domain>`. A bare
+// IP or a name without a namespace refers to no Service.
+func serviceTargetOfHost(host string) (proxyServiceTarget, bool) {
+	if host == "" || strings.ContainsAny(host, ":") || isProbablyIP(host) {
+		return proxyServiceTarget{}, false
+	}
+
+	parts := strings.Split(host, ".")
+	if len(parts) < 2 {
+		return proxyServiceTarget{}, false
+	}
+
+	return proxyServiceTarget{name: parts[0], namespace: parts[1]}, true
 }
 
 // isProbablyIP returns true for an IPv4-looking dotted-quad. We don't try
@@ -281,32 +292,138 @@ func isProbablyIP(host string) bool {
 	return true
 }
 
+// replayRetryDelay bounds how long a replay waits before it is retried. A new
+// pod joins the slice before its image is pulled, then causes no further slice
+// change while it waits NotReady for its config, and the proxy gives up on
+// that wait after two minutes. controller-runtime's default backoff grows to
+// minutes, so this controller caps it here.
+const replayRetryDelay = 10 * time.Second
+
+// replayRetryBaseDelay is the first retry delay of a failed replay, doubled on
+// each further failure up to replayRetryDelay.
+const replayRetryBaseDelay = 5 * time.Millisecond
+
+// replayRetryQPS and replayRetryBurst bound the retries of all replays
+// together, as controller-runtime's default rate limiter does.
+const (
+	replayRetryQPS   = 10
+	replayRetryBurst = 100
+)
+
+// replayControllerOptions exists so a test can pin the options the controller
+// runs with; SetupWithManager takes them from here.
+func replayControllerOptions() controller.Options {
+	return controller.Options{RateLimiter: replayRateLimiter()}
+}
+
+// replayRateLimiter is controller-runtime's default rate limiter with the
+// per-item backoff capped at replayRetryDelay instead of 1000s: the larger of
+// that backoff and the controller-wide bucket of 10 retries per second with a
+// burst of 100.
+func replayRateLimiter() workqueue.TypedRateLimiter[reconcile.Request] {
+	return replayRateLimiterWith(newReplayBucket())
+}
+
+func newReplayBucket() *rate.Limiter {
+	return rate.NewLimiter(rate.Limit(replayRetryQPS), replayRetryBurst)
+}
+
+func replayRateLimiterWith(bucket *rate.Limiter) workqueue.TypedRateLimiter[reconcile.Request] {
+	return workqueue.NewTypedMaxOfRateLimiter(
+		workqueue.NewTypedItemExponentialFailureRateLimiter[reconcile.Request](replayRetryBaseDelay, replayRetryDelay),
+		&workqueue.TypedBucketRateLimiter[reconcile.Request]{Limiter: bucket},
+	)
+}
+
 // replayResult maps a replay's error onto the reconcile result. A replay that
-// every partition reports superseded requeues shortly with no error: the newer
-// document is cached or still being pushed, so the next replay carries it.
-// Any other failure keeps the error and controller-runtime's backoff.
-func replayResult(err error, action string) (ctrl.Result, error) {
+// every partition reports superseded requeues shortly: the newer document is
+// cached or still being pushed, so the next replay carries it. A replay that
+// reached every address DNS returned but missed a slice pod is not a failure,
+// DNS has not caught up yet, so it is retried after replayRetryDelay without
+// an error. Any other failure keeps the error, which the capped backoff of
+// replayRateLimiter retries.
+func replayResult(ctx context.Context, err error, action string) (ctrl.Result, error) {
 	if err == nil {
 		return ctrl.Result{}, nil
 	}
 
-	if onlySuperseded(err) {
+	if onlyMarked(err, errReplaySuperseded) {
 		return ctrl.Result{RequeueAfter: lostRacePushRequeueDelay}, nil
+	}
+
+	if onlyMarked(err, errReplayMissedPods) {
+		logging.FromContext(ctx).Info("proxy config replay missed pods DNS did not return yet; retrying",
+			"action", action, "error", err.Error(), "retryAfter", replayRetryDelay.String())
+
+		return ctrl.Result{RequeueAfter: replayRetryDelay}, nil
 	}
 
 	return ctrl.Result{}, errors.Wrap(err, action)
 }
 
-// onlySuperseded reports whether err is errReplaySuperseded, or a joined error
-// whose every branch is. It walks the chain one wrapper at a time instead of
-// using errors.Is, which would also match a single superseded branch of a
-// joined error whose other branch failed for real.
-func onlySuperseded(err error) bool {
+// sliceCoverage is what a replay triggered by an EndpointSlice must reach.
+type sliceCoverage struct {
+	// want holds the slice's addresses of pods that are neither terminating
+	// nor marked not ready.
+	want []string
+	// known holds every address the slice lists.
+	known []string
+	// service is the Service the slice belongs to, when its label names one.
+	service    proxyServiceTarget
+	hasService bool
+}
+
+// isSliceService reports whether an endpoint host names the Service this
+// slice belongs to.
+func (c *sliceCoverage) isSliceService(host string) bool {
+	target, ok := serviceTargetOfHost(host)
+
+	return ok && c.hasService && target == c.service
+}
+
+// replayCoverage returns the coverage a replay triggered by slice is checked
+// against. A terminating pod is left out of want: it is on its way out, and
+// DNS may already have dropped it. So is a pod the slice marks not ready:
+// DNS returns only ready pods unless the Service publishes not-ready ones,
+// and then the slice marks every pod ready. A slice of host names needs no
+// special case: none of them matches a resolved address, so
+// sliceCoverage.missedBy skips the check.
+func replayCoverage(slice *discoveryv1.EndpointSlice) *sliceCoverage {
+	coverage := &sliceCoverage{}
+
+	if name := slice.Labels[discoveryv1.LabelServiceName]; name != "" {
+		coverage.service = proxyServiceTarget{name: name, namespace: slice.Namespace}
+		coverage.hasService = true
+	}
+
+	for i := range slice.Endpoints {
+		endpoint := &slice.Endpoints[i]
+		coverage.known = append(coverage.known, endpoint.Addresses...)
+
+		if endpoint.Conditions.Terminating != nil && *endpoint.Conditions.Terminating {
+			continue
+		}
+
+		if endpoint.Conditions.Ready != nil && !*endpoint.Conditions.Ready {
+			continue
+		}
+
+		coverage.want = append(coverage.want, endpoint.Addresses...)
+	}
+
+	return coverage
+}
+
+// onlyMarked reports whether err is sentinel, or a joined error whose every
+// branch is. It walks the chain one wrapper at a time instead of using
+// errors.Is, which would also match a single marked branch of a joined error
+// whose other branch failed for real.
+func onlyMarked(err, sentinel error) bool {
 	for err != nil {
 		if joined, ok := err.(interface{ Unwrap() []error }); ok {
 			branches := joined.Unwrap()
 			for _, branch := range branches {
-				if !onlySuperseded(branch) {
+				if !onlyMarked(branch, sentinel) {
 					return false
 				}
 			}
@@ -315,7 +432,7 @@ func onlySuperseded(err error) bool {
 		}
 
 		//nolint:err113,errorlint // compared one wrapper at a time on purpose; see above.
-		if err == errReplaySuperseded {
+		if err == sentinel {
 			return true
 		}
 

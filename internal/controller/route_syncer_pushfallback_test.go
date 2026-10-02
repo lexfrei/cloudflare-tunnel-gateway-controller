@@ -376,7 +376,7 @@ func TestResyncTarget_DoesNotResurrectEvictedPartition(t *testing.T) {
 	testClient := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()
 	proxySyncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
 
-	require.NoError(t, proxySyncer.resyncTarget(context.Background(), "default/evicted", nil, ""))
+	require.NoError(t, proxySyncer.resyncTarget(context.Background(), "default/evicted", nil, "", nil))
 
 	proxySyncer.syncMu.Lock()
 	_, exists := proxySyncer.targets["default/evicted"]
@@ -592,7 +592,7 @@ func TestResyncTarget_DoesNotHoldLockAcrossPush(t *testing.T) {
 	go func() {
 		defer close(done)
 
-		_ = proxySyncer.resyncTarget(ctx, key, []string{wedged.URL + "/config"}, "")
+		_ = proxySyncer.resyncTarget(ctx, key, []string{wedged.URL + "/config"}, "", nil)
 	}()
 
 	<-entered
@@ -702,7 +702,7 @@ func TestRecordResync_DoesNotResurrectAPartitionEvictedDuringThePush(t *testing.
 	go func() {
 		defer close(done)
 
-		_ = proxySyncer.resyncTarget(ctx, key, []string{wedged.URL + "/config"}, "")
+		_ = proxySyncer.resyncTarget(ctx, key, []string{wedged.URL + "/config"}, "", nil)
 	}()
 
 	<-entered

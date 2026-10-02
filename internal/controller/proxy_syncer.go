@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -50,7 +51,7 @@ const configMapKind = "ConfigMap"
 // endpoint-watcher (see ProxyEndpointReconciler) can re-push to a
 // newly-joined proxy pod without waiting for the next HTTPRoute
 // reconcile. Before the first syncPartition call, lastCfg is nil and
-// ResyncEndpoints is a no-op -- there is nothing to push yet.
+// resyncEndpoints is a no-op -- there is nothing to push yet.
 // syncMu guards reads and writes of lastCfg, not the push between them:
 // pushes run lock-free, so a recorder must check that the document it
 // pushed is still the cached one before writing anything derived from it.
@@ -153,6 +154,11 @@ type pushTarget struct {
 // document which is already cached or still being pushed, so the next replay
 // carries the newer one.
 var errReplaySuperseded = errors.New("replay superseded by a newer config push")
+
+// errReplayMissedPods marks a replay that reached every address DNS returned
+// while the EndpointSlice listed a pod DNS did not return yet, so that pod
+// still has no config.
+var errReplayMissedPods = errors.New("replay missed pods the EndpointSlice lists")
 
 // NewProxySyncer creates a ProxySyncer for pushing config to proxy replicas.
 // The client is used to validate cross-namespace backend references via
@@ -1054,6 +1060,12 @@ func (s *ProxySyncer) RetainPartitions(keep map[string]bool) {
 // URLs (re-resolving DNS), using the partition's own auth token. Unknown or
 // not-yet-synced partitions are a no-op.
 func (s *ProxySyncer) ResyncPartition(ctx context.Context, key string) error {
+	return s.resyncPartitionCovering(ctx, key, nil)
+}
+
+// resyncPartitionCovering is ResyncPartition that also reports, through
+// errReplayMissedPods, any pod of coverage the replay did not reach.
+func (s *ProxySyncer) resyncPartitionCovering(ctx context.Context, key string, coverage *sliceCoverage) error {
 	s.syncMu.Lock()
 	target, ok := s.targets[key]
 
@@ -1072,7 +1084,7 @@ func (s *ProxySyncer) ResyncPartition(ctx context.Context, key string) error {
 		return nil
 	}
 
-	return s.resyncTarget(ctx, key, endpoints, authToken)
+	return s.resyncTarget(ctx, key, endpoints, authToken, coverage)
 }
 
 // ResyncAllPartitions replays every cached partition config; used when an
@@ -1313,7 +1325,7 @@ func (s *ProxySyncer) buildProxyConfig(
 	return cfg
 }
 
-// ResyncEndpoints replays the most recent config a replica accepted to the
+// resyncEndpoints replays the most recent config a replica accepted to the
 // supplied endpoints without rebuilding from HTTPRoutes. The endpoint
 // watcher uses this to bring a newly-joined proxy pod up to date when the
 // HTTPRoute set has not changed; without it the new pod stays at
@@ -1321,15 +1333,15 @@ func (s *ProxySyncer) buildProxyConfig(
 // the workaround "kubectl rollout restart deployment <controller>" was
 // papering over.
 //
-// Before the first syncPartition call (or after a controller restart that
-// has not yet built any config) lastCfg is nil and this is a no-op --
-// nothing meaningful to push yet, and the next HTTPRoute reconcile will
-// reach the new endpoint along with the others.
+// Before any replica has accepted a config lastCfg is nil and this is a
+// no-op: a plane with no cached config is not replayed, and the next route
+// sync configures it.
 //
-// Push errors are returned but not fatal: a transient endpoint flake
-// gets corrected on the next endpoint-change event.
-func (s *ProxySyncer) ResyncEndpoints(ctx context.Context, endpoints []string) error {
-	return s.resyncTarget(ctx, sharedPartitionKey, endpoints, s.defaultAuthToken)
+// Push errors are returned but not fatal: the endpoint watcher retries them.
+// A non-nil coverage also reports, through errReplayMissedPods, any of its
+// pods the replay did not reach.
+func (s *ProxySyncer) resyncEndpoints(ctx context.Context, endpoints []string, coverage *sliceCoverage) error {
+	return s.resyncTarget(ctx, sharedPartitionKey, endpoints, s.defaultAuthToken, coverage)
 }
 
 // msgNoPushedConfigToResync is the WARN both replayableTarget branches share:
@@ -1382,11 +1394,16 @@ func (s *ProxySyncer) replayableTarget(logger *slog.Logger, key string) (*pushTa
 
 // resyncTarget replays a partition's cached config to the given endpoints
 // with the given token, updating the partition's steady-state skip key on
-// success and invalidating it on partial failure.
-func (s *ProxySyncer) resyncTarget(ctx context.Context, key string, endpoints []string, authToken string) error {
+// success and invalidating it on partial failure. A replay that reached every
+// resolved endpoint but not every pod coverage wants returns
+// errReplayMissedPods: DNS had not caught up with the EndpointSlice yet. A nil
+// coverage skips that check.
+func (s *ProxySyncer) resyncTarget(
+	ctx context.Context, key string, endpoints []string, authToken string, coverage *sliceCoverage,
+) error {
 	// Resolve headless service DNS names before acquiring the lock so a
 	// slow DNS lookup does not block a concurrent sync.
-	resolvedEndpoints := resolveEndpoints(ctx, s.lookupHost, endpoints)
+	resolvedEndpoints := coverage.dropAbsentPlane(resolveEndpoints(ctx, s.lookupHost, endpoints))
 	resolved := endpointURLs(resolvedEndpoints)
 
 	logger := logging.FromContext(ctx)
@@ -1435,6 +1452,11 @@ func (s *ProxySyncer) resyncTarget(ctx context.Context, key string, endpoints []
 	s.recordResync(key, cfg, observedSeq, authToken, resolved, len(pushErrors) > 0)
 
 	if len(pushErrors) == 0 {
+		if missed := coverage.missedBy(resolvedEndpoints); len(missed) > 0 {
+			return errors.Wrapf(errReplayMissedPods, "partition %s: DNS did not return %s",
+				key, strings.Join(missed, ", "))
+		}
+
 		return nil
 	}
 
@@ -1555,16 +1577,105 @@ func (s *ProxySyncer) recordResync(
 // dnsLookupTimeout is the maximum time to wait for a single DNS resolution.
 const dnsLookupTimeout = 5 * time.Second
 
-// hostLookup has the shape of net.Resolver.LookupHost.
+// missedBy returns the wanted addresses no resolved endpoint's host matches.
+// It returns none when no resolved host is in the slice at all: the endpoint
+// name then does not resolve to pod addresses (a ClusterIP Service, for
+// example), and no replay could ever match the slice. A stale answer during a
+// rollout still shares the old pods with the slice, terminating ones included,
+// so it is still checked. A Service split over several slices can leave a new
+// pod in a slice holding no pod the stale answer names; that slice is skipped
+// the same way, and the pod waits until a later replay or sync reaches it.
+func (c *sliceCoverage) missedBy(resolved []pushEndpoint) []string {
+	if c == nil {
+		return nil
+	}
+
+	reached := make(map[string]struct{}, len(resolved))
+
+	for _, endpoint := range resolved {
+		if parsed, err := url.Parse(endpoint.url); err == nil {
+			reached[canonicalAddress(parsed.Hostname())] = struct{}{}
+		}
+	}
+
+	if !anyIn(c.known, reached) {
+		return nil
+	}
+
+	var missed []string
+
+	for _, address := range c.want {
+		if _, ok := reached[canonicalAddress(address)]; !ok {
+			missed = append(missed, address)
+		}
+	}
+
+	return missed
+}
+
+// dropAbsentPlane leaves out an endpoint whose name does not exist when it
+// names the slice's own Service and the slice lists no pod to reach: a plane
+// scaled to zero has no pods and no DNS records, and there is nothing to push.
+// Any other lookup failure, one for a slice that lists pods, or one for another
+// Service, stays a push error.
+func (c *sliceCoverage) dropAbsentPlane(resolved []pushEndpoint) []pushEndpoint {
+	if c == nil || len(c.want) > 0 {
+		return resolved
+	}
+
+	kept := resolved[:0:0]
+
+	for _, endpoint := range resolved {
+		if !isAbsentName(endpoint.err) || !c.isSliceService(endpoint.serverName) {
+			kept = append(kept, endpoint)
+		}
+	}
+
+	return kept
+}
+
+// isAbsentName reports whether err is a lookup that found no such name, or a
+// name with no addresses.
+func isAbsentName(err error) bool {
+	var dnsErr *net.DNSError
+
+	return errors.Is(err, errNoAddresses) || (errors.As(err, &dnsErr) && dnsErr.IsNotFound)
+}
+
+func anyIn(addresses []string, set map[string]struct{}) bool {
+	for _, address := range addresses {
+		if _, ok := set[canonicalAddress(address)]; ok {
+			return true
+		}
+	}
+
+	return false
+}
+
+// canonicalAddress spells an IP address one way, so an IPv6 address written
+// differently in the EndpointSlice and in a DNS answer still compares equal.
+func canonicalAddress(host string) string {
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return addr.String()
+	}
+
+	return host
+}
+
 type hostLookup func(ctx context.Context, host string) ([]string, error)
 
 // pushEndpoint is one resolved push destination. serverName is the host of
 // the configured endpoint it was resolved from: the name the plane's config
-// API certificate must carry once the URL itself holds a pod IP.
+// API certificate must carry once the URL itself holds a pod IP. err is set
+// when that host name did not resolve; nothing is pushed to such an endpoint.
 type pushEndpoint struct {
 	url        string
 	serverName string
+	err        error
 }
+
+// errNoAddresses marks a lookup that succeeded with an empty answer.
+var errNoAddresses = errors.New("no addresses")
 
 func endpointURLs(endpoints []pushEndpoint) []string {
 	urls := make([]string, len(endpoints))
@@ -1579,7 +1690,9 @@ func endpointURLs(endpoints []pushEndpoint) []string {
 // For each endpoint URL, it resolves the hostname via DNS. If the hostname
 // resolves to multiple IPs (headless service), it creates a separate endpoint
 // URL for each IP, preserving the original scheme, port, and path.
-// If resolution fails or returns no results, the original endpoint is kept.
+// An address literal needs no lookup and is kept as it is. A host name that
+// does not resolve is kept with err set rather than pushed to: the dialer would
+// resolve it to a single pod, and that push would count for all of them.
 func resolveEndpoints(ctx context.Context, lookupHost hostLookup, endpoints []string) []pushEndpoint {
 	var resolved []pushEndpoint
 
@@ -1594,14 +1707,26 @@ func resolveEndpoints(ctx context.Context, lookupHost hostLookup, endpoints []st
 		hostname := parsed.Hostname()
 		port := parsed.Port()
 
+		if _, literalErr := netip.ParseAddr(hostname); literalErr == nil {
+			resolved = append(resolved, pushEndpoint{url: endpoint, serverName: hostname})
+
+			continue
+		}
+
 		lookupCtx, cancel := context.WithTimeout(ctx, dnsLookupTimeout)
 
 		addrs, lookupErr := lookupHost(lookupCtx, hostname)
 
 		cancel()
 
-		if lookupErr != nil || len(addrs) == 0 {
-			resolved = append(resolved, pushEndpoint{url: endpoint, serverName: hostname})
+		if lookupErr == nil && len(addrs) == 0 {
+			lookupErr = errNoAddresses
+		}
+
+		if lookupErr != nil {
+			resolved = append(resolved, pushEndpoint{
+				url: endpoint, serverName: hostname, err: errors.Wrapf(lookupErr, "resolving %s", hostname),
+			})
 
 			continue
 		}

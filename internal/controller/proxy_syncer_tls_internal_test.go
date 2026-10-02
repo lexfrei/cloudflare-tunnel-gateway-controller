@@ -104,5 +104,7 @@ func TestResolveEndpoints_CarriesTheConfiguredHost(t *testing.T) {
 
 	require.Len(t, resolved, 2)
 	assert.Equal(t, "127.0.0.1", resolved[0].serverName)
-	assert.Equal(t, pushEndpoint{url: "https://unresolvable.invalid:8081/config", serverName: "unresolvable.invalid"}, resolved[1])
+	assert.Equal(t, "https://unresolvable.invalid:8081/config", resolved[1].url)
+	assert.Equal(t, "unresolvable.invalid", resolved[1].serverName)
+	assert.Error(t, resolved[1].err, "a name that did not resolve is never pushed to")
 }
