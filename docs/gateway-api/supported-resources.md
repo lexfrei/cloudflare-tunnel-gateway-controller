@@ -226,7 +226,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace TLS ref denied by ReferenceGrant |
 | `ResolvedRefs` | `False` | `InvalidRouteKinds` | Invalid route kind in allowedRoutes |
 
-A listener's `attachedRoutes` counts each Route attached to it that is `Accepted` for the Gateway, once per listener. A conflicted listener counts a Route when the same parentRef also matches a usable listener. A Route whose only matching listeners are conflicted is rejected, so it counts nowhere.
+A listener's `attachedRoutes` counts each Route attached to it that is `Accepted` for the Gateway, once per listener. A conflicted listener counts a Route when the same parentRef also matches a usable listener. A Route whose only matching listeners are conflicted is rejected, so it counts nowhere. A Route that is `Accepted: False` with reason `Pending`, for example while a Cloudflare sync fails, is not counted either, so the count can drop while the Cloudflare API is unavailable.
 
 ### HTTPRoute/GRPCRoute Conditions
 
