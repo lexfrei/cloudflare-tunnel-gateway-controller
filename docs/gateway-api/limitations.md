@@ -345,7 +345,8 @@ The Cloudflare Tunnel configurations endpoint is a whole-document update — the
 ### Implications
 
 - A real route change costs one GET + one PUT to Cloudflare and one config push per proxy replica, regardless of how many routes changed.
-- Steady-state reconciles (status updates, endpoint events, periodic resyncs) cost one Cloudflare GET and zero PUTs, and no proxy pushes.
+- Steady-state route reconciles (status updates, periodic resyncs) cost one Cloudflare GET and zero PUTs, and no proxy pushes.
+- A change to a proxy EndpointSlice replays the cached config to that data plane's proxy replicas, or to every plane's when the slice cannot be attributed to one, with no Cloudflare call. The replay of every plane repeats at most ten seconds apart while any plane keeps refusing it. A plane no replica has accepted a config from yet has nothing cached, so the event replays nothing to it, and the plane gets its config from the next route sync.
 - All routes are re-evaluated on any change; full sync remains the startup and recovery path (drift introduced out-of-band is corrected on the next change-triggering sync).
 
 ### Mitigation
