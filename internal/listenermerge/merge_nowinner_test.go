@@ -128,3 +128,50 @@ func TestMerge_ListenerSetEntryMeetsEveryGatewayProtocol(t *testing.T) {
 		"y": gatewayv1.ListenerReasonProtocolConflict,
 	}, reasons)
 }
+
+// TestMerge_UnservableGatewayListenerClaimsNothing pins that a Gateway listener
+// with a protocol this controller does not serve takes no part in the no-winner
+// rule. The spec says such a listener SHOULD NOT be accepted and the conflict
+// rule does not apply to it, so an HTTP listener next to a TCP one on the same
+// port stays usable in either order. A ListenerSet entry with an unserved
+// protocol still loses to the Gateway's HTTP listener.
+func TestMerge_UnservableGatewayListenerClaimsNothing(t *testing.T) {
+	t.Parallel()
+
+	httpListener := gatewayv1.Listener{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType}
+	tcpListener := gatewayv1.Listener{Name: "raw", Port: 80, Protocol: gatewayv1.TCPProtocolType}
+
+	tests := []struct {
+		name      string
+		listeners []gatewayv1.Listener
+	}{
+		{name: "HTTP first", listeners: []gatewayv1.Listener{httpListener, tcpListener}},
+		{name: "TCP first", listeners: []gatewayv1.Listener{tcpListener, httpListener}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gw := &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+				Spec:       gatewayv1.GatewaySpec{Listeners: tt.listeners},
+			}
+			ls := newListenerSet("ls", "infra", "2026-01-01T00:00:00Z", []gatewayv1.ListenerEntry{
+				{Name: "ls-tcp", Port: 80, Protocol: gatewayv1.TCPProtocolType},
+			})
+
+			res := listenermerge.Merge(gw, []*gatewayv1.ListenerSet{ls})
+			require.Len(t, res.Listeners, 3)
+
+			reasons := map[gatewayv1.SectionName]gatewayv1.ListenerConditionReason{}
+			for _, listener := range res.Listeners {
+				reasons[listener.Name] = listener.ConflictReason
+			}
+
+			assert.Empty(t, reasons["http"], "the HTTP listener must stay usable")
+			assert.Empty(t, reasons["raw"], "an unserved Gateway listener is refused as unsupported, not as a conflict")
+			assert.Equal(t, gatewayv1.ListenerReasonProtocolConflict, reasons["ls-tcp"])
+		})
+	}
+}
