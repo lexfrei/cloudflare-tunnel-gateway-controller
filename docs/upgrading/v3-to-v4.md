@@ -286,7 +286,15 @@ When a proxy pod joins, the controller replays the latest config to the addresse
 
 The retry backoff for a replay that fails is capped at ten seconds. A pod that keeps refusing pushes is retried at that pace, and each failure is logged as a reconcile error of `proxy-endpoint-reconciler`. A plane scaled to zero has nothing to replay, and its replay succeeds.
 
-<!-- The section on a new data plane's first config goes here once the cold-start change merges. -->
+## Behaviour change: a new data plane's first config
+
+Who it reaches: any data plane whose EndpointSlice lists pods before the controller has seen one of its replicas accept a config, most often a new per-Gateway plane, or every plane right after a controller restart.
+
+On v4 a proxy waits for its first config before it registers with the edge, and exits after two minutes without one, as [a proxy takes traffic only after its first config](#behaviour-change-a-proxy-takes-traffic-only-after-its-first-config) describes. The route sync that renders a new plane usually runs before the plane's pods exist, so that sync's push reaches no pod. v4 therefore delivers the first config to new pods on its own: every route sync keeps the config it built for a plane, and when the plane's pods appear in its EndpointSlice while the controller has seen no replica accept a config, the controller pushes that config to them, with no Cloudflare call, about every ten seconds with a Warn line until a pod takes it. If nothing was built yet, for example right after a controller restart, the controller runs one route sync for that version of the EndpointSlice.
+
+A route sync started by a plane render or by this first-config path that fails or asks for a requeue is retried by the leader until it comes back clean: after the delay the sync asks for, or after 15 seconds when it names none. However many planes triggered it, only one retry is owed at a time. A failed render-time sync is logged at Error, where v3 logged it at Info.
+
+What to do: nothing. If you alert on the Error log level, expect the retrier to log each failed retry at Error, on top of the sync's own error lines, and a cold-start sync that fails to log one Error line per EndpointSlice version.
 
 ## Behaviour change: stale route status is released
 
