@@ -209,6 +209,8 @@ Affected: dashboards and alerts built on `attachedRoutes`. [AttachedRoutes](../g
 
 A route attached to several Gateways presents the backend client certificate of a Gateway that accepted it and whose data plane serves it.
 
+Affected: a route accepted on more than one Gateway, where those Gateways set different client certificates and the backend checks which one it receives. Make sure each Gateway that accepts the route and serves it carries a certificate the backend accepts.
+
 ## Breaking: what a --proxy-endpoints Service needs
 
 This reaches only a `--proxy-endpoints` Service you bring yourself, for example in a [manual installation](../operations/manual-installation.md). The chart's Service and the per-Gateway Services the controller renders already meet both requirements.
