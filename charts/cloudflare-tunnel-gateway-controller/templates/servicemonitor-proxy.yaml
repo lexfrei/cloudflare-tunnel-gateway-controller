@@ -1,5 +1,5 @@
 {{/* Gated on BOTH toggles: scraping a proxy with metrics disabled is a guaranteed 404. */}}
-{{- if and .Values.serviceMonitor.enabled .Values.proxy.metrics.enabled }}
+{{- if and .Values.serviceMonitor.enabled (dig "metrics" "enabled" true .Values.proxy) }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:

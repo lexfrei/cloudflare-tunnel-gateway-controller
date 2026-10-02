@@ -56,7 +56,7 @@ spec:
             - name: PROXY_GRACE_PERIOD
               value: "{{ int (.Values.proxy.gracePeriodSeconds | default 30) }}s"
             - name: PROXY_METRICS_ENABLED
-              value: {{ .Values.proxy.metrics.enabled | quote }}
+              value: {{ dig "metrics" "enabled" true .Values.proxy | quote }}
             {{- with .Values.proxy.tunnel.protocol }}
             - name: PROXY_TUNNEL_PROTOCOL
               value: {{ . | quote }}
@@ -87,7 +87,7 @@ spec:
             - name: PROXY_WS_IDLE_TIMEOUT
               value: {{ . | quote }}
             {{- end }}
-            {{- with .Values.proxy.mirror.maxInFlight }}
+            {{- with ((.Values.proxy.mirror | default dict).maxInFlight) }}
             - name: PROXY_MIRROR_MAX_IN_FLIGHT
               value: {{ . | int64 | quote }}
             {{- end }}

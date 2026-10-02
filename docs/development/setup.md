@@ -64,10 +64,10 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ### With kubeconfig
 
-The controller binary takes no credential environment variables. In v3, Cloudflare credentials and the tunnel UUID live in a Kubernetes Secret referenced by the GatewayClassConfig CRD, not in the controller process. The only mandatory flag is `--proxy-endpoints`, which points the controller at the in-process L7 proxy's config API.
+The controller binary takes no credential environment variables. Cloudflare credentials and the tunnel UUID live in a Kubernetes Secret referenced by the GatewayClassConfig CRD, not in the controller process. The only mandatory flag is `--proxy-endpoints`, which points the controller at the in-process L7 proxy's config API.
 
 ```bash
-# Run controller (--proxy-endpoints is required in v3)
+# Run controller (--proxy-endpoints is required)
 ./bin/controller \
   --proxy-endpoints=http://127.0.0.1:8081/config \
   --log-level=debug \
@@ -92,7 +92,7 @@ kubectl create secret generic cloudflare-credentials \
 kubectl apply --filename deploy/rbac/
 
 # Run controller locally against cluster.
-# --proxy-endpoints is mandatory in v3; point it at the proxy headless
+# --proxy-endpoints is mandatory; point it at the proxy headless
 # Service in the cluster (or run the proxy binary locally on :8081).
 ./bin/controller \
   --controller-name=cf.k8s.lex.la/tunnel-controller \

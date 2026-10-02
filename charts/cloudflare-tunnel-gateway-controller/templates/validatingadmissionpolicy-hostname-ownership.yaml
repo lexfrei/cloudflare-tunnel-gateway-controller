@@ -1,4 +1,4 @@
-{{- if and .Values.hostnameOwnershipPolicy.enabled .Values.hostnameOwnershipPolicy.admissionPolicy }}
+{{- if and (.Values.hostnameOwnershipPolicy | default dict).enabled .Values.hostnameOwnershipPolicy.admissionPolicy }}
 # Per-namespace hostname-ownership policy (admission layer). A namespace is
 # bound to ONE allowed hostname suffix via the configured label; HTTPRoute /
 # GRPCRoute writes whose hostnames fall outside that suffix are denied at

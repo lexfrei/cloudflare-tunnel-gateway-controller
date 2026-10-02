@@ -44,7 +44,7 @@ proxy:
     name: cloudflare-tunnel-token                      # Secret with key "tunnel-token"
 ```
 
-`proxy.tunnelTokenSecretRef.name` is mandatory in v3 — the chart's `required` check fails install otherwise.
+`proxy.tunnelTokenSecretRef.name` is mandatory — the chart's `required` check fails install otherwise.
 
 ### High Availability
 

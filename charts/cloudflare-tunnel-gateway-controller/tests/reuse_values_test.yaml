@@ -1,0 +1,151 @@
+suite: test rendering with values from an older chart
+# `helm upgrade --reuse-values` renders the new templates against the previous
+# release's values, so a key added after that release is absent rather than
+# defaulted. Each null below is a key values.yaml gained after the named
+# release.
+templates:
+  - clusterrole.yaml
+  - clusterrolebinding.yaml
+  - deployment.yaml
+  - deployment-proxy.yaml
+  - gatewayclass.yaml
+  - gatewayclassconfig.yaml
+  - networkpolicy.yaml
+  - networkpolicy-proxy.yaml
+  - poddisruptionbudget.yaml
+  - poddisruptionbudget-proxy.yaml
+  - role-config-tls.yaml
+  - service.yaml
+  - service-proxy.yaml
+  - service-proxy-headless.yaml
+  - serviceaccount.yaml
+  - serviceaccount-proxy.yaml
+  - servicemonitor.yaml
+  - servicemonitor-proxy.yaml
+  - validatingadmissionpolicy.yaml
+  - validatingadmissionpolicy-hostname-ownership.yaml
+set:
+  serviceMonitor:
+    enabled: true
+  proxy:
+    tunnelTokenSecretRef:
+      name: tunnel-token-secret
+tests:
+  - it: should render every template without the keys added since v3.5.0
+    set:
+      image:
+        digest: null
+      proxy:
+        image:
+          digest: null
+        configAPITLS: null
+        mirror: null
+        serviceAccount: null
+        podDisruptionBudget: null
+        websocket:
+          idleTimeout: null
+    asserts:
+      - notFailedTemplate: {}
+
+  - it: should leave the mirror cap unset on the controller
+    template: deployment.yaml
+    set:
+      proxy:
+        mirror: null
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--mirror-max-in-flight"
+          any: true
+
+  - it: should leave the mirror cap unset on the shared proxy
+    template: deployment-proxy.yaml
+    set:
+      proxy:
+        mirror: null
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_MIRROR_MAX_IN_FLIGHT
+          any: true
+
+  - it: should render every template without the keys added since v3.0.0
+    set:
+      image:
+        digest: null
+      gatewayClassConfig:
+        create: true
+        tunnelID: 00000000-0000-0000-0000-000000000000
+        cloudflareCredentialsSecretRef:
+          name: cloudflare-credentials
+        allowSharedTunnels: null
+        maxDataPlanesPerNamespace: null
+      networkPolicy:
+        enabled: true
+        kubernetesApiIpBlocks: null
+      ruleNameUniquenessPolicy: null
+      hostnameOwnershipPolicy: null
+      proxy:
+        image:
+          digest: null
+        configAPITLS: null
+        gracePeriodSeconds: null
+        metrics: null
+        mirror: null
+        allowXOriginalHost: null
+        serviceAccount: null
+        podDisruptionBudget: null
+        websocket:
+          idleTimeout: null
+        networkPolicy:
+          egressRestricted: null
+          monitoringNamespaceSelector: null
+    asserts:
+      - notFailedTemplate: {}
+
+  - it: should keep proxy metrics on when the values carry no proxy.metrics
+    template: deployment-proxy.yaml
+    set:
+      proxy:
+        metrics: null
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROXY_METRICS_ENABLED
+            value: "true"
+
+  - it: should render the proxy ServiceMonitor when the values carry no proxy.metrics
+    template: servicemonitor-proxy.yaml
+    set:
+      proxy:
+        metrics: null
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: should leave hostname ownership off when the values carry no hostnameOwnershipPolicy
+    template: deployment.yaml
+    set:
+      hostnameOwnershipPolicy: null
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--hostname-ownership-enforce=true"
+
+  - it: should render no rule-name admission policy when the values carry no ruleNameUniquenessPolicy
+    template: validatingadmissionpolicy.yaml
+    set:
+      ruleNameUniquenessPolicy: null
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should render no hostname-ownership admission policy when the values carry no hostnameOwnershipPolicy
+    template: validatingadmissionpolicy-hostname-ownership.yaml
+    set:
+      hostnameOwnershipPolicy: null
+    asserts:
+      - hasDocuments:
+          count: 0

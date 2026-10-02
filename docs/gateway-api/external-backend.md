@@ -1,6 +1,6 @@
 # ExternalBackend
 
-`ExternalBackend` is a namespaced CRD (`cf.k8s.lex.la/v1alpha1`) that declares an out-of-cluster HTTP(S) origin a route can target as a `backendRef`. Because the v3 data plane is a generic in-process L7 proxy that ultimately just dials a URL, a route can point at an arbitrary external endpoint without a `Service` standing in for it.
+`ExternalBackend` is a namespaced CRD (`cf.k8s.lex.la/v1alpha1`) that declares an out-of-cluster HTTP(S) origin a route can target as a `backendRef`. Because the data plane is a generic in-process L7 proxy that ultimately just dials a URL, a route can point at an arbitrary external endpoint without a `Service` standing in for it.
 
 ## When to use it
 

@@ -10,8 +10,8 @@ The GatewayClassConfig is referenced by a GatewayClass via `spec.parametersRef` 
 - Tunnel ID
 - Optional account ID override
 
-!!! note "v3 scope change"
-    Starting v3 the proxy-side configuration (tunnel token, replicas, liveness probes) lives in the Helm chart `proxy.*` values, not in the CRD. The in-process L7 proxy is the only data plane and is deployed by the chart. The AmneziaWG sidecar that v2 attached to the controller-managed cloudflared deployment is **not** available in v3 — see [Upgrading v2 → v3](../upgrading/v2-to-v3.md) for the migration path.
+!!! note "Proxy settings live in the chart"
+    The proxy-side configuration (tunnel token, replicas, liveness probes) lives in the Helm chart `proxy.*` values, not in the CRD. The in-process L7 proxy is the only data plane. There is no AmneziaWG sidecar; an install coming from v2, which attached one to a controller-managed cloudflared deployment, follows [Upgrading v2 → v3](../upgrading/v2-to-v3.md).
 
 ## API Reference
 

@@ -284,6 +284,8 @@ curl http://cloudflare-tunnel-gateway-controller:8081/healthz
 curl --head https://api.cloudflare.com
 ```
 
+With `networkPolicy.enabled: true` the controller admits only the sources listed in `networkPolicy.ingress.from` to its metrics and health ports, so the first two requests from a debug pod fail unless the pod matches one of them. An empty list admits no in-cluster source.
+
 ### DNS Resolution Issues
 
 **Symptoms**:

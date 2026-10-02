@@ -75,7 +75,7 @@ Cluster-scoped Custom Resource Definition (CRD) that provides tunnel configurati
 
 - **API Group**: `cf.k8s.lex.la/v1alpha1`
 - **Referenced by**: GatewayClass via `spec.parametersRef`
-- **Spec fields (v3)**: `cloudflareCredentialsSecretRef`, optional `accountId`, `tunnelID`. Proxy-side configuration (tunnel token, replicas, etc.) lives in Helm chart `proxy.*` values.
+- **Spec fields**: `cloudflareCredentialsSecretRef`, optional `accountId`, `tunnelID`. Proxy-side configuration (tunnel token, replicas, etc.) lives in Helm chart `proxy.*` values.
 
 ```yaml
 apiVersion: cf.k8s.lex.la/v1alpha1
@@ -104,7 +104,7 @@ Watches Gateway resources and performs the following:
 1. **Filtering**: Only processes Gateways whose GatewayClass has a matching `spec.controllerName`
 2. **Status Update**: Sets Gateway address to `<tunnel-id>.cfargotunnel.com` so external-dns / DNS controllers can pick up the CNAME target
 
-Starting v3 the reconciler is status-only — the proxy data plane is deployed by the Helm chart, not by the controller, so there is no finalizer and no controller-side cloudflared lifecycle to wait on.
+The reconciler is status-only — the proxy data plane is deployed by the Helm chart, not by the controller, so there is no finalizer and no controller-side cloudflared lifecycle to wait on.
 
 ```mermaid
 sequenceDiagram

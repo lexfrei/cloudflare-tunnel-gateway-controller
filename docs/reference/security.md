@@ -69,7 +69,7 @@ The Cloudflare API token is sensitive and should be:
 The controller requires specific Kubernetes permissions:
 
 ```yaml
-# Minimum required permissions (v3) -- matches charts/.../templates/clusterrole.yaml
+# Minimum required permissions -- matches charts/.../templates/clusterrole.yaml
 rules:
   # Gateway API - read specs
   - apiGroups: ["gateway.networking.k8s.io"]

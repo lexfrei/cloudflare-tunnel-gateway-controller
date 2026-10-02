@@ -60,7 +60,7 @@ kubectl create secret generic tunnel-token \
 
 ### 2. Configure the proxy in Helm values
 
-The L7 proxy is always rendered by the v3 chart. Point it at the tunnel-token Secret and pick a replica count:
+The chart always renders the L7 proxy. Point it at the tunnel-token Secret and pick a replica count:
 
 ```yaml
 proxy:
@@ -205,9 +205,9 @@ spec:
 
 ## Monitoring
 
-The controller exposes `/metrics` on its dedicated metrics port. The proxy serves its own `/metrics` on the config API port while `proxy.metrics.enabled` is on, which is the default; see [Metrics](../operations/metrics.md#proxy-data-plane-metrics) for the series.
+The controller exposes `/metrics` on its dedicated metrics port. The proxy serves its own `/metrics` on the config API port while `proxy.metrics.enabled` is on, which is the default. With `proxy.configAPITLS.enabled` (the default) that port serves HTTPS. See [Metrics](../operations/metrics.md#proxy-data-plane-metrics) for the series.
 
-Setting `serviceMonitor.enabled: true` renders a ServiceMonitor for the controller's `metrics` port and, while `proxy.metrics.enabled` is on, a second one for the proxy's `config-api` port:
+Setting `serviceMonitor.enabled: true` renders a ServiceMonitor for the controller's `metrics` port and, while `proxy.metrics.enabled` is on, a second one for the proxy's `config-api` port. While config API TLS is on, the second one scrapes over HTTPS with `insecureSkipVerify`:
 
 ```yaml
 serviceMonitor:
