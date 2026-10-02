@@ -444,12 +444,16 @@ func Run(ctx context.Context, cfg *Config) error {
 	// from the startup sync. Route reconciles are route-event-driven, so a
 	// data plane with no routes would never be synced — wire the infra
 	// reconciler to run a full route sync (cache + push to every partition)
-	// when it creates a data plane.
-	gatewayInfraReconciler.TriggerRouteSync = func(ctx context.Context) error {
-		_, err := httpRouteReconciler.syncAndUpdateStatus(ctx)
-
-		return err
+	// when it creates or changes a data plane. The retrier, shared with the
+	// endpoint reconciler's cold start, runs such a sync again while it fails
+	// or asks for a requeue.
+	routeSyncRetrier := newRouteSyncRetrier(httpRouteReconciler.syncAndUpdateStatus, apiErrorRequeueDelay)
+	if err := mgr.Add(routeSyncRetrier); err != nil {
+		return errors.Wrap(err, "failed to add route sync retrier")
 	}
+
+	routeSync := routeSyncRetrier.Sync
+	gatewayInfraReconciler.TriggerRouteSync = routeSync
 
 	if err := httpRouteReconciler.SetupWithManager(mgr); err != nil {
 		return errors.Wrap(err, "failed to setup httproute controller")
@@ -486,7 +490,7 @@ func Run(ctx context.Context, cfg *Config) error {
 		return errors.Wrap(err, "failed to setup gatewayclassconfig controller")
 	}
 
-	if err := setupProxyEndpointReconciler(mgr, proxySyncer, proxyEndpoints); err != nil {
+	if err := setupProxyEndpointReconciler(mgr, proxySyncer, proxyEndpoints, routeSync); err != nil {
 		return err
 	}
 
@@ -567,11 +571,14 @@ func setupProxySecretReconciler(mgr ctrl.Manager, proxyTokenSecret, proxyDeploym
 //
 // Extracted from Run so the per-reconciler setup chain in Run stays
 // under the cyclomatic-complexity gate.
-func setupProxyEndpointReconciler(mgr ctrl.Manager, proxySyncer *ProxySyncer, proxyEndpoints []string) error {
+func setupProxyEndpointReconciler(
+	mgr ctrl.Manager, proxySyncer *ProxySyncer, proxyEndpoints []string, routeSync func(context.Context) (ctrl.Result, error),
+) error {
 	reconciler := &ProxyEndpointReconciler{
-		Client:         mgr.GetClient(),
-		ProxySyncer:    proxySyncer,
-		ProxyEndpoints: proxyEndpoints,
+		Client:           mgr.GetClient(),
+		ProxySyncer:      proxySyncer,
+		ProxyEndpoints:   proxyEndpoints,
+		TriggerRouteSync: routeSync,
 	}
 
 	if err := reconciler.SetupWithManager(mgr); err != nil {
