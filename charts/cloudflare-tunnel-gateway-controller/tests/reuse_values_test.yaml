@@ -4,14 +4,23 @@ suite: test rendering with values from an older chart
 # defaulted. Each null below is a key values.yaml gained after the named
 # release.
 templates:
+  - clusterrole.yaml
+  - clusterrolebinding.yaml
   - deployment.yaml
   - deployment-proxy.yaml
+  - gatewayclass.yaml
   - gatewayclassconfig.yaml
   - networkpolicy.yaml
   - networkpolicy-proxy.yaml
+  - poddisruptionbudget.yaml
   - poddisruptionbudget-proxy.yaml
   - role-config-tls.yaml
+  - service.yaml
+  - service-proxy.yaml
+  - service-proxy-headless.yaml
+  - serviceaccount.yaml
   - serviceaccount-proxy.yaml
+  - servicemonitor.yaml
   - servicemonitor-proxy.yaml
   - validatingadmissionpolicy.yaml
   - validatingadmissionpolicy-hostname-ownership.yaml
