@@ -215,7 +215,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | Type | Status | Reason | Description |
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Listener accepted |
-| `Accepted` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with another listener of the Gateway on the same port. Every listener of a conflicting set is refused; none wins |
+| `Accepted` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with another listener of the Gateway on the same port. Every listener of a conflicting set is refused; none wins. A listener whose protocol is not served (`TCP`, `TLS`, `UDP`) is refused as `UnsupportedProtocol` instead and conflicts with no other listener |
 | `Accepted` | `False` | `UnsupportedValue` | `allowedRoutes.namespaces.from` is `Selector` and the selector does not parse, so the listener admits no route. The message says the selector is invalid without quoting it |
 | `Programmed` | `True` | `Programmed` | Listener programmed |
 | `Programmed` | `False` | `Invalid` | Listener has unresolved references, or is not `Accepted` |
@@ -226,7 +226,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace TLS ref denied by ReferenceGrant |
 | `ResolvedRefs` | `False` | `InvalidRouteKinds` | Invalid route kind in allowedRoutes |
 
-A listener's `attachedRoutes` counts each Route attached to it that is `Accepted` for the Gateway, once per listener, conflicted listeners included. A Route whose only matching listeners are conflicted is rejected, so it counts nowhere.
+A listener's `attachedRoutes` counts each Route attached to it that is `Accepted` for the Gateway, once per listener. A conflicted listener counts a Route when the same parentRef also matches a usable listener. A Route whose only matching listeners are conflicted is rejected, so it counts nowhere.
 
 ### HTTPRoute/GRPCRoute Conditions
 

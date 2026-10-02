@@ -735,8 +735,9 @@ func (w GRPCRouteWrapper) GetRouteKind() gatewayv1.Kind {
 	return routebinding.KindGRPCRoute
 }
 
-// FindRoutesForGateway returns reconcile requests for routes that reference the given Gateway.
-// It checks whether the Gateway's GatewayClass is managed by the given controllerName.
+// FindRoutesForGateway returns reconcile requests for routes that reference the given Gateway,
+// directly or through one of its ListenerSets. For a Gateway whose GatewayClass is not managed
+// by controllerName, it returns only the routes carrying this controller's status.
 func FindRoutesForGateway(
 	ctx context.Context,
 	cli client.Client,
