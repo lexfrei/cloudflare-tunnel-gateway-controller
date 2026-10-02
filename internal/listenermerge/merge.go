@@ -26,7 +26,11 @@
 // A ListenerSet entry that conflicts loses to the higher-precedence listener
 // and is annotated with ConflictReason. Two of the Gateway's own listeners have
 // no precedence between them: the spec says an implementation MUST NOT pick
-// one conflicting Listener as the winner, so both are annotated.
+// one conflicting Listener as the winner, so both are annotated. A Gateway
+// listener whose protocol this controller does not serve takes no part in
+// conflict detection: the spec says it SHOULD NOT be accepted and exempts it
+// from the conflict rule, so it neither claims its port nor refuses another
+// listener there.
 package listenermerge
 
 import (
@@ -204,7 +208,7 @@ func annotateConflicts(merged []MergedListener) {
 	}
 
 	for i := range merged {
-		if merged[i].ParentKind == ParentKindGateway {
+		if merged[i].ParentKind == ParentKindGateway && ServableProtocol(merged[i].Protocol) {
 			claimProtocol(i)
 		}
 	}
@@ -214,6 +218,13 @@ func annotateConflicts(merged []MergedListener) {
 
 	for i := range merged {
 		entry := &merged[i]
+
+		// A Gateway listener whose protocol is not served is refused as
+		// unsupported. The spec exempts it from the conflict rule, so it claims
+		// nothing and refuses nothing.
+		if entry.ParentKind == ParentKindGateway && !ServableProtocol(entry.Protocol) {
+			continue
+		}
 
 		// Protocol-conflict has precedence over hostname-conflict per spec.
 		if owner, ok := otherProtocolClaim(protoClaims[entry.Port], entry.Protocol); ok {
@@ -232,6 +243,23 @@ func annotateConflicts(merged []MergedListener) {
 
 		claimProtocol(i)
 		hostnameOwner[key] = i
+	}
+}
+
+// ServableProtocol reports whether this controller has a data plane for the
+// listener protocol. Only HTTP and HTTPS carry HTTPRoute / GRPCRoute through
+// the in-process proxy; TCP, TLS, UDP, and any unrecognised protocol have none
+// (Cloudflare Tunnel is HTTP-focused and terminates TLS at the edge).
+func ServableProtocol(protocol gatewayv1.ProtocolType) bool {
+	switch protocol {
+	case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
+		return true
+	case gatewayv1.TCPProtocolType, gatewayv1.TLSProtocolType, gatewayv1.UDPProtocolType:
+		return false
+	default:
+		// Any unrecognised protocol (e.g. the conformance suite's INVALID) has
+		// no data plane here either.
+		return false
 	}
 }
 

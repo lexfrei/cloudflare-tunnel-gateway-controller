@@ -33,6 +33,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/listenermerge"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/parentref"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
@@ -1741,23 +1742,11 @@ func refuseInvalidNamespaceSelector(accepted *metav1.Condition, allowedRoutes *g
 	accepted.Message = listenerMsgInvalidNamespaceSelector
 }
 
-// servableListenerProtocol reports whether this controller has a data plane for
-// the listener protocol. Only HTTP and HTTPS carry HTTPRoute / GRPCRoute through
-// the in-process proxy; TCP, TLS, UDP, and any unrecognised protocol have none
-// (Cloudflare Tunnel is HTTP-focused and terminates TLS at the edge). The single
-// source of truth for both the per-listener Accepted condition and the
-// Gateway-level ListenersNotValid aggregation below.
+// servableListenerProtocol is the single source of truth for the per-listener
+// Accepted condition, the Gateway-level ListenersNotValid aggregation below and
+// the conflict exemption in listenermerge.
 func servableListenerProtocol(protocol gatewayv1.ProtocolType) bool {
-	switch protocol {
-	case gatewayv1.HTTPProtocolType, gatewayv1.HTTPSProtocolType:
-		return true
-	case gatewayv1.TCPProtocolType, gatewayv1.TLSProtocolType, gatewayv1.UDPProtocolType:
-		return false
-	default:
-		// Any unrecognised protocol (e.g. the conformance suite's INVALID) has
-		// no data plane here either.
-		return false
-	}
+	return listenermerge.ServableProtocol(protocol)
 }
 
 // gatewayInvalidListeners summarises, across a Gateway's own listeners, how

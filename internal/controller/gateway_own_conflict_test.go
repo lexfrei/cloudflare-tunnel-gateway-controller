@@ -167,3 +167,58 @@ func TestGatewayReconciler_OwnConflictKeepsGatewayAccepted(t *testing.T) {
 		assert.Equal(t, metav1.ConditionTrue, conflicted.Status, "listener %s", name)
 	}
 }
+
+// TestGatewayReconciler_UnservedListenerLeavesHTTPUsable pins that a TCP
+// listener sharing a port with an HTTP listener does not take the HTTP one down
+// with it: the TCP listener is refused as UnsupportedProtocol, the HTTP listener
+// stays Accepted, the Gateway is Accepted=True/ListenersNotValid, and a route
+// still binds to the HTTP listener.
+func TestGatewayReconciler_UnservedListenerLeavesHTTPUsable(t *testing.T) {
+	t.Parallel()
+
+	fromAll := &gatewayv1.AllowedRoutes{Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()}}
+	listeners := []gatewayv1.Listener{
+		{Name: "raw", Port: 80, Protocol: gatewayv1.TCPProtocolType, AllowedRoutes: fromAll},
+		{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType, AllowedRoutes: fromAll},
+	}
+
+	updated := reconcileOwnListenersGateway(t, listeners)
+
+	accepted := meta.FindStatusCondition(updated.Status.Conditions, string(gatewayv1.GatewayConditionAccepted))
+	require.NotNil(t, accepted)
+	assert.Equal(t, metav1.ConditionTrue, accepted.Status, "the HTTP listener still serves")
+	assert.Equal(t, string(gatewayv1.GatewayReasonListenersNotValid), accepted.Reason)
+
+	statuses := map[gatewayv1.SectionName][]metav1.Condition{}
+	for i := range updated.Status.Listeners {
+		statuses[updated.Status.Listeners[i].Name] = updated.Status.Listeners[i].Conditions
+	}
+
+	httpAccepted := meta.FindStatusCondition(statuses["http"], string(gatewayv1.ListenerConditionAccepted))
+	require.NotNil(t, httpAccepted)
+	assert.Equal(t, metav1.ConditionTrue, httpAccepted.Status)
+	assert.False(t, meta.IsStatusConditionTrue(statuses["http"], string(gatewayv1.ListenerConditionConflicted)))
+
+	rawAccepted := meta.FindStatusCondition(statuses["raw"], string(gatewayv1.ListenerConditionAccepted))
+	require.NotNil(t, rawAccepted)
+	assert.Equal(t, metav1.ConditionFalse, rawAccepted.Status)
+	assert.Equal(t, string(gatewayv1.ListenerReasonUnsupportedProtocol), rawAccepted.Reason)
+
+	gc := managedGatewayClass()
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec:       gatewayv1.GatewaySpec{GatewayClassName: gatewayv1.ObjectName(gc.Name), Listeners: listeners},
+	}
+	cli := buildGatewayFakeClient(t, gc, gw)
+
+	gwKind := gatewayv1.Kind(kindGateway)
+	gwNS := gatewayv1.Namespace("infra")
+	ref := gatewayv1.ParentReference{Kind: &gwKind, Name: "gw", Namespace: &gwNS}
+	routeInfo := &routebinding.RouteInfo{Name: "r", Namespace: "team-a", Kind: routebinding.KindHTTPRoute}
+
+	binding, err := resolveRouteParentBinding(context.Background(), cli, routebinding.NewValidator(cli),
+		testListenerSetController, ref, "team-a", routeInfo, nil)
+	require.NoError(t, err)
+	assert.True(t, binding.Result.Accepted, "a route binds to the HTTP listener")
+	assert.Equal(t, []gatewayv1.SectionName{"http"}, binding.Result.MatchedListeners)
+}
