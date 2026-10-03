@@ -47,6 +47,10 @@ var (
 type Config struct {
 	Version int64       `json:"version"`
 	Rules   []RouteRule `json:"rules"`
+	// ListenerHostnames maps a Gateway ("namespace/name") to the hostnames of
+	// the listeners routes can attach to ("" for a listener without one). Together with
+	// RouteRule.Listeners it implements Gateway API listener isolation.
+	ListenerHostnames map[string][]string `json:"listenerHostnames,omitempty"`
 	// HasGRPCRoute is true when at least one GRPCRoute contributed to this
 	// config. The proxy reads it at startup to upgrade an "auto"/unset edge
 	// transport to http2: gRPC requires http2 because cloudflared drops HTTP
@@ -71,11 +75,16 @@ type Config struct {
 // RouteRule represents a single routing rule derived from a Gateway API HTTPRoute.
 // Each rule maps a set of hostnames + match conditions to a set of backends.
 type RouteRule struct {
-	Hostnames []string       `json:"hostnames,omitempty"`
-	Matches   []RouteMatch   `json:"matches,omitempty"`
-	Filters   []RouteFilter  `json:"filters,omitempty"`
-	Backends  []BackendRef   `json:"backends"`
-	Timeouts  *RouteTimeouts `json:"timeouts,omitempty"`
+	Hostnames []string `json:"hostnames,omitempty"`
+	// Listeners maps a Gateway ("namespace/name") to the hostnames of the
+	// listeners the rule's route is attached through. When set, the rule
+	// answers a host only if, on one of these Gateways, the most specific
+	// listener matching the host is one of them.
+	Listeners map[string][]string `json:"listeners,omitempty"`
+	Matches   []RouteMatch        `json:"matches,omitempty"`
+	Filters   []RouteFilter       `json:"filters,omitempty"`
+	Backends  []BackendRef        `json:"backends"`
+	Timeouts  *RouteTimeouts      `json:"timeouts,omitempty"`
 	// UnavailableStatus, when non-zero, makes the proxy return this HTTP status
 	// for every request matching the rule, short-circuiting backend selection.
 	// The controller sets it when a rule cannot be served as written — for
