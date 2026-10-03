@@ -62,6 +62,10 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// contract. (Distinct from SupportGatewayStaticAddresses, exempt below:
 		// the tunnel address is not user-supplied.)
 		features.SupportGatewayAddressEmpty,
+		// Extended Gateway: a host is answered only through routes attached to
+		// the most specific listener matching it. Listener ports are not
+		// compared, which the test's single-port Gateway does not exercise.
+		features.SupportGatewayHTTPListenerIsolation,
 
 		// Extended HTTPRoute (Standard channel feature gates; v1 CRD fields)
 		features.SupportHTTPRouteQueryParamMatching,
@@ -131,11 +135,6 @@ func TestGatewayAPIConformance(t *testing.T) {
 	opts.ExemptFeatures = []features.FeatureName{
 		// Gateway: tunnel has no static IPs, no multi-port, no infra propagation
 		features.SupportGatewayStaticAddresses,
-		// Listener isolation (most-specific-listener wins; a route bound to a
-		// less specific listener must not serve a hostname claimed by a more
-		// specific one) is not implemented — every listener's routes are
-		// currently merged into one shared routing table.
-		features.SupportGatewayHTTPListenerIsolation,
 		features.SupportGatewayInfrastructurePropagation,
 		features.SupportGatewayPort8080,
 		features.SupportGatewayFrontendClientCertificateValidation,
@@ -271,7 +270,6 @@ func conformanceSkipTests() []string {
 
 		// Gateway features not applicable to tunnel architecture.
 		"GatewayStaticAddresses",
-		"GatewayHTTPListenerIsolation",
 		"GatewayInfrastructure",
 		"GatewayFrontendClientCertificateValidation",
 		"GatewayFrontendClientCertificateValidationInsecureFallback",
