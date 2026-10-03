@@ -51,7 +51,7 @@ jobs:
           # Disable it explicitly — the flag is needed for the source type,
           # not because the plugin is unsigned.
           # renovate: datasource=github-releases depName=helm-unittest/helm-unittest
-          HELM_UNITTEST_VERSION="v1.2.0"
+          HELM_UNITTEST_VERSION="v1.2.1"
           helm plugin install https://github.com/helm-unittest/helm-unittest.git \
             --version "${HELM_UNITTEST_VERSION}" --verify=false
 
