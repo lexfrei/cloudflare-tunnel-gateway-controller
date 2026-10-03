@@ -153,7 +153,7 @@ func TestWithEffectiveHostnames_UndecidedParentLeavesRouteOut(t *testing.T) {
 			t.Parallel()
 
 			for _, hostnames := range [][]gatewayv1.Hostname{nil, {"app.example.com"}} {
-				out, diags := withEffectiveHostnames(context.Background(), tt.cli(t), skipTestControllerName,
+				out, diags, _ := withEffectiveHostnames(context.Background(), tt.cli(t), skipTestControllerName,
 					[]*gatewayv1.HTTPRoute{tt.route(hostnames...)}, nil)
 				assert.Empty(t, out, "a route whose only parent cannot be evaluated must not be served (hostnames %v)", hostnames)
 				assertParentNotEvaluated(t, diags)
@@ -179,7 +179,7 @@ func TestWithEffectiveHostnamesGRPC_UndecidedParentLeavesRouteOut(t *testing.T) 
 		},
 	}
 
-	out, diags := withEffectiveHostnamesGRPC(context.Background(), cli, skipTestControllerName, []*gatewayv1.GRPCRoute{route}, nil)
+	out, diags, _ := withEffectiveHostnamesGRPC(context.Background(), cli, skipTestControllerName, []*gatewayv1.GRPCRoute{route}, nil)
 	assert.Empty(t, out, "a gRPC route whose only parent cannot be evaluated must not be served")
 	assertParentNotEvaluated(t, diags)
 }
@@ -217,7 +217,7 @@ func TestWithEffectiveHostnames_UndecidedParentBesideAnAcceptingOne(t *testing.T
 	route := httpRouteTo()
 	route.Spec.ParentRefs = parentRefsToGateways("ours", "broken")
 
-	out, diags := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
+	out, diags, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{ourHost}, out[0].Spec.Hostnames)
 	assertPartiallyServed(t, diags, kindHTTPRouteDiag)
@@ -244,7 +244,7 @@ func TestWithEffectiveHostnamesGRPC_UndecidedParentBesideAnAcceptingOne(t *testi
 		},
 	}
 
-	out, diags := withEffectiveHostnamesGRPC(context.Background(), cli, skipTestControllerName, []*gatewayv1.GRPCRoute{route}, nil)
+	out, diags, _ := withEffectiveHostnamesGRPC(context.Background(), cli, skipTestControllerName, []*gatewayv1.GRPCRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{ourHost}, out[0].Spec.Hostnames)
 	assertPartiallyServed(t, diags, kindGRPCRouteDiag)
@@ -277,7 +277,7 @@ func TestWithEffectiveHostnames_StableWhenGatewayMissing(t *testing.T) {
 	route := httpRouteTo()
 	route.Spec.ParentRefs = parentRefsToGateways("missing")
 
-	out, _ := withEffectiveHostnames(context.Background(), buildGatewayFakeClient(t), skipTestControllerName,
+	out, _, _ := withEffectiveHostnames(context.Background(), buildGatewayFakeClient(t), skipTestControllerName,
 		[]*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Empty(t, out[0].Spec.Hostnames, "a missing Gateway must not synthesise hostnames")
@@ -369,7 +369,7 @@ func TestWithEffectiveHostnames_UndecidedParentBesideAFullyAcceptingOne(t *testi
 	route := httpRouteTo(declared)
 	route.Spec.ParentRefs = parentRefsToGateways("ours", "broken")
 
-	out, diags := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
+	out, diags, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{declared}, out[0].Spec.Hostnames)
 	assert.Empty(t, diags, "a route served with every hostname it declares is not reported")
@@ -396,7 +396,7 @@ func TestWithEffectiveHostnamesGRPC_UndecidedParentBesideAFullyAcceptingOne(t *t
 		},
 	}
 
-	out, diags := withEffectiveHostnamesGRPC(context.Background(), cli, skipTestControllerName, []*gatewayv1.GRPCRoute{route}, nil)
+	out, diags, _ := withEffectiveHostnamesGRPC(context.Background(), cli, skipTestControllerName, []*gatewayv1.GRPCRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{declared}, out[0].Spec.Hostnames)
 	assert.Empty(t, diags, "a route served with every hostname it declares is not reported")
@@ -419,7 +419,7 @@ func TestWithEffectiveHostnames_UndecidedParentBesideAPartlyAcceptingOne(t *test
 	route := httpRouteTo(covered, "b.example.com")
 	route.Spec.ParentRefs = parentRefsToGateways("ours", "broken")
 
-	out, diags := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
+	out, diags, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{covered}, out[0].Spec.Hostnames)
 	assertPartiallyServed(t, diags, kindHTTPRouteDiag)
@@ -455,7 +455,7 @@ func TestWithEffectiveHostnames_UnparseableAllowedListenersIsDecided(t *testing.
 	route := httpRouteTo()
 	route.Spec.ParentRefs = append(parentRefsToGateways("ours"), routeToListenerSet("ls").Spec.ParentRefs...)
 
-	out, diags := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
+	out, diags, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{ourHost}, out[0].Spec.Hostnames)
 	assert.Empty(t, diags, "a parse error is not an undecided parent")

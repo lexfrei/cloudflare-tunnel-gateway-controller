@@ -30,7 +30,7 @@ func TestWithEffectiveHostnames_OwnConflictedListenerNotInherited(t *testing.T) 
 		}},
 	}
 
-	out, _ := withEffectiveHostnames(context.Background(), buildGatewayFakeClient(t, gw), "", []*gatewayv1.HTTPRoute{route}, nil)
+	out, _, _ := withEffectiveHostnames(context.Background(), buildGatewayFakeClient(t, gw), "", []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{"b.example.com"}, out[0].Spec.Hostnames)
 }
