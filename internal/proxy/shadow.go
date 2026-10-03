@@ -104,6 +104,7 @@ func DetectShadowedRules(cfg *Config) []RouteDiagnostic {
 	// emitting against the running incumbent would name an intermediate
 	// claimant that itself serves zero traffic on the pair.
 	winners := make(map[shadowKey]shadowClaimant)
+	owners := compileListenerOwners(cfg.ListenerHostnames)
 
 	var claims []shadowClaim
 
@@ -114,8 +115,13 @@ func DetectShadowedRules(cfg *Config) []RouteDiagnostic {
 			priority:   computePriority(rule),
 			flatIdx:    ruleIdx,
 		}
+		isolation := &compiledRule{listeners: compileRuleListeners(rule.Listeners)}
 
 		for _, key := range ruleShadowKeys(rule) {
+			if !isolation.isolationAllows(&hostOwners{owners: owners, host: representativeHost(key.hostname)}) {
+				continue
+			}
+
 			claims = append(claims, shadowClaim{key: key, claimant: claimant})
 
 			incumbent, claimed := winners[key]
@@ -213,6 +219,24 @@ func ruleShadowKeys(rule *RouteRule) []shadowKey {
 	}
 
 	return keys
+}
+
+// representativeHost stands for the hosts a hostname key covers that no
+// listener names more specifically than the key itself: the key for an exact
+// hostname, an unnameable label under a wildcard, and an unnameable host for
+// the default bucket. Listener isolation removes a rule's claim on the key
+// when the listener owning this host is not one the rule is attached through.
+func representativeHost(hostname string) string {
+	const unnameableLabel = "\x01"
+
+	switch {
+	case hostname == "":
+		return unnameableLabel
+	case strings.HasPrefix(hostname, "*."):
+		return unnameableLabel + hostname[1:]
+	default:
+		return hostname
+	}
 }
 
 // canonicalMatchKey serializes a RouteMatch into a stable, order-insensitive
