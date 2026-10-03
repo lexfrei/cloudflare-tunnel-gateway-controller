@@ -87,6 +87,7 @@ The router uses `atomic.Pointer[routingTable]` for lock-free reads during config
 - **Exact hosts**: `map[string][]*compiledRule` for O(1) hostname lookup
 - **Wildcard hosts**: `[]wildcardEntry` for `*.example.com` patterns
 - **Default rules**: Fallback rules without hostname
+- **Listener owners**: per Gateway, its listener hostnames ordered most specific first; a rule carrying listener attachments is skipped for a host whose owning listener it is not attached through (listener isolation, `internal/proxy/isolation.go`)
 
 ### Precedence (Gateway API spec)
 

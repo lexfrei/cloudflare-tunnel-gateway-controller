@@ -16,8 +16,8 @@ Counts are the current `rows-*.md` verdicts (`cat rows-*.md | grep -E '^\| [A-Z]
 
 | Status | Count |
 | --- | --- |
-| MET | 244 |
-| PARTIAL | 30 |
+| MET | 245 |
+| PARTIAL | 29 |
 | GAP | 2 |
 | REFUTED | 1 |
 | DOWNGRADE-NA | 3 |
