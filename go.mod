@@ -5,7 +5,7 @@ go 1.27.1
 require (
 	cel.dev/cel-go v0.32.0
 	github.com/cloudflare/cloudflare-go/v7 v7.11.0
-	github.com/cloudflare/cloudflared v0.0.0-20260910205223-f11dea9cb707 // decorative, see replace + FIXME(#610) below
+	github.com/cloudflare/cloudflared v0.0.0-20260924153110-96d39adbc812 // decorative, see replace + FIXME(#610) below
 	github.com/cockroachdb/errors v1.14.0
 	github.com/go-logr/logr v1.4.4
 	github.com/google/uuid v1.6.0
@@ -45,6 +45,7 @@ require (
 	github.com/bytedance/sonic/loader v0.5.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/cloudflare/backoff v0.0.0-20240920015135-e46b80a3a7d0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/cockroachdb/logtags v0.0.0-20241215232642-bb51bb14a506 // indirect
 	github.com/cockroachdb/redact v1.1.6 // indirect
@@ -174,7 +175,7 @@ require (
 // can't repoint this pin to an arbitrary newer commit on its own; the require
 // line above still gets Renovate PRs, and those are the intended signal that a
 // rebase is due, not something to merge as-is.
-replace github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0.0-20260919134854-6ca1d20ce170
+replace github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0.0-20261003041154-0e5bb3716548
 
 // This pin mirrors cloudflared's own replace line verbatim and only ever moves
 // together with the fork rebase above - never repoint it alone.
