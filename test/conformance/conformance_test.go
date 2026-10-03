@@ -80,7 +80,12 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportHTTPRouteRequestMirror,
 		features.SupportHTTPRouteRequestTimeout,
 		features.SupportHTTPRouteBackendTimeout,
-		features.SupportHTTPRouteParentRefPort,
+		// HTTPRouteParentRefPort is not claimed: its main test,
+		// HTTPRouteListenerPortMatching, routes by the port in Host, and the
+		// tunnel gives the proxy no port to route by. Its other test,
+		// HTTPRouteInvalidParentRefSectionNameNotMatchingPort, stops running
+		// too; routebinding unit tests cover that binding. parentRef.port is
+		// still honoured for binding.
 		features.SupportHTTPRouteBackendProtocolH2C,
 		features.SupportHTTPRouteBackendProtocolWebSocket,
 		features.SupportHTTPRouteRequestMultipleMirrors,
@@ -240,9 +245,6 @@ func conformanceSkipTests() []string {
 		// Cloudflare terminates TLS at edge — we don't control certs.
 		"HTTPRouteHTTPSListener",
 		"HTTPRouteHTTPSListenerDetectMisdirectedRequests",
-
-		// Tunnel doesn't expose multiple ports.
-		"HTTPRouteListenerPortMatching",
 
 		// Mesh: not supported — tunnel architecture, no service mesh.
 		"MeshBasic",

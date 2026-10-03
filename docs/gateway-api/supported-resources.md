@@ -33,7 +33,7 @@ The Gateway resource is fully processed. Listeners are used for route binding, s
 | `spec.gatewayClassName` | Yes | Required; the referenced GatewayClass must have a matching `spec.controllerName` |
 | `spec.listeners` | Yes | Fully processed for route binding and status |
 | `spec.listeners[].name` | Yes | Used for route binding, status reporting, attached route counting |
-| `spec.listeners[].port` | Yes | Used for route binding when route specifies a port |
+| `spec.listeners[].port` | Yes | Used for route binding when route specifies a port, and as the redirect port of a scheme-less `RequestRedirect` ([redirect port](limitations.md#redirect-port)) |
 | `spec.listeners[].protocol` | Yes | Used for route kind filtering (HTTP/HTTPS allow HTTPRoute/GRPCRoute) |
 | `spec.listeners[].hostname` | Yes | Routes must have intersecting hostnames; a host is served only by routes on the most specific listener that matches it ([listener isolation](limitations.md#listener-isolation)) |
 | `spec.listeners[].tls` | Yes | CertificateRefs validated with ReferenceGrant support |
