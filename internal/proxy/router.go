@@ -320,7 +320,8 @@ func (r *Router) warnGRPCRestartIfNeeded(cfg *Config) {
 func extractActiveTransportKeys(cfg *Config) map[string]bool {
 	keys := make(map[string]bool)
 
-	for _, rule := range cfg.Rules {
+	for idx := range cfg.Rules {
+		rule := &cfg.Rules[idx]
 		headerTimeout := ruleHeaderTimeout(rule.Timeouts)
 
 		for _, backend := range rule.Backends {
@@ -347,12 +348,12 @@ func extractActiveTransportKeys(cfg *Config) map[string]bool {
 // fallback is fine for tests without a Handler but a production bypass
 // hazard if SetHandler was never called.
 func configHasTLSMirror(cfg *Config) bool {
-	for _, rule := range cfg.Rules {
-		if rulesHaveTLSMirror(rule.Filters) {
+	for idx := range cfg.Rules {
+		if rulesHaveTLSMirror(cfg.Rules[idx].Filters) {
 			return true
 		}
 
-		for _, backend := range rule.Backends {
+		for _, backend := range cfg.Rules[idx].Backends {
 			if rulesHaveTLSMirror(backend.Filters) {
 				return true
 			}
