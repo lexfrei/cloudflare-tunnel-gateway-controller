@@ -20,6 +20,7 @@ All matching and filter behavior is performed by the in-process L7 proxy that th
 | URLRewrite filter | ✅ | Replaces the matched prefix and leaves the remaining segments unchanged, dot segments included |
 | RequestMirror filter | ✅ | |
 | Per-route timeouts | ✅ | |
+| Retries | ✅ | Experimental channel; see [Retries](limitations.md#retries) |
 | Cross-namespace routing | ✅ | Via ReferenceGrant |
 | ExternalName service backends | ✅ | |
 
