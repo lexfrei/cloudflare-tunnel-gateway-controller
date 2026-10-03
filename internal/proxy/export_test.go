@@ -188,3 +188,6 @@ func MirrorLiveDispatchesForTest(f Filter) int64 {
 
 	return mirror.live.Load()
 }
+
+// MaxRetryBodyBytes exposes the retry body-buffer limit to external tests.
+const MaxRetryBodyBytes = maxRetryBodyBytes

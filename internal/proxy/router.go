@@ -306,9 +306,9 @@ func (r *Router) warnGRPCRestartIfNeeded(cfg *Config) {
 // config's rules. Keys are formed by transportKey(host, protocol, tls,
 // headerTimeout) so PruneTransports can evict stale entries when any of those
 // change (e.g. on a Service appProtocol flip, a BackendTLSPolicy swap, or a
-// per-rule timeouts edit). The header timeout is derived from
-// rule.Timeouts the same way getTransport's callers derive it -- see
-// ruleHeaderTimeout for the shared rule.
+// per-rule timeouts edit). The header timeout is derived from the rule
+// the same way getTransport's callers derive it -- see ruleHeaderTimeout
+// for the shared rule.
 //
 // RequestMirror filters are walked too: NewRequestMirror calls the
 // TransportFactory with headerTimeout=0, parking a per-cert transport in
@@ -322,7 +322,7 @@ func extractActiveTransportKeys(cfg *Config) map[string]bool {
 
 	for idx := range cfg.Rules {
 		rule := &cfg.Rules[idx]
-		headerTimeout := ruleHeaderTimeout(rule.Timeouts)
+		headerTimeout := ruleHeaderTimeout(rule)
 
 		for _, backend := range rule.Backends {
 			parsed, err := url.Parse(backend.URL)
