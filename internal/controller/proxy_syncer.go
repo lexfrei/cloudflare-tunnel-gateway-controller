@@ -1253,7 +1253,8 @@ func (s *ProxySyncer) buildProxyConfig(
 	// listener's protocol (cloudflared terminates TLS at the edge, so the
 	// origin request carries no usable scheme). Resolve it here so the
 	// converter sees an explicit scheme instead of the proxy's hardcoded
-	// https fallback. Input routes are left untouched.
+	// https fallback; the listener port comes along with it. Input routes are
+	// left untouched.
 	routes = withDefaultRedirectScheme(ctx, s.k8sClient, s.controllerName, routes, views)
 
 	// Convert to proxy config with cross-namespace validation, backend

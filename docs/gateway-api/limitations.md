@@ -148,7 +148,7 @@ Gateway listeners follow Gateway API specification. Some fields are ignored beca
 
 | Field | Status | Notes |
 |-------|--------|-------|
-| `port` | Ignored | Cloudflare uses 443/80 |
+| `port` | Ignored for routing | Requests arrive on the ports the Cloudflare edge serves; the listener port only sets the redirect port of a `RequestRedirect` that leaves `scheme` empty, when the edge serves it ([Redirect port](#redirect-port)) |
 | `protocol` | Validated | Only `HTTP` and `HTTPS` listeners are served (they carry HTTPRoute / GRPCRoute). A `TCP`, `TLS`, or `UDP` listener has no data plane here and is marked `Accepted=False, Reason=UnsupportedProtocol` (and not Programmed) on its listener status |
 | `hostname` | Supported | Routes must have intersecting hostnames; see [Listener isolation](#listener-isolation) |
 | `tls` | Ignored | Cloudflare manages TLS |
@@ -447,9 +447,13 @@ The Gateway API spec recommends adding the `gateway-exists-finalizer.gateway.net
 
 GEP-713 recommends that implementations surface a policy's effect by writing a condition onto the **affected** objects (the Gateway, or the targeted Service) for discoverability. This controller deviates: BackendTLSPolicy acceptance, conflict, and resolution verdicts are written to the policy's own `status.ancestors` (namespaced per ancestor Gateway and controller, per GEP-713's ancestor-status mechanism), but no condition is stamped onto the affected Gateway or Service objects. Rationale: Services are user-owned objects whose `status` this controller deliberately never writes, and the ancestor entries on the policy already name every affected Gateway — `kubectl describe backendtlspolicy` shows the full effect surface. Use the policy's status, not the Service's, to discover what applies to a backend.
 
-## Redirect port defaulting never needs the listener fallback
+## Redirect port
 
-The spec says that when a `RequestRedirect` filter sets a scheme with no well-known port and no explicit `port`, the redirect SHOULD fall back to the Gateway listener's port. With the Standard-channel CRD the `scheme` enum is `http`/`https` only — both have well-known ports — so the listener-port fallback branch is unreachable and is not implemented. An explicit `port` in the filter is always honoured; an omitted `port` emits no port in `Location` (the scheme's well-known port is implied).
+An explicit `port` in a `RequestRedirect` filter is always honoured. When the filter sets a `scheme` but no `port`, `Location` carries no port, because both schemes the CRD allows (`http`, `https`) have well-known ports; the spec's fallback to the listener port for a scheme without one is therefore unreachable and not implemented.
+
+When the filter sets neither, the redirect takes the port of the listener the route is attached to, as the spec requires, and leaves it out of `Location` when it is the scheme's well-known port (80 for `http`, 443 for `https`). The proxy cannot tell which listener a request arrived on, so for a route accepted by several listeners of the chosen scheme the well-known port wins, then the lowest one. The choice is made once per route, for all of its hostnames.
+
+Clients reach a listener only through the Cloudflare edge, which accepts a [fixed set of ports](https://developers.cloudflare.com/fundamentals/reference/network-ports/) per scheme. A listener port outside that set is therefore not written into `Location`, which deviates from the spec's MUST: no request can have arrived on that port, and a redirect to it would fail. To get the listener port into redirects, give the listener a port the edge serves for its scheme. To keep a scheme-less redirect off the listener port, set `scheme` (which carries no port) or `port` on the filter.
 
 ## Metrics and Observability
 
