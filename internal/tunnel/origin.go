@@ -315,10 +315,23 @@ func (p *GatewayOriginProxy) proxyRequest(
 		bridge.WriteHeader(http.StatusInternalServerError)
 	}()
 
+	markUnknownBodyLength(tracedReq.Request)
 	p.handler.ServeHTTP(bridge, tracedReq.Request)
 	bridge.flushTrailers()
 
 	return nil
+}
+
+// markUnknownBodyLength sets ContentLength to -1 for a chunked request body.
+// cloudflared's QUIC connection keeps the Transfer-Encoding header and leaves
+// such a body at ContentLength 0 (connection.buildHTTPRequest), and
+// httputil.ReverseProxy drops the body of any request whose ContentLength is
+// 0. A body declared empty with Content-Length: 0 keeps its length.
+func markUnknownBodyLength(req *http.Request) {
+	if req.ContentLength == 0 && req.Body != nil && req.Body != http.NoBody &&
+		strings.Contains(strings.ToLower(req.Header.Get("Transfer-Encoding")), "chunked") {
+		req.ContentLength = -1
+	}
 }
 
 // logHandlerPanic records a contained panic. Without a stack the entry is
