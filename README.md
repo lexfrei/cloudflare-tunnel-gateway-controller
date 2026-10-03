@@ -150,7 +150,7 @@ Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute or GRP
 | `spec.listeners[].name` | ✅ | Used for route binding, status reporting, attached route counting |
 | `spec.listeners[].protocol` | ✅ | HTTP/HTTPS listeners bind HTTPRoute and GRPCRoute |
 | `spec.listeners[].port` | ✅ | Used for route binding when route specifies a port |
-| `spec.listeners[].hostname` | ✅ | Routes must have intersecting hostnames |
+| `spec.listeners[].hostname` | ✅ | Routes must have intersecting hostnames; a host is served only by routes on the most specific listener that matches it ([listener isolation](https://cf.k8s.lex.la/latest/gateway-api/limitations/#listener-isolation)) |
 | `spec.listeners[].tls` | ✅ | CertificateRefs validated with ReferenceGrant support |
 | `spec.listeners[].allowedRoutes` | ✅ | Namespace (Same/All/Selector) and kind filtering |
 | `spec.addresses` | ❌ | Ignored; tunnel CNAME set in status |

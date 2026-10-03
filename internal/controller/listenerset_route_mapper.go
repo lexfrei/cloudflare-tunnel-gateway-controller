@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -19,7 +20,10 @@ import (
 // Used by HTTPRoute / GRPCRoute reconcilers to enqueue routes when a
 // ListenerSet they depend on is created, edited, or deleted — without this
 // hook a route created BEFORE its ListenerSet would never get a reconcile
-// trigger once the ListenerSet appeared.
+// trigger once the ListenerSet appeared. When the parent Gateway is managed,
+// every route on that Gateway or on any of its ListenerSets is enqueued too:
+// the ListenerSet's entries take part in listener isolation, so they decide
+// which hosts those routes answer.
 func findRoutesAttachedToListenerSet(
 	ctx context.Context,
 	cli client.Client,
@@ -35,8 +39,13 @@ func findRoutesAttachedToListenerSet(
 	managed := found && isGatewayManagedByController(ctx, cli, parent, controllerName)
 
 	requests := make([]reconcile.Request, 0)
+	if managed {
+		requests = FindRoutesForGateway(ctx, cli, parent, controllerName, routes)
+	}
 
 	for _, route := range routes {
+		// A deleted ListenerSet is no longer listed under its Gateway, so its
+		// own routes are matched here rather than by FindRoutesForGateway.
 		if !routeTargetsListenerSet(route, listenerSet) {
 			continue
 		}
@@ -45,10 +54,10 @@ func findRoutesAttachedToListenerSet(
 			continue
 		}
 
-		requests = append(requests, reconcile.Request{
-			Name:      route.GetName(),
-			Namespace: route.GetNamespace(),
-		})
+		request := reconcile.Request{Name: route.GetName(), Namespace: route.GetNamespace()}
+		if !slices.Contains(requests, request) {
+			requests = append(requests, request)
+		}
 	}
 
 	return requests

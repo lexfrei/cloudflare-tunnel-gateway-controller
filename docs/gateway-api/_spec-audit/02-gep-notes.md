@@ -45,5 +45,5 @@ Gateway API tiers features as Core (mandatory for the resource), Extended (optio
 Notable godoc-encoded tier facts:
 
 - GRPCRoute is Extended support (GR-01): its MUSTs apply because the controller claims `SupportGRPCRoute`.
-- Listener Isolation is Extended and explicitly NOT claimed (exempt) — GW-26/27 require documenting that and not claiming the feature.
+- Listener Isolation is Extended and claimed: GW-28 asks a supporting implementation to claim it, and GW-26/27 bind only implementations without it.
 - BackendTLSPolicy / ListenerSet are claimed in `SupportedFeatures`, so their MUSTs are in force.

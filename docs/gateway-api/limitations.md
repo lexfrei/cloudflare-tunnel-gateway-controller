@@ -150,11 +150,19 @@ Gateway listeners follow Gateway API specification. Some fields are ignored beca
 |-------|--------|-------|
 | `port` | Ignored | Cloudflare uses 443/80 |
 | `protocol` | Validated | Only `HTTP` and `HTTPS` listeners are served (they carry HTTPRoute / GRPCRoute). A `TCP`, `TLS`, or `UDP` listener has no data plane here and is marked `Accepted=False, Reason=UnsupportedProtocol` (and not Programmed) on its listener status |
-| `hostname` | Supported | Routes must have intersecting hostnames |
+| `hostname` | Supported | Routes must have intersecting hostnames; see [Listener isolation](#listener-isolation) |
 | `tls` | Ignored | Cloudflare manages TLS |
 | `allowedRoutes` | Supported | Namespace (Same/All/Selector) and kind filtering |
 
 This is because Cloudflare Tunnel terminates TLS at Cloudflare's edge, not in the cluster. However, `hostname` and `allowedRoutes` are validated per Gateway API specification. The same `Accepted=False, Reason=UnsupportedProtocol` listener verdict applies to ListenerSet entries.
+
+### Listener isolation
+
+A request belongs to the most specific listener of a Gateway whose hostname matches it, and only routes attached to that listener can answer it. With listeners `*.example.com` and `foo.example.com`, a request for `foo.example.com` is served only by routes attached to `foo.example.com`; a route attached to `*.example.com` answers `bar.example.com` but not `foo.example.com`, even when it lists `foo.example.com` in its own `hostnames`. A listener without a hostname gets only the hosts no other listener matches. An exact hostname is more specific than any wildcard, and a wildcard with more labels is more specific than one with fewer. ListenerSet entries count as listeners of their parent Gateway. A listener that is not `Accepted` admits no route and owns nothing: a conflicted listener, one with an unsupported protocol, and one whose namespace selector does not parse. A listener that is `Accepted` owns its hostname even while no route is attached to it, so those requests get a 404.
+
+Listener ports are not compared. The tunnel does not tell the proxy which port or scheme a request arrived on, so isolation is computed across all listeners of a Gateway. Two listeners with the same hostname on different ports are equally specific, and routes on either one answer that hostname.
+
+Isolation is per Gateway. A route attached to several Gateways on the same data plane answers a host when any of them gives the host to a listener the route is attached through.
 
 ### `spec.addresses` is not honoured
 
@@ -361,7 +369,7 @@ For very large deployments:
 
 ## Route Conflict Resolution
 
-A request first selects a hostname bucket — exact hostname over wildcard over the default (no-hostname) bucket — and then the matching rules within that bucket are ordered by match specificity, highest first:
+A request first selects a hostname bucket — exact hostname over wildcard over the default (no-hostname) bucket — skipping routes that [listener isolation](#listener-isolation) excludes for the request's host, and then the matching rules within that bucket are ordered by match specificity, highest first:
 
 1. Path match type: exact, then regex, then prefix
 2. Longer path value before shorter

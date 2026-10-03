@@ -215,10 +215,9 @@ func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // the given ListenerSet when its parent Gateway is ours, so the route re-binds
 // (and recomputes its inherited hostnames) when the ListenerSet's listeners
 // change. When the parent is not ours, only the routes carrying this
-// controller's status are enqueued, so their entries get released. Routes
-// attached directly to the parent Gateway are intentionally
-// NOT enqueued here: a Gateway-bound route inherits hostnames only from the
-// Gateway's own listeners, so it has no dependency on ListenerSet changes.
+// controller's status are enqueued, so their entries get released. When the
+// parent is ours, every route on it or on its other ListenerSets is enqueued
+// as well, because the ListenerSet's entries take part in listener isolation.
 //
 //nolint:dupl // mirrored on purpose against GRPCRouteReconciler.findRoutesForListenerSet — different list/wrapper types prevent a clean generic
 func (r *HTTPRouteReconciler) findRoutesForListenerSet(

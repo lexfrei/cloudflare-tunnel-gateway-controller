@@ -305,6 +305,17 @@ func listenerSetParentGateway(
 	return gateway, err == nil
 }
 
+// listenerSetParentKey names the ListenerSet's parent Gateway; a ParentRef
+// without a namespace points into the ListenerSet's own.
+func listenerSetParentKey(listenerSet *gatewayv1.ListenerSet) client.ObjectKey {
+	parentNamespace := listenerSet.Namespace
+	if listenerSet.Spec.ParentRef.Namespace != nil && *listenerSet.Spec.ParentRef.Namespace != "" {
+		parentNamespace = string(*listenerSet.Spec.ParentRef.Namespace)
+	}
+
+	return client.ObjectKey{Name: string(listenerSet.Spec.ParentRef.Name), Namespace: parentNamespace}
+}
+
 // getListenerSetParentGateway reads the ListenerSet's parent Gateway and
 // returns the read error, so a caller can tell an absent parent from one that
 // could not be read.
@@ -313,15 +324,9 @@ func getListenerSetParentGateway(
 	cli client.Client,
 	listenerSet *gatewayv1.ListenerSet,
 ) (*gatewayv1.Gateway, error) {
-	parentNamespace := listenerSet.Namespace
-	if listenerSet.Spec.ParentRef.Namespace != nil && *listenerSet.Spec.ParentRef.Namespace != "" {
-		parentNamespace = string(*listenerSet.Spec.ParentRef.Namespace)
-	}
-
 	var gateway gatewayv1.Gateway
 
-	key := client.ObjectKey{Name: string(listenerSet.Spec.ParentRef.Name), Namespace: parentNamespace}
-	if err := cli.Get(ctx, key, &gateway); err != nil {
+	if err := cli.Get(ctx, listenerSetParentKey(listenerSet), &gateway); err != nil {
 		return nil, errors.Wrap(err, "reading ListenerSet parent Gateway")
 	}
 

@@ -47,7 +47,7 @@ func TestWithEffectiveHostnames_InheritsFromGatewayListener(t *testing.T) {
 
 	cli := buildGatewayFakeClient(t, gw)
 
-	out, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
+	out, _, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{gatewayHost}, out[0].Spec.Hostnames)
 }
@@ -90,7 +90,7 @@ func TestWithEffectiveHostnamesGRPC_InheritsFromGatewayListener(t *testing.T) {
 
 	cli := buildGatewayFakeClient(t, gw)
 
-	out, _ := withEffectiveHostnamesGRPC(context.Background(), cli, "", []*gatewayv1.GRPCRoute{route}, nil)
+	out, _, _ := withEffectiveHostnamesGRPC(context.Background(), cli, "", []*gatewayv1.GRPCRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{gatewayHost}, out[0].Spec.Hostnames)
 }
@@ -129,7 +129,7 @@ func TestWithEffectiveHostnames_InheritsFromListenerSetEntry(t *testing.T) {
 
 	cli := buildGatewayFakeClient(t, ls)
 
-	out, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
+	out, _, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{entryHost}, out[0].Spec.Hostnames)
 }
@@ -176,7 +176,7 @@ func TestWithEffectiveHostnames_SectionNameNarrowsListenerSetEntries(t *testing.
 
 	cli := buildGatewayFakeClient(t, ls)
 
-	out, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
+	out, _, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{b}, out[0].Spec.Hostnames, "only the sectionName-matched entry's hostname should be inherited")
 }
@@ -274,7 +274,7 @@ func TestWithEffectiveHostnames_NarrowsToListenerIntersection(t *testing.T) {
 			t.Parallel()
 
 			cli := buildGatewayFakeClient(t, intersectionListenersGateway(t))
-			out, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{httpRouteTo(tt.hostnames...)}, nil)
+			out, _, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{httpRouteTo(tt.hostnames...)}, nil)
 			require.Len(t, out, 1)
 			assert.Equal(t, tt.expected, out[0].Spec.Hostnames)
 		})
@@ -291,7 +291,7 @@ func TestWithEffectiveHostnames_MultiListenerUnion(t *testing.T) {
 	cli := buildGatewayFakeClient(t, intersectionListenersGateway(t))
 	route := httpRouteTo("very.specific.com", "foo.wildcard.io", "bar.anotherwildcard.io", "no.intersection.com")
 
-	out, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
+	out, _, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.ElementsMatch(t,
 		[]gatewayv1.Hostname{"very.specific.com", "foo.wildcard.io", "bar.anotherwildcard.io"},
@@ -320,7 +320,7 @@ func TestWithEffectiveHostnamesGRPC_NarrowsToListenerIntersection(t *testing.T) 
 	}
 
 	cli := buildGatewayFakeClient(t, intersectionListenersGateway(t))
-	out, _ := withEffectiveHostnamesGRPC(context.Background(), cli, "", []*gatewayv1.GRPCRoute{route}, nil)
+	out, _, _ := withEffectiveHostnamesGRPC(context.Background(), cli, "", []*gatewayv1.GRPCRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{"foo.wildcard.io", "bar.wildcard.io"}, out[0].Spec.Hostnames)
 }
@@ -348,7 +348,7 @@ func TestWithEffectiveHostnamesGRPC_MultiListenerUnion(t *testing.T) {
 	}
 
 	cli := buildGatewayFakeClient(t, intersectionListenersGateway(t))
-	out, _ := withEffectiveHostnamesGRPC(context.Background(), cli, "", []*gatewayv1.GRPCRoute{route}, nil)
+	out, _, _ := withEffectiveHostnamesGRPC(context.Background(), cli, "", []*gatewayv1.GRPCRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.ElementsMatch(t,
 		[]gatewayv1.Hostname{"very.specific.com", "foo.wildcard.io", "bar.anotherwildcard.io"},
@@ -387,7 +387,7 @@ func TestWithEffectiveHostnames_MixedListenersKeepCatchAll(t *testing.T) {
 	}
 
 	cli := buildGatewayFakeClient(t, gw)
-	out, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{httpRouteTo()}, nil)
+	out, _, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{httpRouteTo()}, nil)
 	require.Len(t, out, 1)
 	assert.Empty(t, out[0].Spec.Hostnames,
 		"a hostname-less route accepted by a catch-all listener must stay a catch-all")
@@ -433,7 +433,7 @@ func TestWithEffectiveHostnamesGRPC_MixedListenersKeepCatchAll(t *testing.T) {
 	}
 
 	cli := buildGatewayFakeClient(t, gw)
-	out, _ := withEffectiveHostnamesGRPC(context.Background(), cli, "", []*gatewayv1.GRPCRoute{route}, nil)
+	out, _, _ := withEffectiveHostnamesGRPC(context.Background(), cli, "", []*gatewayv1.GRPCRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Empty(t, out[0].Spec.Hostnames,
 		"a hostname-less gRPC route accepted by a catch-all listener must stay a catch-all")
@@ -463,7 +463,7 @@ func TestWithEffectiveHostnames_UnspecifiedListenerHostnameKeepsRouteHostnames(t
 
 	declared := []gatewayv1.Hostname{"first.com", "sub.first.com", "second.com"}
 	cli := buildGatewayFakeClient(t, gw)
-	out, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{httpRouteTo(declared...)}, nil)
+	out, _, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{httpRouteTo(declared...)}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, declared, out[0].Spec.Hostnames, "a hostname-less listener must not narrow the route's declared hostnames")
 }
@@ -520,7 +520,7 @@ func TestWithEffectiveHostnames_OnlyInheritsFromAcceptingListeners(t *testing.T)
 
 	cli := buildGatewayFakeClient(t, ls)
 
-	out, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
+	out, _, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{allHost}, out[0].Spec.Hostnames,
 		"route must inherit only the accepting listener's hostname, not the same-namespace-only listener's")
@@ -544,7 +544,7 @@ func TestWithEffectiveHostnames_StableWhenParentMissing(t *testing.T) {
 
 	cli := buildGatewayFakeClient(t)
 
-	out, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
+	out, _, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Empty(t, out[0].Spec.Hostnames, "missing parent must not synthesise hostnames")
 }
@@ -624,7 +624,7 @@ func TestWithEffectiveHostnames_ListenerSetConflictedEntryNotInherited(t *testin
 
 	cli := buildGatewayFakeClient(t, gw, ls)
 
-	out, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
+	out, _, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Empty(t, out[0].Spec.Hostnames,
 		"a conflicted ListenerSet entry is not programmed → its hostname must not be inherited")
@@ -697,7 +697,7 @@ func TestWithEffectiveHostnames_IgnoresForeignGateway(t *testing.T) {
 		gatewayUnderClass("theirs", "their-class", &foreignHost),
 	)
 
-	out, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
+	out, _, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{ourHost}, out[0].Spec.Hostnames,
 		"only listeners of Gateways this controller manages may contribute hostnames")
@@ -727,7 +727,7 @@ func TestWithEffectiveHostnames_ForeignCatchAllListenerDoesNotWiden(t *testing.T
 		gatewayUnderClass("theirs", "their-class", nil),
 	)
 
-	out, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
+	out, _, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{ourHost}, out[0].Spec.Hostnames,
 		"a foreign hostname-less listener must not turn the route into a catch-all on our data plane")
@@ -755,7 +755,7 @@ func TestWithEffectiveHostnamesGRPC_IgnoresForeignGateway(t *testing.T) {
 		gatewayUnderClass("theirs", "their-class", &foreignHost),
 	)
 
-	out, _ := withEffectiveHostnamesGRPC(context.Background(), cli, skipTestControllerName, []*gatewayv1.GRPCRoute{route}, nil)
+	out, _, _ := withEffectiveHostnamesGRPC(context.Background(), cli, skipTestControllerName, []*gatewayv1.GRPCRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{ourHost}, out[0].Spec.Hostnames,
 		"only listeners of Gateways this controller manages may contribute hostnames")
@@ -808,7 +808,7 @@ func TestWithEffectiveHostnames_IgnoresForeignListenerSet(t *testing.T) {
 		listenerSet,
 	)
 
-	out, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
+	out, _, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{ourHost}, out[0].Spec.Hostnames,
 		"a ListenerSet under a foreign parent Gateway contributes nothing")
@@ -836,7 +836,7 @@ func TestWithEffectiveHostnames_OurHostnamelessListenerStaysCatchAll(t *testing.
 		gatewayUnderClass("ours", "our-class", nil),
 	)
 
-	out, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
+	out, _, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Empty(t, out[0].Spec.Hostnames,
 		"a hostname-less listener of ours is a real catch-all and must stay one")
@@ -866,7 +866,7 @@ func TestWithEffectiveHostnames_OurGatewayStillNarrows(t *testing.T) {
 		gatewayUnderClass("ours", "our-class", &ourHost),
 	)
 
-	out, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
+	out, _, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{ourHost}, out[0].Spec.Hostnames,
 		"a declared hostname our listener does not cover is still dropped")
@@ -926,7 +926,7 @@ func TestWithEffectiveHostnames_OurListenerSetStillContributes(t *testing.T) {
 		listenerSetUnder("ls", "ours", &entryHost),
 	)
 
-	out, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName,
+	out, _, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName,
 		[]*gatewayv1.HTTPRoute{routeToListenerSet("ls")}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{entryHost}, out[0].Spec.Hostnames,
@@ -964,7 +964,7 @@ func TestWithEffectiveHostnames_ListenerSetNotAllowedByParentContributesNothing(
 		listenerSetUnder("ls", "ours", &entryHost),
 	)
 
-	out, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
+	out, _, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName, []*gatewayv1.HTTPRoute{route}, nil)
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{ourHost}, out[0].Spec.Hostnames,
 		"a ListenerSet its parent Gateway does not allow lends nothing")
@@ -987,7 +987,7 @@ func TestWithEffectiveHostnames_ListenerSetWithMissingParentContributesNothing(t
 		listenerSetUnder("ls", "ghost", &entryHost),
 	)
 
-	out, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName,
+	out, _, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName,
 		[]*gatewayv1.HTTPRoute{routeToListenerSet("ls")}, nil)
 	require.Len(t, out, 1)
 	assert.Empty(t, out[0].Spec.Hostnames,
@@ -1059,7 +1059,7 @@ func TestWithEffectiveHostnames_UnknownGatewayClassStillContributes(t *testing.T
 			objs := append([]client.Object{gatewayUnderClass("ours", "our-class", &ourHost)}, tt.classes...)
 			cli := tt.build(t, objs...)
 
-			out, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName,
+			out, _, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName,
 				[]*gatewayv1.HTTPRoute{route}, nil)
 			require.Len(t, out, 1)
 			assert.Equal(t, []gatewayv1.Hostname{ourHost}, out[0].Spec.Hostnames,
@@ -1086,7 +1086,7 @@ func TestWithEffectiveHostnames_ListenerSetUnderUnknownClassStillContributes(t *
 			}, tt.classes...)
 			cli := tt.build(t, objs...)
 
-			out, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName,
+			out, _, _ := withEffectiveHostnames(context.Background(), cli, skipTestControllerName,
 				[]*gatewayv1.HTTPRoute{routeToListenerSet("ls")}, nil)
 			require.Len(t, out, 1)
 			assert.Equal(t, []gatewayv1.Hostname{entryHost}, out[0].Spec.Hostnames,

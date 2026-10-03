@@ -298,7 +298,9 @@ func (r *GRPCRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // findRoutesForListenerSet enqueues every GRPCRoute whose parentRef targets
 // the given ListenerSet when its parent Gateway is ours. When the parent is
 // not ours, only the routes carrying this controller's status are enqueued,
-// so their entries get released.
+// so their entries get released. When the parent is ours, every route on it
+// or on its other ListenerSets is enqueued as well, because the ListenerSet's
+// entries take part in listener isolation.
 //
 //nolint:dupl // mirrored on purpose against HTTPRouteReconciler.findRoutesForListenerSet — different list/wrapper types prevent a clean generic
 func (r *GRPCRouteReconciler) findRoutesForListenerSet(

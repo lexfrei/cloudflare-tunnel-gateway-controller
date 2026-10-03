@@ -38,6 +38,7 @@ type compiledRule struct {
 	backendFilters [][]Filter // per-backend compiled filters (indexed by backend position)
 	priority       int
 	ruleIndex      int // original rule index for tiebreaking (earlier rules win)
+	listeners      map[string]map[string]struct{}
 	// closedErr is the first filter compile error that made failClosed answer
 	// HTTP 500 for all or part of the rule; nil when every filter compiled.
 	closedErr error
@@ -48,6 +49,7 @@ type routingTable struct {
 	exactHosts    map[string][]*compiledRule
 	wildcardHosts []wildcardEntry
 	defaultRules  []*compiledRule
+	owners        listenerOwners
 	version       int64
 }
 
@@ -191,11 +193,12 @@ type RouteResult struct {
 func (r *Router) Route(req *http.Request) *RouteResult {
 	table := r.table.Load()
 	host := extractHost(req)
+	hosts := &hostOwners{owners: table.owners, host: host}
 
 	// Try exact host match first. The map key only matches when the request
 	// host equals a configured hostname, so it is config-bounded.
 	if rules, ok := table.exactHosts[host]; ok {
-		if result := matchRules(rules, req); result != nil {
+		if result := matchRules(rules, req, hosts); result != nil {
 			result.MatchedHostname = host
 
 			return result
@@ -205,7 +208,7 @@ func (r *Router) Route(req *http.Request) *RouteResult {
 	// Try wildcard host matches (longest suffix first).
 	for _, wildcard := range table.wildcardHosts {
 		if matchesWildcard(host, wildcard.suffix) {
-			if result := matchRules(wildcard.rules, req); result != nil {
+			if result := matchRules(wildcard.rules, req, hosts); result != nil {
 				result.MatchedHostname = "*" + wildcard.suffix
 
 				return result
@@ -214,7 +217,7 @@ func (r *Router) Route(req *http.Request) *RouteResult {
 	}
 
 	// Try default (no hostname) rules; MatchedHostname stays "".
-	if result := matchRules(table.defaultRules, req); result != nil {
+	if result := matchRules(table.defaultRules, req, hosts); result != nil {
 		return result
 	}
 
@@ -437,6 +440,7 @@ func indexRuleByHostname(
 func compileRoutingTable(cfg *Config, env filterEnv) *routingTable {
 	table := &routingTable{
 		exactHosts: make(map[string][]*compiledRule),
+		owners:     compileListenerOwners(cfg.ListenerHostnames),
 		version:    cfg.Version,
 	}
 
@@ -596,6 +600,7 @@ func compileRule(rule *RouteRule, ruleIndex int, env filterEnv) (*compiledRule, 
 		backendFilters: backendFilters,
 		priority:       computePriority(rule),
 		ruleIndex:      ruleIndex,
+		listeners:      compileRuleListeners(rule.Listeners),
 		closedErr:      closedErr,
 	}, nil
 }
@@ -710,8 +715,12 @@ func sortRulesByPrecedence(rules []*compiledRule) {
 
 // matchRules iterates through sorted rules and returns the first match.
 // Multiple matches within a rule are ORed.
-func matchRules(rules []*compiledRule, req *http.Request) *RouteResult {
+func matchRules(rules []*compiledRule, req *http.Request, hosts *hostOwners) *RouteResult {
 	for _, compiled := range rules {
+		if !compiled.isolationAllows(hosts) {
+			continue
+		}
+
 		matchIdx := findMatchingIndex(compiled, req)
 		if matchIdx < 0 {
 			continue

@@ -1246,7 +1246,7 @@ func (s *ProxySyncer) buildProxyConfig(
 	// bound listener covers is dropped (→ 404), and a route with no hostnames
 	// inherits the listener's hostname instead of becoming a catch-all. Rewrite
 	// in-memory before handing to the converter; the input routes are untouched.
-	routes, undecided := withEffectiveHostnames(ctx, s.k8sClient, s.controllerName, routes, views)
+	routes, undecided, httpListeners := withEffectiveHostnames(ctx, s.k8sClient, s.controllerName, routes, views)
 
 	// A RequestRedirect filter that leaves scheme empty must default to the
 	// scheme of the request, which behind the tunnel means the parent
@@ -1262,6 +1262,7 @@ func (s *ProxySyncer) buildProxyConfig(
 	cfg := proxy.ConvertHTTPRoutes(ctx, routes, s.clusterDomain, s.backendValidator, s.protocolResolver, s.tlsResolver,
 		s.clientCertResolver(certParents.http))
 	cfg.Diagnostics = append(cfg.Diagnostics, undecided...)
+	attachRuleListeners(cfg, httpListeners, certParents.http)
 
 	// Mark each invalid backendRef (a nonexistent Service) so the proxy returns
 	// 500 for that backend's traffic fraction instead of dialing a dead address
@@ -1275,16 +1276,19 @@ func (s *ProxySyncer) buildProxyConfig(
 	// (the protocolResolver feeds that decision). The merged config keeps the
 	// HTTP config's version (grpcCfg burns a version counter value that is
 	// discarded — only the pushed config's version is observed downstream).
+	var grpcListeners routeListeners
+
 	if len(grpcRoutes) > 0 {
 		// gRPC routes are narrowed to their route↔listener hostname intersection
 		// exactly like HTTPRoutes: a declared hostname no bound listener covers
 		// is dropped, and a route with no hostnames inherits the listener's
 		// hostname instead of becoming a catch-all answering every Host
 		// (including hostnames owned by other routes).
-		grpcRoutes, undecided = withEffectiveHostnamesGRPC(ctx, s.k8sClient, s.controllerName, grpcRoutes, views)
+		grpcRoutes, undecided, grpcListeners = withEffectiveHostnamesGRPC(ctx, s.k8sClient, s.controllerName, grpcRoutes, views)
 
 		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator, s.protocolResolver, s.tlsResolver,
 			s.clientCertResolver(certParents.grpc))
+		attachRuleListeners(grpcCfg, grpcListeners, certParents.grpc)
 		cfg.Rules = append(cfg.Rules, grpcCfg.Rules...)
 		// Provenance MUST grow in lockstep with Rules (parallel slices) so the
 		// shadow detection below attributes every flattened rule correctly.
@@ -1323,6 +1327,11 @@ func (s *ProxySyncer) buildProxyConfig(
 	// http2; cloudflared drops trailers over QUIC). gRPC rules look identical
 	// to h2c HTTP rules on the wire, so the signal must be explicit.
 	cfg.HasGRPCRoute = len(grpcRoutes) > 0
+
+	// Listener isolation: the proxy answers a host only through rules attached
+	// to the most specific listener matching it, so it needs every attached
+	// Gateway's listener hostnames next to the per-rule attachments.
+	cfg.ListenerHostnames = gatewayListenerHostnames(ctx, s.k8sClient, views, cfg.Rules)
 
 	// Cross-route shadow detection (#474) runs LAST, over the exact rule
 	// stream the router will serve — after hostname-intersection narrowing and

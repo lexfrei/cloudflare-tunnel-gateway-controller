@@ -105,8 +105,8 @@ func TestRouteReferencesOurGateways_ListenerSetWithForeignGateway(t *testing.T) 
 }
 
 // TestFindRoutesAttachedToListenerSet verifies that the controller-runtime
-// mapper enqueues exactly the routes whose parentRef targets the given
-// ListenerSet AND whose parent Gateway is one of ours.
+// mapper enqueues the routes whose parentRef targets the given ListenerSet
+// when its parent Gateway is one of ours, and not a route on another Gateway.
 func TestFindRoutesAttachedToListenerSet(t *testing.T) {
 	t.Parallel()
 
@@ -139,12 +139,12 @@ func TestFindRoutesAttachedToListenerSet(t *testing.T) {
 			},
 		},
 	}
-	routeOnGateway := &gatewayv1.HTTPRoute{
-		ObjectMeta: metav1.ObjectMeta{Name: "on-gateway", Namespace: "team-a"},
+	routeOnOtherGateway := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "on-other-gateway", Namespace: "team-a"},
 		Spec: gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{
 				ParentRefs: []gatewayv1.ParentReference{
-					{Kind: &gwKind, Name: gatewayv1.ObjectName(gw.Name), Namespace: &ns},
+					{Kind: &gwKind, Name: "other", Namespace: &ns},
 				},
 			},
 		},
@@ -152,19 +152,19 @@ func TestFindRoutesAttachedToListenerSet(t *testing.T) {
 
 	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gc, gw, ls).Build()
 
-	routes := []Route{HTTPRouteWrapper{routeAttached}, HTTPRouteWrapper{routeOnGateway}}
+	routes := []Route{HTTPRouteWrapper{routeAttached}, HTTPRouteWrapper{routeOnOtherGateway}}
 	got := findRoutesAttachedToListenerSet(context.Background(), cli, ls, testListenerSetController, routes)
 
-	require.Len(t, got, 1, "only the ListenerSet-attached route should be enqueued")
+	require.Len(t, got, 1, "a route on an unrelated Gateway must not be enqueued")
 	assert.Equal(t, "attached", got[0].Name)
 }
 
-// TestFindRoutesAttachedToListenerSet_GatewayBoundRouteNotEnqueued pins the
-// contract that a route attached directly to the parent Gateway is NOT
-// enqueued on a ListenerSet event — a Gateway-bound route inherits hostnames
-// only from the Gateway's own listeners and has no dependency on ListenerSet
-// changes.
-func TestFindRoutesAttachedToListenerSet_GatewayBoundRouteNotEnqueued(t *testing.T) {
+// TestFindRoutesAttachedToListenerSet_GatewayBoundRouteEnqueued pins that a
+// route attached directly to the parent Gateway is enqueued on a ListenerSet
+// event: the ListenerSet's entries take part in listener isolation, so adding
+// or removing one changes which hosts that route answers, even when no route
+// is attached to the ListenerSet itself.
+func TestFindRoutesAttachedToListenerSet_GatewayBoundRouteEnqueued(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
@@ -200,7 +200,8 @@ func TestFindRoutesAttachedToListenerSet_GatewayBoundRouteNotEnqueued(t *testing
 	got := findRoutesAttachedToListenerSet(context.Background(), cli, ls, testListenerSetController,
 		[]Route{HTTPRouteWrapper{routeOnGateway}})
 
-	assert.Empty(t, got, "a Gateway-bound route must not be enqueued on a ListenerSet event")
+	require.Len(t, got, 1, "a Gateway-bound route must be enqueued on a ListenerSet event")
+	assert.Equal(t, "on-gateway", got[0].Name)
 }
 
 // TestParentRefSelectsListenerSet_RejectsForeignGroup asserts that a parentRef
@@ -372,4 +373,51 @@ func TestListenerSetParentRefGroup(t *testing.T) {
 				"route to ListenerSet mapper")
 		})
 	}
+}
+
+// TestFindRoutesAttachedToListenerSet_SiblingListenerSetRouteEnqueued pins
+// that an event on one ListenerSet enqueues a route attached to another
+// ListenerSet of the same Gateway: listener isolation lets the entries of
+// either one take hosts from the other.
+func TestFindRoutesAttachedToListenerSet_SiblingListenerSetRouteEnqueued(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+
+	gc := managedGatewayClass()
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec:       gatewayv1.GatewaySpec{GatewayClassName: gatewayv1.ObjectName(gc.Name)},
+	}
+	listenerSet := func(name string) *gatewayv1.ListenerSet {
+		return &gatewayv1.ListenerSet{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "infra"},
+			Spec: gatewayv1.ListenerSetSpec{
+				ParentRef: gatewayv1.ParentGatewayReference{Name: gatewayv1.ObjectName(gw.Name)},
+			},
+		}
+	}
+	sibling, changed := listenerSet("x"), listenerSet("y")
+
+	ns := gatewayv1.Namespace("infra")
+	lsKind := gatewayv1.Kind(kindListenerSet)
+	routeOnSibling := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "on-x", Namespace: "team-a"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{
+				ParentRefs: []gatewayv1.ParentReference{
+					{Kind: &lsKind, Name: gatewayv1.ObjectName(sibling.Name), Namespace: &ns},
+				},
+			},
+		},
+	}
+
+	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gc, gw, sibling, changed).Build()
+
+	got := findRoutesAttachedToListenerSet(context.Background(), cli, changed, testListenerSetController,
+		[]Route{HTTPRouteWrapper{routeOnSibling}})
+
+	require.Len(t, got, 1, "a route on a sibling ListenerSet must be enqueued")
+	assert.Equal(t, "on-x", got[0].Name)
 }
