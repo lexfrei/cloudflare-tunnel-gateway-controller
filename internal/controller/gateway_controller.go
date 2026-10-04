@@ -1021,13 +1021,13 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 
 		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
 
-		acceptedReason, programmedReason, listenerReason := configErrorReasons(configErr)
+		reasons := configErrorReasons(configErr)
 
 		applyGatewayConditions(&freshGateway.Status.Conditions,
-			configErrorGatewayConditions(freshGateway.Generation, now, errMsg, acceptedReason, programmedReason),
+			configErrorGatewayConditions(freshGateway.Generation, now, errMsg, reasons),
 			buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr))
 
-		r.applyConfigErrorListenerStatuses(ctx, &freshGateway, now, errMsg, listenerReason)
+		r.applyConfigErrorListenerStatuses(ctx, &freshGateway, now, errMsg, reasons.listener)
 
 		if apiequality.Semantic.DeepEqual(priorStatus, &freshGateway.Status) {
 			return nil
@@ -1081,16 +1081,29 @@ func (r *GatewayReconciler) applyConfigErrorListenerStatuses(
 // reporting NoResources is one object answering the same question twice.
 // Pending is the spec's reason for a listener "not yet online and ready to
 // accept client traffic", which is a refused Gateway's listener exactly.
-func configErrorReasons(configErr error) (string, string, string) {
+func configErrorReasons(configErr error) configErrorReasonSet {
 	if errors.Is(configErr, errDataPlaneQuotaExceeded) {
-		return reasonDataPlaneQuotaExceeded,
-			string(gatewayv1.GatewayReasonNoResources),
-			string(gatewayv1.ListenerReasonPending)
+		return configErrorReasonSet{
+			accepted:   reasonDataPlaneQuotaExceeded,
+			programmed: string(gatewayv1.GatewayReasonNoResources),
+			listener:   string(gatewayv1.ListenerReasonPending),
+		}
 	}
 
-	return string(gatewayv1.GatewayReasonInvalidParameters),
-		string(gatewayv1.GatewayReasonInvalid),
-		string(gatewayv1.ListenerReasonInvalid)
+	return configErrorReasonSet{
+		accepted:   string(gatewayv1.GatewayReasonInvalidParameters),
+		programmed: string(gatewayv1.GatewayReasonInvalid),
+		listener:   string(gatewayv1.ListenerReasonInvalid),
+	}
+}
+
+// configErrorReasonSet carries the condition reasons for a config error. A
+// struct, not three positional strings: transposing two of those compiles and
+// reports the wrong reason.
+type configErrorReasonSet struct {
+	accepted   string
+	programmed string
+	listener   string
 }
 
 // configErrorGatewayConditions is the Gateway-level verdict when a Gateway
@@ -1102,7 +1115,7 @@ func configErrorGatewayConditions(
 	generation int64,
 	now metav1.Time,
 	message string,
-	acceptedReason, programmedReason string,
+	reasons configErrorReasonSet,
 ) []metav1.Condition {
 	return []metav1.Condition{
 		{
@@ -1110,7 +1123,7 @@ func configErrorGatewayConditions(
 			Status:             metav1.ConditionFalse,
 			ObservedGeneration: generation,
 			LastTransitionTime: now,
-			Reason:             acceptedReason,
+			Reason:             reasons.accepted,
 			Message:            message,
 		},
 		{
@@ -1118,7 +1131,7 @@ func configErrorGatewayConditions(
 			Status:             metav1.ConditionFalse,
 			ObservedGeneration: generation,
 			LastTransitionTime: now,
-			Reason:             programmedReason,
+			Reason:             reasons.programmed,
 			Message:            message,
 		},
 	}
