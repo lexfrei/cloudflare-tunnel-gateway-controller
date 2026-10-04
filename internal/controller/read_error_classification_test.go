@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,6 +28,7 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
 // failReads fails every Get of the given type whose name is name, or of any
@@ -447,7 +449,7 @@ func TestSyncAllRoutes_UnreadableNamespaceWithOnlyConflictedSiblingsIsPending(t 
 // TestAcceptedListenerSets_UnreadableNamespaceExcludesOnlyThatSet pins that a
 // ListenerSet whose namespace cannot be read for the Gateway's allowedListeners
 // selector is left out of the Gateway's view on its own: its siblings stay
-// accepted instead of the whole view failing.
+// accepted, and its error is returned alongside them.
 func TestAcceptedListenerSets_UnreadableNamespaceExcludesOnlyThatSet(t *testing.T) {
 	t.Parallel()
 
@@ -487,7 +489,7 @@ func TestAcceptedListenerSets_UnreadableNamespaceExcludesOnlyThatSet(t *testing.
 		WithInterceptorFuncs(failReads[*corev1.Namespace]("team-b", failing())).Build()
 
 	accepted, err := collectAcceptedListenerSetsForGateway(context.Background(), cli, gw)
-	require.NoError(t, err)
+	require.Error(t, err, "the unevaluated ListenerSet is reported")
 	require.Len(t, accepted, 1)
 	assert.Equal(t, "team-a", accepted[0].Namespace)
 }
@@ -712,4 +714,406 @@ func TestPushPartitionConfigs_ConflictedMatchWithUnevaluatedSiblingReportsNarrow
 
 	diags := pushDiagnosticsWithUnreadableNamespaces(t, route, gc, conflicted, lending)
 	assert.True(t, hasParentNotEvaluated(diags, "probe"), "%+v", diags)
+}
+
+// TestGatewayUpdateStatus_UncountableRouteKeepsAttachedRoutes pins that an
+// attachedRoutes count that could not be finished, because an Accepted route's
+// binding cannot be evaluated, is not written as final: the listener keeps the
+// count it had and the reconcile is retried.
+func TestGatewayUpdateStatus_UncountableRouteKeepsAttachedRoutes(t *testing.T) {
+	t.Parallel()
+
+	// The config-error writer is requeued on a timer whatever it returns, so
+	// only the resolved writer has to report the unfinished count.
+	writers := map[string]struct {
+		write   func(*GatewayReconciler, *gatewayv1.Gateway) error
+		wantErr bool
+	}{
+		"resolved": {write: func(r *GatewayReconciler, gw *gatewayv1.Gateway) error {
+			return r.updateStatus(context.Background(), gw, &config.ResolvedConfig{TunnelID: "tunnel"}, false)
+		}, wantErr: true},
+		"config error": {write: func(r *GatewayReconciler, gw *gatewayv1.Gateway) error {
+			return r.setConfigErrorStatus(context.Background(), gw, config.MarkInvalidParameters(errSimulatedCacheMiss))
+		}},
+	}
+
+	for name, writer := range writers {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			gateway := &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+					Listeners: []gatewayv1.Listener{
+						{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType, AllowedRoutes: teamSelectorRoutes()},
+					},
+				},
+				Status: gatewayv1.GatewayStatus{Listeners: []gatewayv1.ListenerStatus{{Name: "http", AttachedRoutes: 1}}},
+			}
+			ref := gatewayv1.ParentReference{Name: "gw"}
+			route := attachedRoute("probe", nil, ref)
+			route.Status.Parents = []gatewayv1.RouteParentStatus{
+				parentStatusFor(ref, "default", "test-controller", metav1.ConditionTrue, string(gatewayv1.RouteReasonAccepted)),
+			}
+
+			base := setupGatewayFakeClient(gateway, route)
+			cli := interceptor.NewClient(base, failReads[*corev1.Namespace]("", failing()))
+			reconciler := &GatewayReconciler{Client: cli, Scheme: base.Scheme(), ControllerName: "test-controller"}
+
+			assert.Equal(t, writer.wantErr, writer.write(reconciler, gateway) != nil)
+
+			var updated gatewayv1.Gateway
+			require.NoError(t, base.Get(context.Background(), client.ObjectKeyFromObject(gateway), &updated))
+			require.Len(t, updated.Status.Listeners, 1)
+			assert.Equal(t, int32(1), updated.Status.Listeners[0].AttachedRoutes)
+		})
+	}
+}
+
+// TestListenerSetReconciler_UncountableRouteKeepsAttachedRoutes is the
+// ListenerSet twin: the entry keeps its count, the ListenerSet keeps its
+// acceptance instead of going Pending over a count, and the reconcile retries.
+func TestListenerSetReconciler_UncountableRouteKeepsAttachedRoutes(t *testing.T) {
+	t.Parallel()
+
+	fromSame := gatewayv1.NamespacesFromSame
+	gc := managedGatewayClass()
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(gc.Name),
+			AllowedListeners: &gatewayv1.AllowedListeners{Namespaces: &gatewayv1.ListenerNamespaces{From: &fromSame}},
+		},
+	}
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "default"},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: gatewayv1.ObjectName(gw.Name)},
+			Listeners: []gatewayv1.ListenerEntry{
+				{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType, AllowedRoutes: teamSelectorRoutes()},
+			},
+		},
+		Status: gatewayv1.ListenerSetStatus{Listeners: []gatewayv1.ListenerEntryStatus{{Name: "http", AttachedRoutes: 1}}},
+	}
+	ref := gatewayv1.ParentReference{Name: "ls", Kind: new(gatewayv1.Kind(kindListenerSet))}
+	route := attachedRoute("probe", nil, ref)
+	route.Status.Parents = []gatewayv1.RouteParentStatus{
+		parentStatusFor(ref, "default", testListenerSetController, metav1.ConditionTrue, string(gatewayv1.RouteReasonAccepted)),
+	}
+
+	scheme := newListenerSetScheme(t)
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gc, gw, ls, route).
+		WithStatusSubresource(&gatewayv1.ListenerSet{}, &gatewayv1.Gateway{}).
+		WithInterceptorFuncs(failReads[*corev1.Namespace]("", failing())).Build()
+
+	r := &ListenerSetReconciler{Client: cli, Scheme: scheme, ControllerName: testListenerSetController}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "ls", Namespace: "default"}})
+	require.Error(t, err, "the reconcile must be retried")
+
+	updated := getListenerSet(t, cli, ls.Name, ls.Namespace)
+	accepted := meta.FindStatusCondition(updated.Status.Conditions, string(gatewayv1.ListenerSetConditionAccepted))
+	require.NotNil(t, accepted)
+	assert.NotEqual(t, string(gatewayv1.ListenerSetReasonPending), accepted.Reason)
+	require.Len(t, updated.Status.Listeners, 1)
+	assert.Equal(t, int32(1), updated.Status.Listeners[0].AttachedRoutes)
+}
+
+// TestGatewayUpdateStatus_UnlistableListenerSetsKeepAttachedListenerSets pins
+// the same rule for attachedListenerSets: a failed ListenerSet list keeps the
+// count already written instead of reporting 0, and the reconcile is retried.
+func TestGatewayUpdateStatus_UnlistableListenerSetsKeepAttachedListenerSets(t *testing.T) {
+	t.Parallel()
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+		Spec:       gatewayv1.GatewaySpec{GatewayClassName: "cloudflare-tunnel", Listeners: httpListener()},
+		Status:     gatewayv1.GatewayStatus{AttachedListenerSets: new(int32(2))},
+	}
+
+	base := setupGatewayFakeClient(gateway)
+	cli := interceptor.NewClient(base, interceptor.Funcs{
+		List: func(ctx context.Context, cli client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if _, ok := list.(*gatewayv1.ListenerSetList); ok {
+				return errSimulatedCacheMiss
+			}
+
+			return cli.List(ctx, list, opts...)
+		},
+	})
+	reconciler := &GatewayReconciler{Client: cli, Scheme: base.Scheme(), ControllerName: "test-controller"}
+
+	err := reconciler.updateStatus(context.Background(), gateway, &config.ResolvedConfig{TunnelID: "tunnel"}, false)
+	require.Error(t, err, "the reconcile must be retried")
+
+	var updated gatewayv1.Gateway
+	require.NoError(t, base.Get(context.Background(), client.ObjectKeyFromObject(gateway), &updated))
+	require.NotNil(t, updated.Status.AttachedListenerSets)
+	assert.Equal(t, int32(2), *updated.Status.AttachedListenerSets)
+}
+
+// TestAttachedRouteCount_IncompleteBindingIsUnfinished pins that a route bound
+// through one listener while a sibling listener cannot be evaluated leaves the
+// count unfinished: the route may attach to that listener too.
+func TestAttachedRouteCount_IncompleteBindingIsUnfinished(t *testing.T) {
+	t.Parallel()
+
+	listeners := []gatewayv1.Listener{
+		{Name: "same", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+		{Name: "sel", Port: 8080, Protocol: gatewayv1.HTTPProtocolType, AllowedRoutes: teamSelectorRoutes()},
+	}
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+		Spec:       gatewayv1.GatewaySpec{GatewayClassName: "cloudflare-tunnel", Listeners: listeners},
+	}
+	ref := gatewayv1.ParentReference{Name: "gw"}
+	route := attachedRoute("probe", nil, ref)
+	route.Status.Parents = []gatewayv1.RouteParentStatus{
+		parentStatusFor(ref, "default", "test-controller", metav1.ConditionTrue, string(gatewayv1.RouteReasonAccepted)),
+	}
+
+	base := setupGatewayFakeClient(gateway, route)
+	cli := interceptor.NewClient(base, failReads[*corev1.Namespace]("", failing()))
+	reconciler := &GatewayReconciler{Client: cli, Scheme: base.Scheme(), ControllerName: "test-controller"}
+
+	_, err := reconciler.countAttachedRoutes(context.Background(), gateway)
+	require.Error(t, err)
+
+	ls := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "default"},
+		Spec: gatewayv1.ListenerSetSpec{Listeners: []gatewayv1.ListenerEntry{
+			{Name: "same", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+			{Name: "sel", Port: 8080, Protocol: gatewayv1.HTTPProtocolType, AllowedRoutes: teamSelectorRoutes()},
+		}},
+	}
+	lsRef := gatewayv1.ParentReference{Name: "ls", Kind: new(gatewayv1.Kind(kindListenerSet))}
+	lsRoute := attachedRoute("probe", nil, lsRef)
+	lsRoute.Status.Parents = []gatewayv1.RouteParentStatus{
+		parentStatusFor(lsRef, "default", "test-controller", metav1.ConditionTrue, string(gatewayv1.RouteReasonAccepted)),
+	}
+
+	err = incrementListenerSetAttachedRoutes(context.Background(), routebinding.NewValidator(cli), "test-controller", ls,
+		HTTPRouteWrapper{lsRoute}, map[gatewayv1.SectionName]int32{})
+	require.Error(t, err)
+}
+
+// TestGatewayUpdateStatus_UnevaluatedListenerSetKeepsAttachedListenerSets pins
+// that attachedListenerSets keeps the count already written, and the reconcile
+// retries, when a ListenerSet's acceptance cannot be evaluated or its entries'
+// TLS references cannot be read.
+func TestGatewayUpdateStatus_UnevaluatedListenerSetKeepsAttachedListenerSets(t *testing.T) {
+	t.Parallel()
+
+	fromSelector := gatewayv1.NamespacesFromSelector
+	fromSame := gatewayv1.NamespacesFromSame
+	terminate := gatewayv1.TLSModeTerminate
+
+	tests := map[string]struct {
+		allowed *gatewayv1.ListenerNamespaces
+		entry   gatewayv1.ListenerEntry
+		failing interceptor.Funcs
+	}{
+		"unreadable ListenerSet namespace": {
+			allowed: &gatewayv1.ListenerNamespaces{
+				From: &fromSelector, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"team": "a"}},
+			},
+			entry:   gatewayv1.ListenerEntry{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+			failing: failReads[*corev1.Namespace]("", failing()),
+		},
+		"unreadable certificate": {
+			allowed: &gatewayv1.ListenerNamespaces{From: &fromSame},
+			entry: gatewayv1.ListenerEntry{
+				Name: "https", Port: 443, Protocol: gatewayv1.HTTPSProtocolType,
+				TLS: &gatewayv1.ListenerTLSConfig{
+					Mode:            &terminate,
+					CertificateRefs: []gatewayv1.SecretObjectReference{{Name: "cert"}},
+				},
+			},
+			failing: failReads[*corev1.Secret]("", failing()),
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			gateway := &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: "cloudflare-tunnel",
+					Listeners:        httpListener(),
+					AllowedListeners: &gatewayv1.AllowedListeners{Namespaces: tt.allowed},
+				},
+				Status: gatewayv1.GatewayStatus{AttachedListenerSets: new(int32(1))},
+			}
+			ls := &gatewayv1.ListenerSet{
+				ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "default"},
+				Spec: gatewayv1.ListenerSetSpec{
+					ParentRef: gatewayv1.ParentGatewayReference{Name: "gw"},
+					Listeners: []gatewayv1.ListenerEntry{tt.entry},
+				},
+			}
+
+			base := setupGatewayFakeClient(gateway, ls)
+			cli := interceptor.NewClient(base, tt.failing)
+			reconciler := &GatewayReconciler{Client: cli, Scheme: base.Scheme(), ControllerName: "test-controller"}
+
+			err := reconciler.updateStatus(context.Background(), gateway, &config.ResolvedConfig{TunnelID: "tunnel"}, false)
+			require.Error(t, err, "the reconcile must be retried")
+
+			var updated gatewayv1.Gateway
+			require.NoError(t, base.Get(context.Background(), client.ObjectKeyFromObject(gateway), &updated))
+			require.NotNil(t, updated.Status.AttachedListenerSets)
+			assert.Equal(t, int32(1), *updated.Status.AttachedListenerSets)
+		})
+	}
+}
+
+// TestGatewayUpdateStatus_UnlistableRoutesKeepAttachedRoutes pins that a failed
+// route List keeps the attachedRoutes already written and retries, for either
+// route kind.
+func TestGatewayUpdateStatus_UnlistableRoutesKeepAttachedRoutes(t *testing.T) {
+	t.Parallel()
+
+	lists := map[string]func(client.ObjectList) bool{
+		"HTTPRoute": func(list client.ObjectList) bool { _, ok := list.(*gatewayv1.HTTPRouteList); return ok },
+		"GRPCRoute": func(list client.ObjectList) bool { _, ok := list.(*gatewayv1.GRPCRouteList); return ok },
+	}
+
+	for name, fails := range lists {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			gateway := &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"},
+				Spec:       gatewayv1.GatewaySpec{GatewayClassName: "cloudflare-tunnel", Listeners: httpListener()},
+				Status:     gatewayv1.GatewayStatus{Listeners: []gatewayv1.ListenerStatus{{Name: "http", AttachedRoutes: 1}}},
+			}
+
+			base := setupGatewayFakeClient(gateway)
+			cli := interceptor.NewClient(base, interceptor.Funcs{
+				List: func(ctx context.Context, cli client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+					if fails(list) {
+						return errSimulatedCacheMiss
+					}
+
+					return cli.List(ctx, list, opts...)
+				},
+			})
+			reconciler := &GatewayReconciler{Client: cli, Scheme: base.Scheme(), ControllerName: "test-controller"}
+
+			err := reconciler.updateStatus(context.Background(), gateway, &config.ResolvedConfig{TunnelID: "tunnel"}, false)
+			require.Error(t, err, "the reconcile must be retried")
+
+			var updated gatewayv1.Gateway
+			require.NoError(t, base.Get(context.Background(), client.ObjectKeyFromObject(gateway), &updated))
+			require.Len(t, updated.Status.Listeners, 1)
+			assert.Equal(t, int32(1), updated.Status.Listeners[0].AttachedRoutes)
+		})
+	}
+}
+
+// siblingListenerSetObjects is a Selector-mode Gateway and two ListenerSets
+// with the same listener, the one in team-b older, so it wins the conflict.
+func siblingListenerSetObjects() []client.Object {
+	fromSelector := gatewayv1.NamespacesFromSelector
+	gc := managedGatewayClass()
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(gc.Name),
+			AllowedListeners: &gatewayv1.AllowedListeners{Namespaces: &gatewayv1.ListenerNamespaces{
+				From: &fromSelector, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"team": "a"}},
+			}},
+		},
+	}
+
+	listenerSet := func(namespace string, created time.Time) *gatewayv1.ListenerSet {
+		return &gatewayv1.ListenerSet{
+			ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: namespace, CreationTimestamp: metav1.NewTime(created)},
+			Spec: gatewayv1.ListenerSetSpec{
+				ParentRef: gatewayv1.ParentGatewayReference{Name: "gw", Namespace: new(gatewayv1.Namespace("infra"))},
+				Listeners: []gatewayv1.ListenerEntry{{
+					Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: new(gatewayv1.Hostname("a.example.com")),
+				}},
+			},
+		}
+	}
+
+	now := time.Now()
+
+	return []client.Object{
+		gc, gw, listenerSet("team-a", now), listenerSet("team-b", now.Add(-time.Hour)),
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "team-a", Labels: map[string]string{"team": "a"}}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "team-b", Labels: map[string]string{"team": "a"}}},
+	}
+}
+
+// TestListenerSetReconciler_UnevaluatedSiblingIsRetried pins that a ListenerSet
+// whose merged view leaves out a sibling that could not be evaluated is
+// reconciled again: the sibling may conflict with it once it is read.
+func TestListenerSetReconciler_UnevaluatedSiblingIsRetried(t *testing.T) {
+	t.Parallel()
+
+	scheme := newListenerSetScheme(t)
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(siblingListenerSetObjects()...).
+		WithStatusSubresource(&gatewayv1.ListenerSet{}, &gatewayv1.Gateway{}).
+		WithInterceptorFuncs(failReads[*corev1.Namespace]("team-b", failing())).Build()
+
+	r := &ListenerSetReconciler{Client: cli, Scheme: scheme, ControllerName: testListenerSetController}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "ls", Namespace: "team-a"}})
+	require.Error(t, err, "the reconcile must be retried")
+
+	updated := getListenerSet(t, cli, "ls", "team-a")
+	accepted := meta.FindStatusCondition(updated.Status.Conditions, string(gatewayv1.ListenerSetConditionAccepted))
+	require.NotNil(t, accepted)
+	assert.Equal(t, metav1.ConditionTrue, accepted.Status, "the acceptance is written as computed, not Pending")
+}
+
+// TestRouteParentBinding_UnevaluatedSiblingListenerSetIsIncomplete pins that a
+// route on a ListenerSet whose sibling could not be evaluated has an incomplete
+// binding, so the sync retries: an older sibling may outrank its entry once it
+// is read, and a newer one is treated the same way.
+func TestRouteParentBinding_UnevaluatedSiblingListenerSetIsIncomplete(t *testing.T) {
+	t.Parallel()
+
+	scheme := newListenerSetScheme(t)
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	ref := gatewayv1.ParentReference{Name: "ls", Kind: new(gatewayv1.Kind(kindListenerSet))}
+
+	tests := map[string]struct {
+		routeNamespace, unreadable string
+		fail                       bool
+	}{
+		"older sibling unreadable": {routeNamespace: "team-a", unreadable: "team-b", fail: true},
+		"newer sibling unreadable": {routeNamespace: "team-b", unreadable: "team-a", fail: true},
+		"sibling readable":         {routeNamespace: "team-b", unreadable: "team-a"},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			reads := &atomic.Bool{}
+			reads.Store(tt.fail)
+
+			cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(siblingListenerSetObjects()...).
+				WithInterceptorFuncs(failReads[*corev1.Namespace](tt.unreadable, reads)).Build()
+
+			routeInfo := &routebinding.RouteInfo{Name: "r", Namespace: tt.routeNamespace, Kind: routebinding.KindHTTPRoute}
+
+			binding, err := resolveRouteParentBinding(context.Background(), cli, routebinding.NewValidator(cli),
+				testListenerSetController, ref, tt.routeNamespace, routeInfo, nil)
+			require.NoError(t, err)
+			assert.True(t, binding.Result.Accepted)
+			assert.Equal(t, tt.fail, binding.Result.Incomplete)
+		})
+	}
 }

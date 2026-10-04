@@ -671,6 +671,8 @@ func (r *GatewayReconciler) updateStatus(
 ) error {
 	gatewayKey := types.NamespacedName{Name: gateway.Name, Namespace: gateway.Namespace}
 
+	var countErr, mergeErr error
+
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Get fresh copy of the gateway to avoid conflict errors
 		var freshGateway gatewayv1.Gateway
@@ -690,14 +692,12 @@ func (r *GatewayReconciler) updateStatus(
 
 		views := newListenerViewCache(r.Client, r.ViewStore)
 
-		attachedCount, mergeErr := summariseAttachedListenerSets(ctx, r.Client, &freshGateway, views)
-		if mergeErr != nil {
-			log.FromContext(ctx).Error(mergeErr, "failed to summarise attached listenersets; reporting 0")
+		var attachedCount int
 
-			attachedCount = 0
+		attachedCount, mergeErr = summariseAttachedListenerSets(ctx, r.Client, &freshGateway, views)
+		if mergeErr == nil {
+			freshGateway.Status.AttachedListenerSets = clampedInt32Pointer(attachedCount)
 		}
-
-		freshGateway.Status.AttachedListenerSets = clampedInt32Pointer(attachedCount)
 
 		freshGateway.Status.Addresses = []gatewayv1.GatewayStatusAddress{
 			{
@@ -708,7 +708,9 @@ func (r *GatewayReconciler) updateStatus(
 
 		r.applyTopLevelGatewayConditions(ctx, &freshGateway, views, perGatewayMode, now)
 
-		listenerStatuses := r.buildListenerStatuses(ctx, &freshGateway, views, now)
+		var listenerStatuses []gatewayv1.ListenerStatus
+
+		listenerStatuses, countErr = r.buildListenerStatuses(ctx, &freshGateway, views, now)
 		freshGateway.Status.Listeners = preserveGatewayListenerTransitions(freshGateway.Status.Listeners, listenerStatuses)
 
 		if apiequality.Semantic.DeepEqual(priorStatus, &freshGateway.Status) {
@@ -722,7 +724,7 @@ func (r *GatewayReconciler) updateStatus(
 		return nil
 	})
 
-	return errors.Wrap(err, "failed to update gateway status after retries")
+	return errors.Wrap(errors.CombineErrors(err, errors.CombineErrors(countErr, mergeErr)), "updating gateway status")
 }
 
 // applyTopLevelGatewayConditions computes and writes the Gateway-level
@@ -773,8 +775,16 @@ func (r *GatewayReconciler) buildListenerStatuses(
 	gateway *gatewayv1.Gateway,
 	views *listenerViewCache,
 	now metav1.Time,
-) []gatewayv1.ListenerStatus {
-	attachedRoutes := r.countAttachedRoutes(ctx, gateway)
+) ([]gatewayv1.ListenerStatus, error) {
+	// A count that could not be finished keeps the counts already written; the
+	// error is returned so the reconcile counts again.
+	attachedRoutes, countErr := r.countAttachedRoutes(ctx, gateway)
+	if countErr != nil {
+		attachedRoutes = make(map[gatewayv1.SectionName]int32, len(gateway.Status.Listeners))
+		for i := range gateway.Status.Listeners {
+			attachedRoutes[gateway.Status.Listeners[i].Name] = gateway.Status.Listeners[i].AttachedRoutes
+		}
+	}
 
 	// The merged view (cached) annotates each conflicted Gateway-owned
 	// listener, used below to emit the per-listener Conflicted condition.
@@ -788,7 +798,7 @@ func (r *GatewayReconciler) buildListenerStatuses(
 			r.buildOneListenerStatus(ctx, gateway, listener, gwView, attachedRoutes[listener.Name], now))
 	}
 
-	return listenerStatuses
+	return listenerStatuses, countErr
 }
 
 // buildListenerProgrammedCondition derives a listener's Programmed condition:
@@ -1017,19 +1027,7 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 			configErrorGatewayConditions(freshGateway.Generation, now, errMsg, acceptedReason, programmedReason),
 			buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr))
 
-		// Per-listener status still reflects each listener's own validity
-		// (protocol, route kinds, TLS refs, conflicts) — none of that depends
-		// on whether the Gateway's tunnel configuration resolved. Only a
-		// Programmed=True verdict is overridden: nothing is programmed
-		// without a resolved tunnel, while a listener already unprogrammed
-		// for its own reason keeps that more specific verdict.
-		listenerStatuses := r.buildListenerStatuses(ctx, &freshGateway, newListenerViewCache(r.Client, r.ViewStore), now)
-		for i := range listenerStatuses {
-			overrideListenerProgrammedForConfigError(
-				listenerStatuses[i].Conditions, freshGateway.Generation, now, errMsg, listenerReason)
-		}
-
-		freshGateway.Status.Listeners = preserveGatewayListenerTransitions(freshGateway.Status.Listeners, listenerStatuses)
+		r.applyConfigErrorListenerStatuses(ctx, &freshGateway, now, errMsg, listenerReason)
 
 		if apiequality.Semantic.DeepEqual(priorStatus, &freshGateway.Status) {
 			return nil
@@ -1043,6 +1041,28 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 	})
 
 	return errors.Wrap(err, "failed to update gateway status after retries")
+}
+
+// applyConfigErrorListenerStatuses writes the listener statuses of a Gateway
+// whose configuration did not resolve. Per-listener status still reflects
+// each listener's own validity (protocol, route kinds, TLS refs, conflicts),
+// none of which depends on the tunnel configuration. Only a Programmed=True
+// verdict is overridden: nothing is programmed without a resolved tunnel,
+// while a listener already unprogrammed for its own reason keeps that more
+// specific verdict. An attachedRoutes count that cannot finish keeps the counts
+// already written, and the config error's own requeue counts again.
+func (r *GatewayReconciler) applyConfigErrorListenerStatuses(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	now metav1.Time,
+	errMsg, listenerReason string,
+) {
+	listenerStatuses, _ := r.buildListenerStatuses(ctx, gateway, newListenerViewCache(r.Client, r.ViewStore), now)
+	for i := range listenerStatuses {
+		overrideListenerProgrammedForConfigError(listenerStatuses[i].Conditions, gateway.Generation, now, errMsg, listenerReason)
+	}
+
+	gateway.Status.Listeners = preserveGatewayListenerTransitions(gateway.Status.Listeners, listenerStatuses)
 }
 
 // configErrorReasons picks the Accepted, Programmed and listener-Programmed
@@ -1133,8 +1153,7 @@ func overrideListenerProgrammedForConfigError(
 func (r *GatewayReconciler) countAttachedRoutes(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
-) map[gatewayv1.SectionName]int32 {
-	logger := logging.FromContext(ctx)
+) (map[gatewayv1.SectionName]int32, error) {
 	result := make(map[gatewayv1.SectionName]int32)
 
 	for _, listener := range gateway.Spec.Listeners {
@@ -1145,25 +1164,27 @@ func (r *GatewayReconciler) countAttachedRoutes(
 
 	var httpRouteList gatewayv1.HTTPRouteList
 	if err := r.List(ctx, &httpRouteList); err != nil {
-		logger.Error("failed to list HTTPRoutes for attached routes count", "error", err)
-	} else {
-		for i := range httpRouteList.Items {
-			route := &httpRouteList.Items[i]
-			r.countRouteOnGateway(ctx, validator, gateway, HTTPRouteWrapper{route}, result)
+		return nil, errors.Wrap(err, "failed to list HTTPRoutes for attached routes count")
+	}
+
+	for i := range httpRouteList.Items {
+		if err := r.countRouteOnGateway(ctx, validator, gateway, HTTPRouteWrapper{&httpRouteList.Items[i]}, result); err != nil {
+			return nil, err
 		}
 	}
 
 	var grpcRouteList gatewayv1.GRPCRouteList
 	if err := r.List(ctx, &grpcRouteList); err != nil {
-		logger.Error("failed to list GRPCRoutes for attached routes count", "error", err)
-	} else {
-		for i := range grpcRouteList.Items {
-			route := &grpcRouteList.Items[i]
-			r.countRouteOnGateway(ctx, validator, gateway, GRPCRouteWrapper{route}, result)
+		return nil, errors.Wrap(err, "failed to list GRPCRoutes for attached routes count")
+	}
+
+	for i := range grpcRouteList.Items {
+		if err := r.countRouteOnGateway(ctx, validator, gateway, GRPCRouteWrapper{&grpcRouteList.Items[i]}, result); err != nil {
+			return nil, err
 		}
 	}
 
-	return result
+	return result, nil
 }
 
 // countRouteOnGateway adds one route to the Gateway's per-listener
@@ -1179,7 +1200,7 @@ func (r *GatewayReconciler) countRouteOnGateway(
 	gateway *gatewayv1.Gateway,
 	route Route,
 	result map[gatewayv1.SectionName]int32,
-) {
+) error {
 	counted := make(map[gatewayv1.SectionName]bool)
 
 	for _, ref := range route.GetParentRefs() {
@@ -1196,7 +1217,15 @@ func (r *GatewayReconciler) countRouteOnGateway(
 			SectionName: ref.SectionName,
 			Port:        ref.Port,
 		})
-		if bindErr != nil || !bindingResult.Accepted {
+		if bindErr == nil && bindingResult.Incomplete {
+			bindErr = errListenerNotEvaluated
+		}
+
+		if bindErr != nil {
+			return errors.Wrapf(bindErr, "binding %s %s/%s", route.GetRouteKind(), route.GetNamespace(), route.GetName())
+		}
+
+		if !bindingResult.Accepted {
 			continue
 		}
 
@@ -1207,6 +1236,8 @@ func (r *GatewayReconciler) countRouteOnGateway(
 			}
 		}
 	}
+
+	return nil
 }
 
 // refMatchesGateway reports whether a route parentRef names this Gateway

@@ -133,7 +133,7 @@ func assertForeignGroupParentNotCounted(t *testing.T, foreignGroup gatewayv1.Gro
 
 	reconciler := &GatewayReconciler{Client: cli, Scheme: cli.Scheme(), ControllerName: "test-controller"}
 
-	assert.Equal(t, map[gatewayv1.SectionName]int32{"http": 1}, reconciler.countAttachedRoutes(context.Background(), gateway),
+	assert.Equal(t, map[gatewayv1.SectionName]int32{"http": 1}, mustCountAttachedRoutes(context.Background(), t, reconciler, gateway),
 		"only the route that binds is attached")
 }
 

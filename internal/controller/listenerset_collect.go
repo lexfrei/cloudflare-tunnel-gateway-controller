@@ -9,7 +9,6 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/listenermerge"
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -63,7 +62,9 @@ func listTargetingListenerSets(
 }
 
 // acceptedFromCandidates filters targeting ListenerSets down to those the
-// Gateway's spec.allowedListeners filter permits to attach.
+// Gateway's spec.allowedListeners filter permits to attach. A ListenerSet whose
+// acceptance cannot be evaluated is left out, and the first such error is
+// returned with the ListenerSets that were accepted.
 func acceptedFromCandidates(
 	ctx context.Context,
 	validator *routebinding.Validator,
@@ -72,14 +73,17 @@ func acceptedFromCandidates(
 ) ([]*gatewayv1.ListenerSet, error) {
 	out := make([]*gatewayv1.ListenerSet, 0, len(candidates))
 
+	var undecided error
+
 	for _, listenerSet := range candidates {
 		acceptance, err := validator.EvaluateListenerSetAcceptance(ctx, gateway, listenerSet)
 		if err != nil {
+			if undecided == nil {
+				undecided = errors.Wrapf(err, "evaluating ListenerSet %s/%s", listenerSet.Namespace, listenerSet.Name)
+			}
+
 			// Undecided for this ListenerSet alone, so only it is left out. Its
 			// own reconcile and its routes' bindings report it Pending and retry.
-			logging.FromContext(ctx).Debug("leaving an unevaluated ListenerSet out of the Gateway view",
-				"listenerSet", listenerSet.Namespace+"/"+listenerSet.Name, "error", err)
-
 			continue
 		}
 
@@ -88,7 +92,7 @@ func acceptedFromCandidates(
 		}
 	}
 
-	return out, nil
+	return out, undecided
 }
 
 // summariseAttachedListenerSets re-applies the same per-ListenerSet
@@ -110,10 +114,19 @@ func summariseAttachedListenerSets(
 		return 0, err
 	}
 
+	if view.undecided != nil {
+		return 0, view.undecided
+	}
+
 	accepted := 0
 
 	for _, listenerSet := range view.acceptedSets {
-		if listenerSetEntriesAccepted(ctx, cli, listenerSet, view.merged) {
+		ok, err := listenerSetEntriesAccepted(ctx, cli, listenerSet, view.merged)
+		if err != nil {
+			return 0, err
+		}
+
+		if ok {
 			accepted++
 		}
 	}
@@ -131,7 +144,7 @@ func listenerSetEntriesAccepted(
 	cli client.Client,
 	listenerSet *gatewayv1.ListenerSet,
 	merged *listenermerge.MergeResult,
-) bool {
+) (bool, error) {
 	for i := range listenerSet.Spec.Listeners {
 		entry := &listenerSet.Spec.Listeners[i]
 
@@ -142,15 +155,15 @@ func listenerSetEntriesAccepted(
 
 		check, err := resolveListenerEntryRefs(ctx, cli, listenerSet, entry)
 		if err != nil {
-			continue
+			return false, errors.Wrapf(err, "resolving the refs of ListenerSet %s/%s", listenerSet.Namespace, listenerSet.Name)
 		}
 
 		if check.Status == metav1.ConditionFalse {
 			continue
 		}
 
-		return true
+		return true, nil
 	}
 
-	return false
+	return false, nil
 }

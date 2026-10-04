@@ -325,8 +325,8 @@ func TestIncrementListenerSetAttachedRoutes_DeduplicatesDuplicateParentRefs(t *t
 		}}},
 	}
 
-	incrementListenerSetAttachedRoutes(context.Background(), validator, testListenerSetController, ls,
-		HTTPRouteWrapper{route}, counts)
+	require.NoError(t, incrementListenerSetAttachedRoutes(context.Background(), validator, testListenerSetController, ls,
+		HTTPRouteWrapper{route}, counts))
 
 	assert.Equal(t, int32(1), counts["entry"], "duplicate parentRefs to the same ListenerSet must count the route once")
 }

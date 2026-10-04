@@ -270,6 +270,11 @@ func filterMatchedListenersByConflict(
 		return result
 	}
 
+	// A sibling left out of the view because it could not be evaluated may
+	// outrank these entries once it is read. Any such sibling marks the
+	// binding incomplete, including a newer one that cannot outrank them.
+	result.Incomplete = result.Incomplete || view.undecided != nil
+
 	kept := make([]gatewayv1.SectionName, 0, len(result.MatchedListeners))
 
 	for _, section := range result.MatchedListeners {

@@ -28,6 +28,9 @@ import (
 type gatewayListenerView struct {
 	acceptedSets []*gatewayv1.ListenerSet
 	merged       *listenermerge.MergeResult
+	// undecided is the error of a targeting ListenerSet whose acceptance could
+	// not be evaluated and which acceptedSets therefore leaves out.
+	undecided error
 }
 
 // conflictReason returns the conflict reason annotated on the merged-view entry
@@ -150,14 +153,12 @@ func viewFromCandidates(
 	gateway *gatewayv1.Gateway,
 	candidates []*gatewayv1.ListenerSet,
 ) (*gatewayListenerView, error) {
-	accepted, err := acceptedFromCandidates(ctx, routebinding.NewValidator(cli), gateway, candidates)
-	if err != nil {
-		return nil, err
-	}
+	accepted, undecided := acceptedFromCandidates(ctx, routebinding.NewValidator(cli), gateway, candidates)
 
 	return &gatewayListenerView{
 		acceptedSets: accepted,
 		merged:       listenermerge.Merge(gateway, accepted),
+		undecided:    undecided,
 	}, nil
 }
 

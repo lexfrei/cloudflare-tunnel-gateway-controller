@@ -71,7 +71,7 @@ func TestGatewayAttachedRoutes_FollowsRouteAcceptedStatus(t *testing.T) {
 
 	reconciler := &GatewayReconciler{Client: cli, Scheme: cli.Scheme(), ControllerName: "test-controller"}
 
-	assert.Equal(t, map[gatewayv1.SectionName]int32{"http": 1}, reconciler.countAttachedRoutes(context.Background(), gateway))
+	assert.Equal(t, map[gatewayv1.SectionName]int32{"http": 1}, mustCountAttachedRoutes(context.Background(), t, reconciler, gateway))
 }
 
 // TestListenerSetAttachedRoutes_FollowsRouteAcceptedStatus pins the same rule
@@ -179,5 +179,19 @@ func TestGatewayAttachedRoutes_AcceptedStatusIsPerParentRef(t *testing.T) {
 	cli := setupGatewayFakeClient(gateway, route)
 	reconciler := &GatewayReconciler{Client: cli, Scheme: cli.Scheme(), ControllerName: "test-controller"}
 
-	assert.Equal(t, map[gatewayv1.SectionName]int32{"one": 0, "two": 1}, reconciler.countAttachedRoutes(context.Background(), gateway))
+	assert.Equal(t, map[gatewayv1.SectionName]int32{"one": 0, "two": 1}, mustCountAttachedRoutes(context.Background(), t, reconciler, gateway))
+}
+
+func mustCountAttachedRoutes(
+	ctx context.Context,
+	t *testing.T,
+	reconciler *GatewayReconciler,
+	gateway *gatewayv1.Gateway,
+) map[gatewayv1.SectionName]int32 {
+	t.Helper()
+
+	counts, err := reconciler.countAttachedRoutes(ctx, gateway)
+	require.NoError(t, err)
+
+	return counts
 }
