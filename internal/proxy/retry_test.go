@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -753,4 +754,53 @@ func TestRetry_FullDuplexUploadSurvivesEarlyAnswer(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	assert.Equal(t, int64(size), received.Load(), "the backend must receive the whole upload")
 	assert.Equal(t, size, rec.Body.Len(), "the echoed response must reach the client whole")
+}
+
+// TestRetry_MislengthBodyFailsBeforeAnyAttempt pins that a body whose length
+// differs from its declared Content-Length is refused up front: every attempt
+// would fail the same length check, so retrying it only multiplies backend
+// load.
+func TestRetry_MislengthBodyFailsBeforeAnyAttempt(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		contentLength int64
+	}{
+		{name: "body longer than declared", contentLength: 3},
+		{name: "body shorter than declared", contentLength: 10},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// The transport fails the length check after sending the request
+			// head, often before the backend dispatches it, so attempts are
+			// counted as connections rather than handler hits.
+			var conns atomic.Int32
+
+			backend := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+				_, _ = io.Copy(io.Discard, req.Body)
+				writer.WriteHeader(http.StatusInternalServerError)
+			}))
+			backend.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+				if state == http.StateNew {
+					conns.Add(1)
+				}
+			}
+			backend.Start()
+			t.Cleanup(backend.Close)
+
+			handler := retryHandler(t, backend.URL, &proxy.RouteRetry{Codes: []int{500}, Attempts: 2}, nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://app.example.com/", strings.NewReader("payload"))
+			req.ContentLength = tt.contentLength
+
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusBadGateway, rec.Code)
+			assert.Zero(t, conns.Load(), "a body that does not match its length must not reach the backend")
+		})
+	}
 }

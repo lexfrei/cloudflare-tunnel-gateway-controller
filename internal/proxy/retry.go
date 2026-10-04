@@ -20,6 +20,11 @@ const maxRetryBodyBytes = 64 << 10
 // body once a later attempt owns it.
 var errAttemptAbandoned = errors.New("request body handed to a later retry attempt")
 
+// errBodyLength rejects a body whose length differs from its declared
+// Content-Length. The transport would fail every attempt on it, so no attempt
+// is made.
+var errBodyLength = errors.New("request body length does not match its Content-Length")
+
 // errRequestBudget is returned when timeouts.request expires across retry
 // attempts. It wraps context.DeadlineExceeded so errorHandler answers 504.
 var errRequestBudget = fmt.Errorf("request timeout reached during retries: %w", context.DeadlineExceeded)
@@ -140,11 +145,14 @@ func newReplayBody(req *http.Request) (*replayBody, io.ReadCloser, error) {
 	}
 
 	if req.ContentLength > 0 && req.ContentLength <= maxRetryBodyBytes {
-		// The extra byte lets the transport reject a body that overruns its
-		// declared length, as it would have without buffering.
+		// The extra byte detects a body that overruns its declared length.
 		buf, err := io.ReadAll(io.LimitReader(req.Body, req.ContentLength+1))
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading request body: %w", err)
+		}
+
+		if int64(len(buf)) != req.ContentLength {
+			return nil, nil, fmt.Errorf("%w (%d declared)", errBodyLength, req.ContentLength)
 		}
 
 		recorder := &replayBody{recorded: buf, eof: true}
