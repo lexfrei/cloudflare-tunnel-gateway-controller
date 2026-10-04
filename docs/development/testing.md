@@ -403,6 +403,7 @@ What actually gets exercised against a real Cloudflare Tunnel, and by which suit
 | Hostname-ownership controller layer | unit (`internal/hostnameownership`, `route_syncer_ownership_test.go`) | same vector table as the admission e2e — drift guard |
 | Proxy data-plane metrics (`/metrics`, merged cloudflared exposition) | e2e (`TestProxyMetricsEndpoint`) | counters asserted after live tunnel traffic |
 | Per-Gateway data plane (render, Programmed gating, traffic, GC) | e2e (`TestPerGatewayDataPlaneEndToEnd`) | reuses the suite tunnel (same-tunnel union path); distinct-tunnel isolation is unit-tested (`route_syncer_partition_sync_test.go`) |
+| Tunnel-ownership refusal (class tunnel claimed by a dedicated Gateway) | unit (`internal/tunnelownership`) + e2e (`TestTunnelOwnershipRefusesClassTunnelClaim`) | the e2e turns `allowSharedTunnels` off for its own duration, so it relies on the live e2e tests running serially |
 | Route shadow condition (`cf.k8s.lex.la/RouteShadowed`) | unit (`shadow_test.go`, `route_status_shadowed_test.go`) | deterministic detection over the flattened config; no live signal beyond status writes |
 | Graceful connector drain on SIGTERM | unit (`grace_internal_test.go`, `main_test.go`) | needs connector-level fault injection for a live check; drain plumbing pinned by unit contracts |
 
