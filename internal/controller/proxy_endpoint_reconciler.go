@@ -175,7 +175,7 @@ func (r *ProxyEndpointReconciler) replay(
 // one from, and reports whether the reconcile stops with result; when it does
 // not, a replica holds the config and the normal replay follows. It pushes the
 // config the partition's last sync built, and runs a route sync only when none
-// was built yet: a sync reads every tunnel's configuration from Cloudflare.
+// was built yet: a sync can read every tunnel's configuration from Cloudflare.
 //
 // A built config that lost the push race to a newer one requeues shortly, as a
 // superseded replay does. Any other undelivered config is pushed again after

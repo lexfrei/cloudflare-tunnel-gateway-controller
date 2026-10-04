@@ -202,7 +202,7 @@ func TestProxyEndpointReconcile_ColdStartRetriesUntilAPodTakesIt(t *testing.T) {
 
 // TestProxyEndpointReconcile_ColdStartRetriesWithoutAnotherRouteSync pins the
 // cost of a plane whose pods keep refusing their first config. Each route
-// sync reads every tunnel's configuration from Cloudflare, so only the first
+// sync can read every tunnel's configuration from Cloudflare, so only the first
 // retry may run one; later retries push the config that sync built, and the
 // first pod that takes it becomes the replay source.
 func TestProxyEndpointReconcile_ColdStartRetriesWithoutAnotherRouteSync(t *testing.T) {

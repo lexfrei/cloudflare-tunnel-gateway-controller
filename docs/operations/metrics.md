@@ -35,6 +35,7 @@ Track Cloudflare API interactions for performance and reliability monitoring.
 | `cftunnel_cloudflare_api_duration_seconds` | Histogram | `method`, `resource` | API call latency |
 | `cftunnel_cloudflare_api_calls_total` | Counter | `method`, `resource`, `status` | API calls count |
 | `cftunnel_cloudflare_api_errors_total` | Counter | `method`, `error_type` | API errors by type |
+| `cftunnel_cloudflare_api_calls_skipped_total` | Counter | `method`, `resource` | Calls not made because the cached result was still current |
 
 **Label values:**
 

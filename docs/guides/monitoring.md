@@ -74,6 +74,7 @@ These `cftunnel_*` metrics are emitted by the controller itself on the same `/me
 | `cftunnel_cloudflare_api_duration_seconds` | Histogram | Duration of Cloudflare API calls (labelled by `method`, `resource`) |
 | `cftunnel_cloudflare_api_calls_total` | Counter | Total Cloudflare API calls (labelled by `method`, `resource`, `status`) |
 | `cftunnel_cloudflare_api_errors_total` | Counter | Total Cloudflare API errors (labelled by `method`, `error_type`) |
+| `cftunnel_cloudflare_api_calls_skipped_total` | Counter | Cloudflare API calls not made because the cached result was still current (labelled by `method`, `resource`) |
 | `cftunnel_ingress_build_duration_seconds` | Histogram | Duration of ingress rule building (labelled by `type`) |
 | `cftunnel_backend_ref_validation_total` | Counter | Backend reference validation results (labelled by `type`, `result`, `reason`) |
 
