@@ -497,6 +497,16 @@ else
   flunk "every pr.yaml step that writes to ttl.sh is skipped when the probe fails (ungated: ${ungated//$'\n'/, })"
 fi
 
+# A matrix job skipped by its own `if` reports one check under the unexpanded
+# `${{ matrix.* }}` name, so the per-leg names branch protection requires
+# never appear and the PR stays blocked. Gate the steps instead.
+skippable_matrix="$(yq '.jobs | to_entries[] | select(.value.strategy.matrix != null and .value.if != null) | .key' "${pr_workflow}")"
+if [[ -z "${skippable_matrix}" ]]; then
+  pass "no pr.yaml matrix job can be skipped by a job-level if"
+else
+  flunk "no pr.yaml matrix job can be skipped by a job-level if (${skippable_matrix//$'\n'/, })"
+fi
+
 # --- verify-manifest-children.sh -------------------------------------------
 #
 # The merge job reads its manifest-list digest back from a run-scoped tag on
