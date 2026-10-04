@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"net"
@@ -191,3 +192,11 @@ func MirrorLiveDispatchesForTest(f Filter) int64 {
 
 // MaxRetryBodyBytes exposes the retry body-buffer limit to external tests.
 const MaxRetryBodyBytes = maxRetryBodyBytes
+
+// UseH2CDialerForTest installs the production h2c transport for host and
+// headerTimeout in h's pool, dialing through dial instead of TCP.
+func UseH2CDialerForTest(h *Handler, host string, headerTimeout time.Duration, dial func(ctx context.Context, network, addr string) (net.Conn, error)) {
+	transport := newH2CTransport(headerTimeout)
+	transport.DialContext = dial
+	h.transports.Store(transportKey(host, BackendProtocolH2C, nil, headerTimeout), transport)
+}
