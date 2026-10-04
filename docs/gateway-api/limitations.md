@@ -124,7 +124,7 @@ This ties dedicated planes to the Cloudflare API's availability. While the API c
 
 ## Informational (1xx) responses are not forwarded
 
-A backend's informational response, such as `103 Early Hints`, does not reach the client through the tunnel. The proxy drops it and sends only the final status and headers. Over QUIC the connector sends exactly one response head, so a forwarded 1xx would replace the real response; over HTTP/2 the connector records the response as started on the first status it is given. The final response is unaffected; the client only loses the hint.
+A backend's informational response, such as `103 Early Hints`, does not reach the client through the tunnel. The proxy drops it and sends only the final status and headers. Over QUIC the connector sends exactly one response head, so a forwarded 1xx would replace the real response; over HTTP/2 the connector records the response as started on the first status it is given. The final response is unaffected; the client only loses the hint. Outside the tunnel, on a rule with `retry`, a 1xx from an attempt that may still be retried is held until that attempt's final response, and dropped if the attempt is retried.
 
 ## SSL Certificate Limitations
 

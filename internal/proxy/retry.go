@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
+	"net/textproto"
 	"slices"
 	"sync"
 	"time"
@@ -56,22 +58,32 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		budgetSpent = func() bool { return !timer.Stop() }
 	}
 
+	parentTrace := httptrace.ContextClientTrace(req.Context())
+	maxAttempts := min(rt.policy.Attempts, MaxRetryAttempts)
+
 	for attempt := 0; ; attempt++ {
-		out := req.WithContext(ctx)
+		attemptCtx, held := ctx, (*heldInformational)(nil)
+		// The last allowed attempt answers whatever it gets, so its 1xx
+		// responses can go out as they arrive.
+		if attempt < maxAttempts {
+			attemptCtx, held = holdInformational(ctx, parentTrace)
+		}
+
+		out := req.WithContext(attemptCtx)
 		out.Body = body
 		// Replays come only from the recorder, so the transport must not
 		// rewind a body on its own as it could with a client-built request.
 		out.GetBody = nil
 
 		resp, err := rt.next.RoundTrip(out)
-		if attempt >= min(rt.policy.Attempts, MaxRetryAttempts) || !rt.shouldRetry(resp, err) {
-			return finishAttempt(resp, err, budgetSpent, cancel)
+		if attempt >= maxAttempts || !rt.shouldRetry(resp, err) {
+			return finishAttempt(resp, err, budgetSpent, cancel, held)
 		}
 
 		if recorder != nil {
 			next, ok := recorder.next()
 			if !ok {
-				return finishAttempt(resp, err, budgetSpent, cancel)
+				return finishAttempt(resp, err, budgetSpent, cancel, held)
 			}
 
 			body = next
@@ -83,7 +95,7 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 		err = sleepCtx(ctx, max(rt.policy.Backoff, MinRetryBackoff))
 		if err != nil {
-			return finishAttempt(nil, err, budgetSpent, cancel)
+			return finishAttempt(nil, err, budgetSpent, cancel, nil)
 		}
 
 		rt.metrics.backendRetried(rt.hostname, reason)
@@ -91,14 +103,22 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // finishAttempt settles the final attempt. A spent request budget overrides
-// whatever the attempt returned; otherwise the response is handed on with the
-// attempt context tied to its body.
-func finishAttempt(resp *http.Response, err error, budgetSpent func() bool, cancel context.CancelCauseFunc) (*http.Response, error) {
+// whatever the attempt returned; otherwise the attempt's held 1xx responses
+// are forwarded and the response is handed on with the attempt context tied
+// to its body.
+func finishAttempt(resp *http.Response, err error, budgetSpent func() bool, cancel context.CancelCauseFunc, held *heldInformational) (*http.Response, error) {
 	if budgetSpent() {
 		cancel(errRequestBudget)
 		discardResponse(resp)
 
 		return nil, errRequestBudget
+	}
+
+	if err == nil {
+		err = held.forward()
+		if err != nil {
+			discardResponse(resp)
+		}
 	}
 
 	if err != nil {
@@ -110,6 +130,85 @@ func finishAttempt(resp *http.Response, err error, budgetSpent func() bool, canc
 	resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
 
 	return resp, nil
+}
+
+// heldInformational keeps an attempt's 1xx responses until the attempt is
+// known to answer the request. ReverseProxy forwards them through a trace hook
+// as they arrive, which would let a retried attempt's 103 reach the client.
+type heldInformational struct {
+	parent *httptrace.ClientTrace
+
+	mu        sync.Mutex
+	responses []informationalResponse
+}
+
+type informationalResponse struct {
+	code   int
+	header textproto.MIMEHeader
+}
+
+// holdInformational returns a context for one attempt whose trace holds 1xx
+// responses instead of passing them to parent's hook. held is nil when there
+// is no hook to hold for.
+func holdInformational(ctx context.Context, parent *httptrace.ClientTrace) (context.Context, *heldInformational) {
+	if parent == nil || parent.Got1xxResponse == nil {
+		return ctx, nil
+	}
+
+	held := &heldInformational{parent: parent}
+	replacement := *parent
+	replacement.Got1xxResponse = held.hold
+
+	return traceOverride{Context: ctx, parent: parent, replacement: &replacement}, held
+}
+
+func (h *heldInformational) hold(code int, header textproto.MIMEHeader) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.responses = append(h.responses, informationalResponse{code: code, header: header})
+
+	return nil
+}
+
+// forward passes the held responses to the parent hook. An abandoned
+// attempt's are never forwarded. Nil-safe.
+func (h *heldInformational) forward() error {
+	if h == nil {
+		return nil
+	}
+
+	h.mu.Lock()
+	responses := h.responses
+	h.mu.Unlock()
+
+	for _, resp := range responses {
+		err := h.parent.Got1xxResponse(resp.code, resp.header)
+		if err != nil {
+			return fmt.Errorf("forwarding %d response: %w", resp.code, err)
+		}
+	}
+
+	return nil
+}
+
+// traceOverride swaps one ClientTrace for another in a context. httptrace
+// can only add a trace on top of an existing one, and the existing hooks then
+// still run.
+type traceOverride struct {
+	context.Context //nolint:containedctx // a derived context wraps its parent, as the stdlib ones do; only Value is overridden
+
+	parent      *httptrace.ClientTrace
+	replacement *httptrace.ClientTrace
+}
+
+func (c traceOverride) Value(key any) any {
+	value := c.Context.Value(key)
+	if trace, ok := value.(*httptrace.ClientTrace); ok && trace == c.parent {
+		return c.replacement
+	}
+
+	return value
 }
 
 // shouldRetry reports whether an attempt's outcome warrants another one: any

@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"net/textproto"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -371,6 +373,21 @@ func TestRetry_TunnelMode(t *testing.T) {
 				return backend.URL
 			},
 			contentLength: new(int64(-1)),
+			check: func(t *testing.T, fake *fakeCloudflaredRespWriter) {
+				t.Helper()
+				assert.Equal(t, http.StatusOK, fake.Status())
+				assert.Equal(t, "ok", string(fake.Body()))
+			},
+		},
+		{
+			name: "1xx from an abandoned attempt does not become the status",
+			backend: func(t *testing.T) string {
+				t.Helper()
+
+				// The fake has no 1xx filter of its own, so only the
+				// abandoned attempt sends one.
+				return earlyHintsBackend(t, false).URL
+			},
 			check: func(t *testing.T, fake *fakeCloudflaredRespWriter) {
 				t.Helper()
 				assert.Equal(t, http.StatusOK, fake.Status())
@@ -848,6 +865,74 @@ func TestRetry_RetriesAreCounted(t *testing.T) {
 	}
 }
 
+// earlyHintsBackend answers 500 to the first attempt and 200 "ok" after that,
+// preceded by 103 Early Hints carrying "Link: </attempt-N>" on the first
+// attempt, and on later ones too when hintEvery is set.
+func earlyHintsBackend(t *testing.T, hintEvery bool) *httptest.Server {
+	t.Helper()
+
+	var hits atomic.Int32
+
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		hit := hits.Add(1)
+
+		if hit == 1 || hintEvery {
+			writer.Header().Set("Link", fmt.Sprintf("</attempt-%d>", hit))
+			writer.WriteHeader(http.StatusEarlyHints)
+			writer.Header().Del("Link")
+		}
+
+		if hit == 1 {
+			writer.WriteHeader(http.StatusInternalServerError)
+
+			return
+		}
+
+		_, _ = io.WriteString(writer, "ok")
+	}))
+	t.Cleanup(backend.Close)
+
+	return backend
+}
+
+func TestRetry_InformationalFromAbandonedAttemptIsDropped(t *testing.T) {
+	t.Parallel()
+
+	handler := retryHandler(t, earlyHintsBackend(t, true).URL, &proxy.RouteRetry{Codes: []int{500}, Attempts: 1}, nil)
+	front := httptest.NewServer(handler)
+	t.Cleanup(front.Close)
+
+	var (
+		mu    sync.Mutex
+		hints []string
+	)
+
+	ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{
+		Got1xxResponse: func(code int, header textproto.MIMEHeader) error {
+			mu.Lock()
+			defer mu.Unlock()
+
+			hints = append(hints, fmt.Sprintf("%d %s", code, header.Get("Link")))
+
+			return nil
+		},
+	})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, front.URL, nil)
+	require.NoError(t, err)
+
+	resp, err := front.Client().Do(req)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, []string{"103 </attempt-2>"}, hints, "only the answering attempt's hints may reach the client")
+}
+
 // TestRetry_AttemptsThatAreNotRetriedAreNotCounted pins that the retry counter
 // moves only when another attempt is actually made: an attempt cut short by
 // the client leaving or by timeouts.request also fails with an error, which
@@ -917,4 +1002,58 @@ func TestRetry_AttemptsThatAreNotRetriedAreNotCounted(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRetry_LastAttemptForwardsInformationalAtOnce pins that holding 1xx
+// responses stops at the last allowed attempt: nothing can replace it, so a
+// 103 Early Hints goes out as it arrives, ahead of a slow final response.
+func TestRetry_LastAttemptForwardsInformationalAtOnce(t *testing.T) {
+	t.Parallel()
+
+	const finalDelay = 300 * time.Millisecond
+
+	var hits atomic.Int32
+
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		if hits.Add(1) == 1 {
+			writer.WriteHeader(http.StatusInternalServerError)
+
+			return
+		}
+
+		writer.Header().Set("Link", "</hint>")
+		writer.WriteHeader(http.StatusEarlyHints)
+		writer.Header().Del("Link")
+		time.Sleep(finalDelay)
+		_, _ = io.WriteString(writer, "ok")
+	}))
+	t.Cleanup(backend.Close)
+
+	front := httptest.NewServer(retryHandler(t, backend.URL, &proxy.RouteRetry{Codes: []int{500}, Attempts: 1}, nil))
+	t.Cleanup(front.Close)
+
+	var hintAt atomic.Int64
+
+	ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{
+		Got1xxResponse: func(int, textproto.MIMEHeader) error {
+			hintAt.Store(time.Now().UnixNano())
+
+			return nil
+		},
+	})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, front.URL, nil)
+	require.NoError(t, err)
+
+	resp, err := front.Client().Do(req)
+	require.NoError(t, err)
+
+	headersAt := time.Now()
+
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotZero(t, hintAt.Load(), "the hint must reach the client")
+	assert.GreaterOrEqual(t, headersAt.Sub(time.Unix(0, hintAt.Load())), finalDelay/2,
+		"the hint must arrive well before the final response")
 }
