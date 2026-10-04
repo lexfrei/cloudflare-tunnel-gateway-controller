@@ -357,6 +357,7 @@ CONFORMANCE_REPORT_OUTPUT=./conformance-report.yaml \
 | Variable | Default | Description |
 | --- | --- | --- |
 | `CONFORMANCE_TUNNEL_HOSTNAME` | none (required) | Edge hostname routing to the test tunnel; see `.env.example` |
+| `CONFORMANCE_KUBE_CONTEXT` | kubeconfig's current context | kubectl context the suite runs against |
 | `CONFORMANCE_GATEWAY_CLASS` | `cloudflare-tunnel` | GatewayClass name |
 | `CONFORMANCE_REPORT_OUTPUT` | (none) | Path for YAML conformance report |
 | `CONTROLLER_VERSION` | `dev` | Version for report metadata |
