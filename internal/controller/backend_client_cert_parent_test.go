@@ -129,7 +129,11 @@ func certParentSyncer(t *testing.T, extra ...client.Object) (*ProxySyncer, map[s
 
 	gatewayA := gatewayWithClientCertRef("b", "gw-a", "client-cert-a", nil)
 	gatewayB := gatewayWithClientCertRef("b", "gw-b", "client-cert-b", nil)
-	gatewayB.Spec.Listeners = []gatewayv1.Listener{{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType}}
+	gatewayA.Spec.Listeners = []gatewayv1.Listener{{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType}}
+	gatewayB.Spec.Listeners = gatewayA.Spec.Listeners
+	gatewayB.Spec.AllowedListeners = &gatewayv1.AllowedListeners{
+		Namespaces: &gatewayv1.ListenerNamespaces{From: new(gatewayv1.NamespacesFromSame)},
+	}
 
 	cli := fake.NewClientBuilder().WithScheme(newClientCertScheme(t)).WithObjects(append(extra,
 		gatewayA, gatewayB,
@@ -330,7 +334,12 @@ func TestBackendClientCert_ListenerSetParentUsesItsGateway(t *testing.T) {
 
 			listenerSet := &gatewayv1.ListenerSet{
 				ObjectMeta: metav1.ObjectMeta{Namespace: "b", Name: "ls-b"},
-				Spec:       gatewayv1.ListenerSetSpec{ParentRef: gatewayv1.ParentGatewayReference{Name: "gw-b"}},
+				Spec: gatewayv1.ListenerSetSpec{
+					ParentRef: gatewayv1.ParentGatewayReference{Name: "gw-b"},
+					Listeners: []gatewayv1.ListenerEntry{{
+						Name: "http", Hostname: new(gatewayv1.Hostname("r.example.com")), Port: 80, Protocol: gatewayv1.HTTPProtocolType,
+					}},
+				},
 			}
 			syncer, certs := certParentSyncer(t, listenerSet)
 
@@ -346,6 +355,12 @@ func TestBackendClientCert_ListenerSetParentUsesItsGateway(t *testing.T) {
 
 			cfg := syncer.buildProxyConfig(context.Background(),
 				[]*gatewayv1.HTTPRoute{route}, nil, nil, nil, tt.parents)
+
+			if tt.want == "" {
+				assert.Empty(t, cfg.Rules, "a route no Gateway of this plane admits is left out")
+
+				return
+			}
 
 			require.Len(t, cfg.Rules, 1)
 			assert.Equal(t, certs[tt.want], backendClientCert(t, cfg.Rules[0]))

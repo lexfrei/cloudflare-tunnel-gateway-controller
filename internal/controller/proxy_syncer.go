@@ -791,7 +791,7 @@ func newBackendRefValidator(validator *referencegrant.Validator, fromKind string
 // shared token is never reused for tenant planes). Push state (steady-state
 // skip, replay cache) is independent per partition. certParents names, per
 // route, the Gateways its backends may take a client certificate from in this
-// partition.
+// partition, which are also the only Gateways that lend it hostnames here.
 //
 // Routes should come from the RouteSyncer's SyncResult to avoid redundant API
 // calls. failedRefs / grpcFailedRefs contain the HTTP / gRPC backend refs that
@@ -1265,7 +1265,7 @@ func (s *ProxySyncer) buildProxyConfig(
 	// bound listener covers is dropped (→ 404), and a route with no hostnames
 	// inherits the listener's hostname instead of becoming a catch-all. Rewrite
 	// in-memory before handing to the converter; the input routes are untouched.
-	routes, undecided, httpListeners := withEffectiveHostnames(ctx, s.k8sClient, s.controllerName, routes, views)
+	routes, undecided, httpListeners := withEffectiveHostnames(ctx, s.k8sClient, s.controllerName, routes, views, certParents.http)
 
 	// A RequestRedirect filter that leaves scheme empty must default to the
 	// scheme of the request, which behind the tunnel means the parent
@@ -1282,7 +1282,7 @@ func (s *ProxySyncer) buildProxyConfig(
 	cfg := proxy.ConvertHTTPRoutes(ctx, routes, s.clusterDomain, s.backendValidator, s.protocolResolver, s.tlsResolver,
 		s.clientCertResolver(certParents.http))
 	cfg.Diagnostics = append(cfg.Diagnostics, undecided...)
-	attachRuleListeners(cfg, httpListeners, certParents.http)
+	attachRuleListeners(cfg, httpListeners)
 
 	// Mark each invalid backendRef (a nonexistent Service) so the proxy returns
 	// 500 for that backend's traffic fraction instead of dialing a dead address
@@ -1304,11 +1304,12 @@ func (s *ProxySyncer) buildProxyConfig(
 		// is dropped, and a route with no hostnames inherits the listener's
 		// hostname instead of becoming a catch-all answering every Host
 		// (including hostnames owned by other routes).
-		grpcRoutes, undecided, grpcListeners = withEffectiveHostnamesGRPC(ctx, s.k8sClient, s.controllerName, grpcRoutes, views)
+		grpcRoutes, undecided, grpcListeners = withEffectiveHostnamesGRPC(ctx, s.k8sClient, s.controllerName, grpcRoutes, views,
+			certParents.grpc)
 
 		grpcCfg := proxy.ConvertGRPCRoutes(ctx, grpcRoutes, s.clusterDomain, s.grpcBackendValidator, s.protocolResolver, s.tlsResolver,
 			s.clientCertResolver(certParents.grpc))
-		attachRuleListeners(grpcCfg, grpcListeners, certParents.grpc)
+		attachRuleListeners(grpcCfg, grpcListeners)
 		cfg.Rules = append(cfg.Rules, grpcCfg.Rules...)
 		// Provenance MUST grow in lockstep with Rules (parallel slices) so the
 		// shadow detection below attributes every flattened rule correctly.

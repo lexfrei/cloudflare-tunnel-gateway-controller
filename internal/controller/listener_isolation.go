@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"maps"
 	"slices"
 	"strings"
 
@@ -17,11 +16,8 @@ import (
 )
 
 // attachRuleListeners stamps every rule of cfg with the listeners its route
-// is attached through, which the proxy needs for listener isolation. parents
-// names, per route, the Gateways this data plane serves the route for; a
-// Gateway served by another plane must not lend the route a host here. A nil
-// parents keeps every Gateway.
-func attachRuleListeners(cfg *proxy.Config, attached routeListeners, parents map[string]map[string]bool) {
+// is attached through, which the proxy needs for listener isolation.
+func attachRuleListeners(cfg *proxy.Config, attached routeListeners) {
 	for idx := range cfg.Rules {
 		if idx >= len(cfg.Provenance) {
 			return
@@ -29,19 +25,9 @@ func attachRuleListeners(cfg *proxy.Config, attached routeListeners, parents map
 
 		route := types.NamespacedName{Namespace: cfg.Provenance[idx].Namespace, Name: cfg.Provenance[idx].Name}
 
-		listeners, ok := attached[route]
-		if !ok {
-			continue
+		if listeners, ok := attached[route]; ok {
+			cfg.Rules[idx].Listeners = listeners
 		}
-
-		if parents != nil {
-			listeners = maps.Clone(listeners)
-			maps.DeleteFunc(listeners, func(gateway string, _ []string) bool {
-				return !parents[route.String()][gateway]
-			})
-		}
-
-		cfg.Rules[idx].Listeners = listeners
 	}
 }
 

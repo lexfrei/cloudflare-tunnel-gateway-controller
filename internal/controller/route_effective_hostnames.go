@@ -76,6 +76,13 @@ type routeListeners map[types.NamespacedName]map[string][]string
 // A diagnostic reports the undecided parent on the route's status in both
 // cases, unless the narrowed route still serves every hostname it declares.
 //
+// parents names, per route, the Gateways the data plane being built serves
+// the route for; a Gateway served by another plane contributes nothing. With
+// parents set, a route none of those Gateways contributes a listener to, such
+// as one whose served Gateway no longer exists, is left out instead of left
+// untouched, since as written it may be a catch-all. A nil parents keeps every
+// Gateway.
+//
 // controllerName scopes which parents may contribute at all: only Gateways
 // whose GatewayClass names this controller. A route may legitimately be
 // attached to another implementation's Gateway as well, and that Gateway's
@@ -93,6 +100,7 @@ func withEffectiveHostnames(
 	controllerName string,
 	routes []*gatewayv1.HTTPRoute,
 	views *listenerViewCache,
+	parents map[string]map[string]bool,
 ) ([]*gatewayv1.HTTPRoute, []proxy.RouteDiagnostic, routeListeners) {
 	if len(routes) == 0 {
 		return routes, nil, nil
@@ -106,7 +114,8 @@ func withEffectiveHostnames(
 	var undecidedDiags []proxy.RouteDiagnostic
 
 	for _, route := range routes {
-		effective, catchAll, listeners, undecided := collectEffectiveListenerHostnames(ctx, cli, controllerName, validator, HTTPRouteWrapper{route}, views)
+		effective, catchAll, listeners, undecided := collectEffectiveListenerHostnames(ctx, cli, controllerName, validator, HTTPRouteWrapper{route}, views,
+			servedBy(parents, route))
 		if len(listeners) > 0 {
 			attached[client.ObjectKeyFromObject(route)] = listeners
 		}
@@ -124,6 +133,10 @@ func withEffectiveHostnames(
 			if undecided != nil {
 				undecidedDiags = append(undecidedDiags, reportUndecidedParent(ctx, kindHTTPRouteDiag, route, undecided, true))
 
+				continue
+			}
+
+			if parents != nil && len(listeners) == 0 {
 				continue
 			}
 
@@ -162,6 +175,7 @@ func withEffectiveHostnamesGRPC(
 	controllerName string,
 	routes []*gatewayv1.GRPCRoute,
 	views *listenerViewCache,
+	parents map[string]map[string]bool,
 ) ([]*gatewayv1.GRPCRoute, []proxy.RouteDiagnostic, routeListeners) {
 	if len(routes) == 0 {
 		return routes, nil, nil
@@ -175,7 +189,8 @@ func withEffectiveHostnamesGRPC(
 	var undecidedDiags []proxy.RouteDiagnostic
 
 	for _, route := range routes {
-		effective, catchAll, listeners, undecided := collectEffectiveListenerHostnames(ctx, cli, controllerName, validator, GRPCRouteWrapper{route}, views)
+		effective, catchAll, listeners, undecided := collectEffectiveListenerHostnames(ctx, cli, controllerName, validator, GRPCRouteWrapper{route}, views,
+			servedBy(parents, route))
 		if len(listeners) > 0 {
 			attached[client.ObjectKeyFromObject(route)] = listeners
 		}
@@ -193,6 +208,10 @@ func withEffectiveHostnamesGRPC(
 			if undecided != nil {
 				undecidedDiags = append(undecidedDiags, reportUndecidedParent(ctx, kindGRPCRouteDiag, route, undecided, true))
 
+				continue
+			}
+
+			if parents != nil && len(listeners) == 0 {
 				continue
 			}
 
@@ -224,6 +243,7 @@ func withEffectiveHostnamesGRPC(
 // nothing. The error is the first parentRef that could not be evaluated, which
 // also contributes nothing. The map lists, per Gateway, the hostnames of the
 // listeners that contributed, in the shape of proxy.RouteRule.Listeners.
+// served, when not nil, drops every listener of a Gateway it does not name.
 func collectEffectiveListenerHostnames(
 	ctx context.Context,
 	cli client.Client,
@@ -231,6 +251,7 @@ func collectEffectiveListenerHostnames(
 	validator *routebinding.Validator,
 	route Route,
 	views *listenerViewCache,
+	served func(gateway string) bool,
 ) ([]gatewayv1.Hostname, bool, map[string][]string, error) {
 	seen := make(map[gatewayv1.Hostname]struct{})
 	listeners := make(map[string][]string)
@@ -263,16 +284,46 @@ func collectEffectiveListenerHostnames(
 
 	for _, ref := range route.GetParentRefs() {
 		hostnames, err := effectiveHostnamesForParentRef(ctx, cli, controllerName, validator, route, ref, views)
-		if err != nil && undecided == nil {
+		if err != nil && undecided == nil && !servedElsewhere(served, route, ref) {
 			undecided = errors.Wrapf(err, "parentRef %s", ref.Name)
 		}
 
-		for _, served := range hostnames {
-			add(served)
+		for _, hostname := range hostnames {
+			if served == nil || served(hostname.gateway) {
+				add(hostname)
+			}
 		}
 	}
 
 	return out, catchAll, listeners, undecided
+}
+
+// servedBy returns the filter collectEffectiveListenerHostnames applies for
+// route, nil when parents is nil.
+func servedBy(parents map[string]map[string]bool, route client.Object) func(gateway string) bool {
+	if parents == nil {
+		return nil
+	}
+
+	gateways := parents[client.ObjectKeyFromObject(route).String()]
+
+	return func(gateway string) bool { return gateways[gateway] }
+}
+
+// servedElsewhere reports a parentRef naming a Gateway that served excludes.
+// A ListenerSet's Gateway is known only once the ListenerSet is read, so such
+// a ref is never excluded.
+func servedElsewhere(served func(gateway string) bool, route Route, ref gatewayv1.ParentReference) bool {
+	if served == nil || !parentref.InGatewayAPIGroup(ref) || (ref.Kind != nil && *ref.Kind != kindGateway) {
+		return false
+	}
+
+	namespace := route.GetNamespace()
+	if ref.Namespace != nil {
+		namespace = string(*ref.Namespace)
+	}
+
+	return !served(namespace + "/" + string(ref.Name))
 }
 
 // reportNarrowedRoute reports a route that another parent lends hostnames to

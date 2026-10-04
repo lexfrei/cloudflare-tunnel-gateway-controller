@@ -24,7 +24,10 @@ import (
 
 const isolationGatewayKey = "infra/gw"
 
-var errListListenerSets = errors.New("listing ListenerSets failed")
+var (
+	errListListenerSets = errors.New("listing ListenerSets failed")
+	errReadGateway      = errors.New("reading the Gateway failed")
+)
 
 func isolationListener(name string, hostname gatewayv1.Hostname, protocol gatewayv1.ProtocolType) gatewayv1.Listener {
 	listener := gatewayv1.Listener{
@@ -374,4 +377,139 @@ func TestProgrammedListenerHostnames_UnreadableListenerSetsLeaveGatewayOut(t *te
 
 	_, ok := programmedListenerHostnames(context.Background(), cli, nil, isolationGatewayKey)
 	assert.False(t, ok)
+}
+
+// TestProxySyncer_HostnamesCountOnlyThisPlanesGateways pins that a route's
+// effective hostnames on one data plane come only from the Gateways that plane
+// serves. Without that, a Gateway on another plane lends the route its
+// hostname here, and the route answers it whenever this plane cannot isolate
+// by listener. A route whose served Gateway is gone by the time the config is
+// built is left out rather than served as written, which for a hostname-less
+// route would answer every Host.
+func TestProxySyncer_HostnamesCountOnlyThisPlanesGateways(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name          string
+		servedPresent bool
+		unreadable    gatewayv1.ObjectName
+		want          [][]string
+		wantDiagnosed bool
+	}{
+		{name: "served Gateway present", servedPresent: true, want: [][]string{{"b.example.com"}}},
+		{name: "served Gateway gone", servedPresent: false, want: nil},
+		{name: "served Gateway unreadable", servedPresent: true, unreadable: "gw", want: nil, wantDiagnosed: true},
+		{name: "other plane's Gateway unreadable", servedPresent: true, unreadable: "other", want: [][]string{{"b.example.com"}}},
+	}
+
+	for _, kind := range []string{"HTTPRoute", "GRPCRoute"} {
+		for _, tc := range cases {
+			t.Run(kind+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				elsewhere := isolationGateway()
+				elsewhere.Name = "other"
+				elsewhere.Spec.Listeners = []gatewayv1.Listener{isolationListener("a", "a.example.com", gatewayv1.HTTPProtocolType)}
+
+				objs := []client.Object{elsewhere}
+
+				if tc.servedPresent {
+					served := isolationGateway()
+					served.Spec.Listeners = []gatewayv1.Listener{isolationListener("b", "b.example.com", gatewayv1.HTTPProtocolType)}
+					objs = append(objs, served)
+				}
+
+				cli := isolationClient(t, objs...)
+				if tc.unreadable != "" {
+					cli = interceptor.NewClient(cli.(client.WithWatch), interceptor.Funcs{
+						Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+							if _, ok := obj.(*gatewayv1.Gateway); ok && key.Name == string(tc.unreadable) {
+								return errReadGateway
+							}
+
+							return c.Get(ctx, key, obj, opts...)
+						},
+					})
+				}
+
+				syncer := NewProxySyncer("cluster.local", "token", "", cli, nil)
+				cfg := buildForOnePlane(syncer, kind)
+
+				var got [][]string
+				for _, rule := range cfg.Rules {
+					got = append(got, rule.Hostnames)
+				}
+
+				assert.Equal(t, tc.want, got)
+				assert.Equal(t, tc.wantDiagnosed, len(cfg.Diagnostics) > 0,
+					"only a Gateway this plane serves may report the route undecided here")
+			})
+		}
+	}
+}
+
+// buildForOnePlane builds the config of the plane serving Gateway "gw" for a
+// hostname-less route of kind attached to "gw" and "other".
+func buildForOnePlane(syncer *ProxySyncer, kind string) *proxy.Config {
+	parents := addGatewayKeys(nil, "team/route", isolationGatewayKey)
+	refs := append(parentRefsToGateways("gw"), parentRefsToGateways("other")...)
+
+	if kind == "HTTPRoute" {
+		route := isolationRoute("route", "")
+		route.Spec.ParentRefs = refs
+
+		return syncer.buildProxyConfig(context.Background(), []*gatewayv1.HTTPRoute{route}, nil, nil, nil,
+			clientCertParents{http: parents})
+	}
+
+	route := &gatewayv1.GRPCRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "route", Namespace: "team"},
+		Spec: gatewayv1.GRPCRouteSpec{
+			CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: refs},
+			Rules:           []gatewayv1.GRPCRouteRule{{}},
+		},
+	}
+
+	return syncer.buildProxyConfig(context.Background(), nil, []*gatewayv1.GRPCRoute{route}, nil, nil,
+		clientCertParents{grpc: parents})
+}
+
+func TestServedElsewhere(t *testing.T) {
+	t.Parallel()
+
+	served := func(gateway string) bool { return gateway == "infra/gw" }
+	route := HTTPRouteWrapper{&gatewayv1.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "team"}}}
+
+	tests := []struct {
+		name   string
+		served func(string) bool
+		ref    gatewayv1.ParentReference
+		want   bool
+	}{
+		{name: "no served set", ref: gatewayv1.ParentReference{Name: "other"}},
+		{
+			name:   "served Gateway in another namespace",
+			served: served,
+			ref:    gatewayv1.ParentReference{Name: "gw", Namespace: new(gatewayv1.Namespace("infra"))},
+		},
+		{name: "same name in the route's namespace", served: served, ref: gatewayv1.ParentReference{Name: "gw"}, want: true},
+		{
+			name:   "ListenerSet",
+			served: served,
+			ref:    gatewayv1.ParentReference{Name: "ls", Kind: new(gatewayv1.Kind(kindListenerSet))},
+		},
+		{
+			name:   "another API group",
+			served: served,
+			ref:    gatewayv1.ParentReference{Name: "other", Group: new(gatewayv1.Group("example.com"))},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, servedElsewhere(tt.served, route, tt.ref))
+		})
+	}
 }
