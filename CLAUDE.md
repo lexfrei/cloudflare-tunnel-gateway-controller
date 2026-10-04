@@ -415,7 +415,7 @@ Run checks relevant to the files you changed:
 |---------------|-----------------|
 | `*.go` | `go test -race ./...` and `golangci-lint run --timeout=5m --build-tags e2e,conformance,envtest` |
 | `api/v1alpha1/**` | `make generate` (deepcopy, chart CRDs, `docs/reference/api.md`); CI runs `make verify-generated` |
-| `charts/**` | `helm unittest`, `helm lint`, `make helm-docs` |
+| `charts/**` | `helm unittest`, `helm lint`, `./hack/chart-reuse-values.sh`, `make helm-docs` |
 | `**/*.md` | `markdownlint-cli2 '**/*.md'` |
 | `docs/**` | `mkdocs build --strict` |
 

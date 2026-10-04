@@ -400,9 +400,8 @@ fi
 # gatewayClassConfig.allowSharedTunnels=true is needed because the per-Gateway
 # e2e clones the SHARED connector token into its test namespace (it runs with
 # only the one required tunnel), which is exactly the claim the tunnel-ownership rule
-# refuses by default. The refusal path is covered by the unit tests in
-# internal/tunnelownership and internal/controller, which is where a decision
-# made from cluster state belongs; no suite here exercises it.
+# refuses by default. The e2e TestTunnelOwnershipRefusesClassTunnelClaim
+# switches the flag off for its own duration to exercise that refusal live.
 # proxy.allowXOriginalHost=true is what makes the suite runnable at all: its
 # domains (example.com, rewrite.example, ...) are not on the Cloudflare account,
 # so the edge rejects them by Host and the intended Host rides X-Original-Host

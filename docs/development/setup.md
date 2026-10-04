@@ -9,6 +9,7 @@ This guide covers setting up a development environment for the Cloudflare Tunnel
 - A Kubernetes cluster (kind, minikube, or remote)
 - Cloudflare account with a tunnel configured
 - golangci-lint (for linting)
+- helm with the helm-unittest plugin, and mikefarah yq v4 (for the chart checks)
 
 ## Quick Start
 

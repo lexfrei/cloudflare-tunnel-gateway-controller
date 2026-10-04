@@ -664,6 +664,18 @@ jobs:
             --set proxy.networkPolicy.enabled=true \
             --set proxy.tunnelTokenSecretRef.name=tunnel-token-secret
 
+      - name: Install yq
+        run: |
+          # renovate: datasource=docker depName=mikefarah/yq
+          YQ_IMAGE="mikefarah/yq:4.54.1@sha256:4b3d9475d65571d28cbb19544d3820ec2945e4c8b2f18279394282b8dc3a592e"
+          docker create --name yq-tmp "${YQ_IMAGE}"
+          sudo docker cp yq-tmp:/usr/bin/yq /usr/local/bin/yq
+          docker rm yq-tmp
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Template Chart with released values (--reuse-values)
+        run: ./hack/chart-reuse-values.sh
+
       - name: Validate helm-docs
         uses: ./.github/actions/validate-helm-docs
 
