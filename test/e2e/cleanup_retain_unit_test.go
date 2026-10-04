@@ -67,18 +67,19 @@ func TestShouldSkipCleanupOnFailure(t *testing.T) {
 	}
 }
 
-// TestEnvVarDocumented pins the cross-link between the constant and
-// docs/development/testing.md. A maintainer who hits a flaky run looks
-// at the testing-doc env-var table first; if the knob isn't listed
+// TestEnvVarDocumented pins the cross-link between the env var constants
+// and docs/development/testing.md. A maintainer who hits a flaky run looks
+// at the testing-doc env-var table first; if a knob isn't listed
 // there it might as well not exist for the operator. Renaming or
-// dropping the constant without also updating the doc would silently
+// dropping a constant without also updating the doc would silently
 // break that contract.
 //
-// Asserts two things: (a) the file contains an `### E2E Environment
-// Variables` heading, (b) the env var literal appears as the first
+// Asserts three things: (a) the file contains an `### E2E Environment
+// Variables` heading, (b) each env var literal appears as the first
 // cell of a markdown table row beneath that heading (`| NAME |`
-// shape). A stray prose mention of the env var name elsewhere in the
-// doc would not satisfy the second check -- that's intentional: a
+// shape), (c) the skip-cleanup row carries its isolation caveat.
+// A stray prose mention of an env var name elsewhere in the doc
+// would not satisfy the second check -- that's intentional: a
 // loose substring test would silently let the table row disappear.
 //
 // The path is resolved relative to this test file's package
@@ -111,10 +112,12 @@ func TestEnvVarDocumented(t *testing.T) {
 		tail = tail[:end]
 	}
 
-	cellMarker := "| `" + skipCleanupEnvVar + "` |"
-	if !strings.Contains(tail, cellMarker) {
-		t.Fatalf("env var %q is not present as a table row (looked for %q) under %q in %s",
-			skipCleanupEnvVar, cellMarker, sectionHead, docsPath)
+	for _, envVar := range []string{skipCleanupEnvVar, secondTunnelHostnameEnvVar} {
+		cellMarker := "| `" + envVar + "` |"
+		if !strings.Contains(tail, cellMarker) {
+			t.Fatalf("env var %q is not present as a table row (looked for %q) under %q in %s",
+				envVar, cellMarker, sectionHead, docsPath)
+		}
 	}
 
 	// The per-subtest predicate gates a namespace-wide wipe, so a

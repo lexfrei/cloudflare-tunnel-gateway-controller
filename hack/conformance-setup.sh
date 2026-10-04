@@ -29,7 +29,9 @@
 # Prerequisites:
 #   - .env file in repo root with: CF_API_TOKEN, CF_ACCOUNT_ID, CF_TUNNEL_ID,
 #     CF_TUNNEL_TOKEN, CF_TUNNEL_HOSTNAME (the edge hostname routing to the tunnel);
-#     alternatively (CI) the same variables already exported in the environment
+#     alternatively (CI) the same variables already exported in the environment.
+#     Optional: CF_TUNNEL_2_TOKEN and CF_TUNNEL_2_HOSTNAME for a second test
+#     tunnel in the same account; the e2e tests that need two tunnels skip without them
 #   - docker, kind, helm, kubectl, go, xxd, curl installed; colima additionally on macOS;
 #     gh and jq additionally for --use-ci-images
 #
@@ -362,9 +364,18 @@ kubectl --context "${KUBE_CONTEXT}" create secret generic cloudflare-credentials
 info "Creating tunnel token secret..."
 kubectl --context "${KUBE_CONTEXT}" create secret generic cloudflare-tunnel-token \
   --namespace "${NAMESPACE}" \
-  --from-literal=tunnel-token="${CF_TUNNEL_TOKEN}" \
+  --from-literal=tunnel-token="${CF_TUNNEL_TOKEN:?}" \
   --dry-run=client --output yaml \
   | kubectl --context "${KUBE_CONTEXT}" apply --filename -
+
+if [[ -n "${CF_TUNNEL_2_TOKEN:-}" ]]; then
+  info "Creating second tunnel token secret..."
+  kubectl --context "${KUBE_CONTEXT}" create secret generic cloudflare-tunnel-2-token \
+    --namespace "${NAMESPACE}" \
+    --from-literal=tunnel-token="${CF_TUNNEL_2_TOKEN}" \
+    --dry-run=client --output yaml \
+    | kubectl --context "${KUBE_CONTEXT}" apply --filename -
+fi
 
 # --- Step 8: Deploy via helm ---
 # Default: install the local chart. --use-ci-images: install the chart tarball
@@ -387,8 +398,8 @@ fi
 # proxy.tunnel.protocol=http2 is mandatory in both modes: the chart defaults to
 # "auto" (QUIC-first) and kind/Colima blocks QUIC egress to the CF edge (530/1033).
 # gatewayClassConfig.allowSharedTunnels=true is needed because the per-Gateway
-# e2e clones the SHARED connector token into its test namespace (there is only
-# one test tunnel), which is exactly the claim the tunnel-ownership rule
+# e2e clones the SHARED connector token into its test namespace (it runs with
+# only the one required tunnel), which is exactly the claim the tunnel-ownership rule
 # refuses by default. The refusal path is covered by the unit tests in
 # internal/tunnelownership and internal/controller, which is where a decision
 # made from cluster state belongs; no suite here exercises it.
@@ -456,6 +467,7 @@ elif [[ "${RUN_E2E}" == "true" ]]; then
   info "Running e2e tests against ${CF_TUNNEL_HOSTNAME}..."
   E2E_KUBE_CONTEXT="${KUBE_CONTEXT}" \
   E2E_TUNNEL_HOSTNAME="${CF_TUNNEL_HOSTNAME}" \
+  E2E_TUNNEL_2_HOSTNAME="${CF_TUNNEL_2_HOSTNAME:-}" \
     go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/...
 else
   echo ""
@@ -463,7 +475,7 @@ else
   echo "  CONFORMANCE_KUBE_CONTEXT=${KUBE_CONTEXT} CONFORMANCE_TUNNEL_HOSTNAME=${CF_TUNNEL_HOSTNAME} go test -v -race -tags conformance -count=1 -timeout=30m ./test/conformance/..."
   echo ""
   info "To run E2E tests:"
-  echo "  E2E_KUBE_CONTEXT=${KUBE_CONTEXT} E2E_TUNNEL_HOSTNAME=${CF_TUNNEL_HOSTNAME} go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/..."
+  echo "  E2E_KUBE_CONTEXT=${KUBE_CONTEXT} E2E_TUNNEL_HOSTNAME=${CF_TUNNEL_HOSTNAME} E2E_TUNNEL_2_HOSTNAME=${CF_TUNNEL_2_HOSTNAME:-} go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/..."
   echo ""
   info "To tear down:"
   echo "  kind delete cluster --name ${CLUSTER_NAME}"

@@ -82,6 +82,8 @@ jobs:
           CF_TUNNEL_ID: ${{ secrets.CF_TUNNEL_ID }}
           CF_TUNNEL_TOKEN: ${{ secrets.CF_TUNNEL_TOKEN }}
           CF_TUNNEL_HOSTNAME: ${{ secrets.CF_TUNNEL_HOSTNAME }}
+          CF_TUNNEL_2_TOKEN: ${{ secrets.CF_TUNNEL_2_TOKEN }}
+          CF_TUNNEL_2_HOSTNAME: ${{ secrets.CF_TUNNEL_2_HOSTNAME }}
         run: ./hack/conformance-setup.sh --test-e2e
 
       - name: Setup cluster and run e2e (attempt 2)
@@ -93,6 +95,8 @@ jobs:
           CF_TUNNEL_ID: ${{ secrets.CF_TUNNEL_ID }}
           CF_TUNNEL_TOKEN: ${{ secrets.CF_TUNNEL_TOKEN }}
           CF_TUNNEL_HOSTNAME: ${{ secrets.CF_TUNNEL_HOSTNAME }}
+          CF_TUNNEL_2_TOKEN: ${{ secrets.CF_TUNNEL_2_TOKEN }}
+          CF_TUNNEL_2_HOSTNAME: ${{ secrets.CF_TUNNEL_2_HOSTNAME }}
         run: ./hack/conformance-setup.sh --test-e2e
 
       # continue-on-error reports a failed attempt 1 as a green step, so a
