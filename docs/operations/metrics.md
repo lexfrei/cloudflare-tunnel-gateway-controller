@@ -112,6 +112,7 @@ The `hostname` label always carries the MATCHED route hostname pattern (exact ho
 | `cftunnel_proxy_request_duration_seconds` | Histogram | `hostname` | Wall time from arrival to response completion; WebSocket upgrades observe time-to-upgrade, not session lifetime. |
 | `cftunnel_proxy_requests_total` | Counter | `hostname`, `status_class` | Completed exchanges by status class: `1xx`..`5xx`, `aborted` (no response written — e.g. client canceled first), `other` (handler wrote a status outside 100-599). A WebSocket upgrade counts as `1xx` at hijack time. |
 | `cftunnel_proxy_backend_errors_total` | Counter | `hostname`, `reason` | Backend dial/connect failures (`dial`, `timeout`, `tls`, `canceled`, `ws_dial`, `ws_handshake`, `other`). |
+| `cftunnel_proxy_backend_retries_total` | Counter | `hostname`, `reason` | Backend attempts abandoned for another attempt under an HTTPRoute retry policy: `status` (the backend answered a listed status code) or the backend error reason as above. Counts retries, not requests: a request that succeeds on its third attempt adds 2. The final attempt's outcome is in `cftunnel_proxy_requests_total` and `cftunnel_proxy_backend_errors_total`. |
 | `cftunnel_proxy_response_bytes_total` | Counter | `hostname` | Response body bytes written (post-hijack WebSocket bytes excluded). |
 | `cftunnel_proxy_request_bytes_total` | Counter | `hostname` | Request body bytes read. |
 | `cftunnel_proxy_handler_panics_total` | Counter | `site` | Panics the proxy recovered from instead of crashing: `request` (the request handler, tunnel mode), `websocket_copy` (a hijacked WebSocket session's copy goroutine), `mirror` (a RequestMirror dispatch). A contained panic leaves nothing else an operator would notice, so any increase is worth an alert. Client disconnects mid-response are routine and not counted. |
@@ -336,13 +337,13 @@ spec:
       rules:
         - alert: CloudflareTunnelSyncErrors
           expr: |
-            sum(rate(cftunnel_sync_errors_total[5m])) > 0.1
-          for: 5m
+            sum(increase(cftunnel_sync_errors_total{error_type!="proxy_push"}[15m])) > 0
+          for: 15m
           labels:
             severity: warning
           annotations:
-            summary: "High sync error rate"
-            description: "Controller experiencing {{ $value | humanize }} sync errors/sec"
+            summary: "Sync errors for 15 minutes"
+            description: "A failing tunnel document write, such as a revoked API token, shows up only here, in TunnelDocumentWriteFailed Events and in the controller log"
 
         - alert: CloudflareTunnelSyncSlow
           expr: |

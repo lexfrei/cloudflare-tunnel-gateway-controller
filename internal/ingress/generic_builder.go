@@ -3,6 +3,8 @@ package ingress
 import (
 	"context"
 	"log/slog"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/cloudflare/cloudflare-go/v7"
@@ -16,10 +18,9 @@ import (
 
 // RouteAdapter defines the interface for adapting different route types
 // (HTTPRoute, GRPCRoute) to a common format for ingress rule generation.
-// Adapters are pure projections: they translate their typed rules into the
-// kind-neutral projectedRule shape, and every downstream step (filter
-// logging, backend resolution, entry assembly) runs through one shared
-// implementation so the route kinds cannot drift.
+// Adapters only extract their typed fields; backend resolution and entry
+// assembly run through one shared implementation so the route kinds cannot
+// drift.
 type RouteAdapter[R any] interface {
 	// RouteKind returns the short route kind used for metrics labeling
 	// (e.g., "http", "grpc").
@@ -36,10 +37,8 @@ type RouteAdapter[R any] interface {
 	// Returns ["*"] if no hostnames are specified.
 	GetHostnames(route *R) []gatewayv1.Hostname
 
-	// ProjectRules translates the route's typed rules into the kind-neutral
-	// projection, logging any per-kind features the tunnel ingress cannot
-	// express along the way.
-	ProjectRules(route *R, resolver *backendResolver) []projectedRule
+	// RuleBackendRefs returns each rule's backendRefs, one slice per rule.
+	RuleBackendRefs(route *R) [][]gatewayv1.BackendRef
 
 	// AddCatchAll returns true if a catch-all rule should be added.
 	AddCatchAll() bool
@@ -88,12 +87,11 @@ func NewGenericBuilder[R any](
 	}
 }
 
-// Build converts a list of routes to Cloudflare Tunnel ingress rules.
-//
-// Rules are sorted by:
-//  1. Hostname (specific hostnames before wildcard "*")
-//  2. Priority (exact matches before prefix matches)
-//  3. Path length (longer paths first for specificity)
+// Build converts a list of routes to Cloudflare Tunnel ingress rules: one
+// rule per distinct hostname, sorted by hostname. The in-process proxy does
+// all path and match handling, so no rule carries a path. A hostname served
+// by several rules names the lexicographically smallest of their backend
+// URLs, which keeps the document independent of route order.
 func (b *GenericBuilder[R]) Build(ctx context.Context, routes []R) BuildResult {
 	startTime := time.Now()
 
@@ -105,23 +103,30 @@ func (b *GenericBuilder[R]) Build(ctx context.Context, routes []R) BuildResult {
 		metrics:       b.metrics,
 	}
 
-	var entries []routeEntry
-
 	var failedRefs []BackendRefError
 
-	rulesByNamespace := make(map[string]int, len(routes))
+	services := make(map[string]string)
 
 	for i := range routes {
-		namespace, _ := b.adapter.GetMeta(&routes[i])
 		routeEntries, routeFailedRefs := extractProjectedEntries(ctx, b.adapter, &routes[i], resolver)
-		entries = append(entries, routeEntries...)
 		failedRefs = append(failedRefs, routeFailedRefs...)
-		rulesByNamespace[namespace] += countIngressBearing(routeEntries)
+
+		for _, entry := range routeEntries {
+			if !entryReachesDocument(entry) {
+				b.logger.Info("skipping wildcard route from tunnel config (handled by proxy)",
+					"service", entry.service,
+				)
+
+				continue
+			}
+
+			if current, ok := services[entry.hostname]; !ok || entry.service < current {
+				services[entry.hostname] = entry.service
+			}
+		}
 	}
 
-	sortRouteEntries(entries)
-
-	rules := entriesToIngressRules(entries, b.logger)
+	rules := hostnameRules(services)
 
 	if b.adapter.AddCatchAll() {
 		rules = append(rules, zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
@@ -134,72 +139,27 @@ func (b *GenericBuilder[R]) Build(ctx context.Context, routes []R) BuildResult {
 	}
 
 	return BuildResult{
-		Rules:            rules,
-		FailedRefs:       failedRefs,
-		RulesByNamespace: rulesByNamespace,
+		Rules:      rules,
+		FailedRefs: failedRefs,
 	}
 }
 
-// entryReachesDocument reports whether a projected entry becomes a rule in the
-// tunnel document. Wildcard-hostname entries do not: the Cloudflare API rejects
+// entryReachesDocument reports whether a projected entry's hostname is listed
+// in the tunnel document. The "*" wildcard is not: the Cloudflare API rejects
 // an empty hostname and the in-process proxy matches those itself.
-//
-// entriesToIngressRules and countIngressBearing both ask this question, and
-// they must not answer it differently — a second reason to drop an entry,
-// added to the former alone, would make the latter overstate a namespace's
-// share of the rule budget with nothing to catch it.
 func entryReachesDocument(entry routeEntry) bool {
 	return entry.hostname != "*"
 }
 
-// countIngressBearing counts the entries of one route that survive into the
-// tunnel document, which is that route's contribution to the rule budget.
-func countIngressBearing(entries []routeEntry) int {
-	count := 0
+// hostnameRules renders one rule per hostname, sorted by hostname.
+func hostnameRules(services map[string]string) []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress {
+	rules := make([]zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress, 0, len(services)+1)
 
-	for _, entry := range entries {
-		if entryReachesDocument(entry) {
-			count++
-		}
-	}
-
-	return count
-}
-
-// entriesToIngressRules converts sorted route entries into Cloudflare ingress rules.
-// Wildcard entries (hostname == "*") are skipped — Cloudflare API rejects rules
-// with empty hostname (error 1056). These routes are handled by the in-process
-// L7 proxy via its OverrideProxy hook, not by Cloudflare's edge ingress.
-func entriesToIngressRules(
-	entries []routeEntry,
-	logger *slog.Logger,
-) []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress {
-	rules := make([]zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress, 0, len(entries))
-
-	for _, entry := range entries {
-		if !entryReachesDocument(entry) {
-			logger.Info("skipping wildcard route from tunnel config (handled by proxy)",
-				"service", entry.service,
-			)
-
-			continue
-		}
-
-		rule := zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
-			Service:  cloudflare.F(entry.service),
-			Hostname: cloudflare.F(entry.hostname),
-		}
-
-		if entry.path != "" && entry.path != "/" {
-			pathWithWildcard := entry.path
-			if entry.priority == 0 {
-				pathWithWildcard = entry.path + "*"
-			}
-
-			rule.Path = cloudflare.F(pathWithWildcard)
-		}
-
-		rules = append(rules, rule)
+	for _, hostname := range slices.Sorted(maps.Keys(services)) {
+		rules = append(rules, zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+			Hostname: cloudflare.F(hostname),
+			Service:  cloudflare.F(services[hostname]),
+		})
 	}
 
 	return rules

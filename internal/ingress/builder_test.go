@@ -210,7 +210,8 @@ func TestBuild_PathMatching_Exact(t *testing.T) {
 	buildResult := builder.Build(context.Background(), routes)
 
 	require.Len(t, buildResult.Rules, 2)
-	assert.Equal(t, "/api/v1", buildResult.Rules[0].Path.Value)
+	assert.Equal(t, "app.example.com", buildResult.Rules[0].Hostname.Value)
+	assert.False(t, buildResult.Rules[0].Path.Present, "the proxy matches paths; the document carries none")
 }
 
 func TestBuild_PathMatching_Prefix(t *testing.T) {
@@ -248,10 +249,11 @@ func TestBuild_PathMatching_Prefix(t *testing.T) {
 	buildResult := builder.Build(context.Background(), routes)
 
 	require.Len(t, buildResult.Rules, 2)
-	assert.Equal(t, "/api*", buildResult.Rules[0].Path.Value)
+	assert.Equal(t, "app.example.com", buildResult.Rules[0].Hostname.Value)
+	assert.False(t, buildResult.Rules[0].Path.Present, "the proxy matches paths; the document carries none")
 }
 
-func TestBuild_Sorting(t *testing.T) {
+func TestBuild_RulesOfOneHostnameCollapse(t *testing.T) {
 	t.Parallel()
 
 	builder := ingress.NewBuilder("cluster.local", nil, nil, nil, nil)
@@ -312,11 +314,9 @@ func TestBuild_Sorting(t *testing.T) {
 
 	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, buildResult.Rules, 4)
-	assert.Contains(t, buildResult.Rules[0].Service.Value, "exact-service")
-	assert.Contains(t, buildResult.Rules[1].Service.Value, "longer-prefix-service")
-	assert.Contains(t, buildResult.Rules[2].Service.Value, "prefix-service")
-	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[3].Service.Value)
+	require.Len(t, buildResult.Rules, 2, "three rules on one hostname are one document rule, plus the catch-all")
+	assert.Contains(t, buildResult.Rules[0].Service.Value, "exact-service", "the smallest backend URL is named")
+	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[1].Service.Value)
 }
 
 func TestBuild_NoHostnames(t *testing.T) {
@@ -668,7 +668,8 @@ func TestBuild_RegularExpressionPath(t *testing.T) {
 	buildResult := builder.Build(context.Background(), routes)
 
 	require.Len(t, buildResult.Rules, 2)
-	assert.Equal(t, "/api/[0-9]+*", buildResult.Rules[0].Path.Value)
+	assert.Equal(t, "app.example.com", buildResult.Rules[0].Hostname.Value)
+	assert.False(t, buildResult.Rules[0].Path.Present, "the proxy matches paths; the document carries none")
 }
 
 func TestBuild_CustomClusterDomain(t *testing.T) {

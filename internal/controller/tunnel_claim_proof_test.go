@@ -232,7 +232,7 @@ func TestUnprovenRejectionWording(t *testing.T) {
 			rejected:  map[string]tunnelownership.Rejection{"team-b/gw": rejection},
 		}
 
-		routeErr := gatewaySyncError("team-b/gw", map[string]error{}, infra)
+		routeErr := gatewayPlaneError("team-b/gw", infra)
 		require.Error(t, routeErr)
 
 		for _, surface := range []string{routeErr.Error(), tunnelRejectionMessage(rejection)} {

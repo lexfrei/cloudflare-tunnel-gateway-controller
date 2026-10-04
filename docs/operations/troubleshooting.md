@@ -91,7 +91,6 @@ kubectl describe pod --namespace cloudflare-tunnel-system \
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `authentication failed` | Invalid API token | Verify token scopes |
 | `secret not found` | Missing secret | Create required secret |
 | `read-only file system` | Security context issue | Check emptyDir volumes |
 
@@ -229,8 +228,11 @@ imagePullSecrets:
 
 **Symptoms**:
 
-- Pods crash with authentication errors
+- `TunnelDocumentWriteFailed` Warning Events on Gateways
+- `cftunnel_sync_errors_total` keeps rising
 - Logs show `401 Unauthorized` or `403 Forbidden`
+
+Routes keep serving and their status does not change: the tunnel's ingress document, which this token writes, only feeds the Cloudflare dashboard. A dedicated Gateway's tunnel claim is also checked with the token, see [Limitations](../gateway-api/limitations.md#a-dedicated-gateway-waits-for-cloudflare-to-confirm-its-tunnel).
 
 **Diagnosis**:
 

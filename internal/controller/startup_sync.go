@@ -57,9 +57,11 @@ func startupAttempt(
 		// group or a per-Gateway resolve failed transiently and the sync
 		// wants to be re-run (e.g. a GatewayConfig not yet visible leaves its
 		// dedicated data plane without any config push). On a route-less
-		// cluster this loop is the only requeue channel, so honor it. This
-		// stays bounded: deterministic misconfigurations do not set a requeue
-		// interval, only transient failures do.
+		// cluster this loop is the only requeue channel, so honor it. It is
+		// not bounded: a tunnel document write that keeps failing, as with a
+		// revoked token, requeues every sync, so the loop re-runs a full sync
+		// at startupSyncRetryInterval until the write succeeds. Nothing waits
+		// on it by then, since markComplete fired after the first attempt.
 		if result.RequeueAfter > 0 {
 			return errors.Wrapf(errRequeueRequested, "requeue interval %s", result.RequeueAfter)
 		}

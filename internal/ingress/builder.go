@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sort"
 
 	"github.com/cloudflare/cloudflare-go/v7/zero_trust"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -65,46 +64,11 @@ func NewBuilder(
 	}
 }
 
-// routeEntry is an intermediate representation of an ingress rule.
-// Priority 1 indicates exact path match, 0 indicates prefix match.
+// routeEntry is one hostname a route rule serves and the backend URL the
+// rule resolved to.
 type routeEntry struct {
 	hostname string
-	path     string
 	service  string
-	priority int
-}
-
-// sortRouteEntries sorts entries for Cloudflare Tunnel ingress configuration.
-// Wildcard hostname "*" must always come last (Cloudflare requirement).
-// Specific hostnames are sorted alphabetically, then by priority (exact > prefix),
-// then by path length (longer paths first for specificity), then alphabetically
-// by path for deterministic ordering.
-func sortRouteEntries(entries []routeEntry) {
-	sort.Slice(entries, func(idx, jdx int) bool {
-		// Wildcard hostname "*" must always come last
-		if entries[idx].hostname == "*" && entries[jdx].hostname != "*" {
-			return false
-		}
-
-		if entries[idx].hostname != "*" && entries[jdx].hostname == "*" {
-			return true
-		}
-
-		if entries[idx].hostname != entries[jdx].hostname {
-			return entries[idx].hostname < entries[jdx].hostname
-		}
-
-		if entries[idx].priority != entries[jdx].priority {
-			return entries[idx].priority > entries[jdx].priority
-		}
-
-		if len(entries[idx].path) != len(entries[jdx].path) {
-			return len(entries[idx].path) > len(entries[jdx].path)
-		}
-
-		// Alphabetical path order for deterministic sorting
-		return entries[idx].path < entries[jdx].path
-	})
 }
 
 // BackendRefError represents a backend reference that failed validation.
@@ -127,20 +91,10 @@ type BackendRefError struct {
 type BuildResult struct {
 	Rules      []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress
 	FailedRefs []BackendRefError
-
-	// RulesByNamespace counts the rules each route namespace contributed. The
-	// per-tunnel rule cap is enforced on the merged document, so when it is
-	// exceeded this is what says whose routes filled it; nothing else in the
-	// document records where a rule came from.
-	RulesByNamespace map[string]int
 }
 
-// Build converts a list of HTTPRoute resources to Cloudflare Tunnel ingress rules.
-//
-// Rules are sorted by:
-//  1. Hostname (specific hostnames before wildcard "*")
-//  2. Priority (exact matches before prefix matches)
-//  3. Path length (longer paths first for specificity)
+// Build converts a list of HTTPRoute resources to Cloudflare Tunnel ingress
+// rules, one per hostname, sorted by hostname.
 //
 // A catch-all rule returning HTTP 404 is always appended as the last rule.
 //

@@ -6,16 +6,22 @@ package controller
 // merged into one document write (no last-writer-wins).
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cloudflare/cloudflare-go/v7"
 	"github.com/cloudflare/cloudflare-go/v7/option"
@@ -145,6 +151,28 @@ func (a *recordingTunnelAPI) hostnamesFor(tunnelID string) []string {
 	defer a.mu.Unlock()
 
 	return a.puts[tunnelID]
+}
+
+// lastIngress returns the ingress rules last written to tunnelID.
+func (a *recordingTunnelAPI) lastIngress(t *testing.T, tunnelID string) []map[string]any {
+	t.Helper()
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	rules, ok := a.docs[tunnelID]
+	require.True(t, ok, "tunnel %s was never written", tunnelID)
+
+	return rules
+}
+
+// seed makes GET serve rules for tunnelID, as if an earlier controller had
+// written them.
+func (a *recordingTunnelAPI) seed(tunnelID string, rules []map[string]any) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.docs[tunnelID] = rules
 }
 
 func (a *recordingTunnelAPI) tunnelsWritten() int {
@@ -355,12 +383,12 @@ func TestSyncAllRoutes_PartitionsByTunnel(t *testing.T) {
 	require.Len(t, result.Partitions, 2, "SyncResult must carry the partition split for the proxy push")
 }
 
-// TestSyncAllRoutes_DistinctTunnelWriteFailureIsolated pins per-tunnel failure
-// isolation end-to-end: when ONE of two distinct tunnels fails its Cloudflare
-// write, the healthy tunnel's document is still written and ITS route stays
-// unflagged, while only the failed tunnel's route carries a per-parent sync
-// error. A single tunnel outage must not flip a sibling tenant's route.
-func TestSyncAllRoutes_DistinctTunnelWriteFailureIsolated(t *testing.T) {
+// TestSyncAllRoutes_TunnelWriteFailureLeavesRouteStatus pins that a failed
+// Cloudflare write never reaches route status. The edge routes a hostname by
+// its DNS record and the proxy serves it, so the document only feeds the
+// dashboard: a route whose tunnel write failed is still served. The healthy
+// tunnel is still written, and the sync is retried.
+func TestSyncAllRoutes_TunnelWriteFailureLeavesRouteStatus(t *testing.T) {
 	t.Parallel()
 
 	api := newRecordingTunnelAPI(t)
@@ -369,23 +397,19 @@ func TestSyncAllRoutes_DistinctTunnelWriteFailureIsolated(t *testing.T) {
 	syncer := newPartitionSyncSyncer(t, api, sharedTunnel)
 	api.failTunnel(tenantTunnelUUID) // the tenant (infra-gw) tunnel write fails
 
-	_, result, err := syncer.SyncAllRoutes(context.Background())
-	require.NoError(t, err, "a single tunnel's write failure must NOT become a global sync error")
+	ctrlResult, result, err := syncer.SyncAllRoutes(context.Background())
+	require.NoError(t, err, "a tunnel write failure must not become a sync error")
 	require.NotNil(t, result)
+	assert.Positive(t, ctrlResult.RequeueAfter, "the failed write is retried")
 
-	// The healthy shared tunnel was still written.
 	assert.Contains(t, api.hostnamesFor(sharedTunnel), "shared.example.com",
 		"the healthy tunnel's document must be written despite the other tunnel failing")
 
-	// The tenant route's parent carries a sync error; the shared route's does not.
-	tenantBinding, ok := result.HTTPRouteBindings["default/tenant-route"]
-	require.True(t, ok)
-	assert.NotEmpty(t, tenantBinding.syncErrByGateway, "the failed tunnel's route must carry a per-parent sync error")
-
-	sharedBinding, ok := result.HTTPRouteBindings["default/shared-route"]
-	require.True(t, ok)
-	assert.Empty(t, sharedBinding.syncErrByGateway,
-		"the healthy tunnel's route must stay unflagged when a sibling tunnel fails")
+	for _, key := range []string{"default/tenant-route", "default/shared-route"} {
+		binding, ok := result.HTTPRouteBindings[key]
+		require.True(t, ok)
+		assert.Empty(t, binding.syncErrByGateway, "%s must not carry a sync error for a document write", key)
+	}
 }
 
 // TestSyncAllRoutes_ClassTunnelClaimIsRejectedNotMerged pins the tunnel-
@@ -497,24 +521,25 @@ func TestSyncAllRoutes_ClassTunnelClaimRejectionIsCanonicalFormInsensitive(t *te
 		"spelling the same UUID in another case must not evade the ownership check")
 }
 
-// TestSyncAllRoutes_SameTunnelMergedWriteFailureSurfaces pins the failure mode
-// of the opted-in sharing path: with AllowSharedTunnels the shared and a
-// dedicated Gateway merge onto ONE tunnel, so when that single tunnel's write
-// fails there is no healthy sibling to partially succeed and the failure must
-// SURFACE as a sync error, not be silently swallowed, which would leave both
-// routes reporting healthy while neither reached the edge. (The per-parent attribution
-// when a FAILED tunnel coexists with a healthy one is covered by
-// TestSyncAllRoutes_DistinctTunnelWriteFailureIsolated.)
-func TestSyncAllRoutes_SameTunnelMergedWriteFailureSurfaces(t *testing.T) {
+// TestSyncAllRoutes_EveryTunnelWriteFailingIsRetriedNotFatal covers the
+// write failing on the only tunnel there is, here the one the shared and a
+// dedicated Gateway merge onto: the routes are still served, so the sync
+// returns no error and asks to be run again.
+func TestSyncAllRoutes_EveryTunnelWriteFailingIsRetriedNotFatal(t *testing.T) {
 	t.Parallel()
 
 	api := newRecordingTunnelAPI(t)
 	syncer := newSharingPartitionSyncSyncer(t, api, tenantTunnelUUID)
-	api.failTunnel(tenantTunnelUUID) // the one tunnel both partitions merge into
+	api.failTunnel(tenantTunnelUUID)
 
-	_, _, err := syncer.SyncAllRoutes(context.Background())
-	require.Error(t, err,
-		"a merged single-tunnel write failure must surface as a sync error, not be swallowed")
+	ctrlResult, result, err := syncer.SyncAllRoutes(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Positive(t, ctrlResult.RequeueAfter)
+
+	for key, binding := range result.HTTPRouteBindings {
+		assert.Empty(t, binding.syncErrByGateway, "%s must not carry a sync error for a document write", key)
+	}
 }
 
 // TestSyncAllRoutes_BrokenGatewayConfigFailsClosed pins the isolation
@@ -691,4 +716,129 @@ func TestSyncAllRoutes_OverQuotaGatewayGetsNoPartition(t *testing.T) {
 
 	assert.NotContains(t, api.hostnamesFor(tenantTunnelUUID), "tenant.example.com",
 		"no document may be written for a data plane that is never rendered")
+}
+
+var errLongCloudflareBody = errors.New("simulated long Cloudflare error body")
+
+// regardingRecorder records which object each Event was about.
+type regardingRecorder struct {
+	mu     sync.Mutex
+	events []string
+	notes  []string
+}
+
+func (r *regardingRecorder) Eventf(regarding, _ runtime.Object, eventtype, reason, _, note string, args ...any) {
+	object, ok := regarding.(client.Object)
+	if !ok {
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.notes = append(r.notes, fmt.Sprintf(note, args...))
+
+	r.events = append(r.events, fmt.Sprintf("%s %s %T %s/%s",
+		eventtype, reason, regarding, object.GetNamespace(), object.GetName()))
+}
+
+func (r *regardingRecorder) recorded() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return slices.Clone(r.events)
+}
+
+// TestSyncAllRoutes_TunnelWriteFailureEmitsEvent pins where a failed document
+// write is reported now that route status no longer carries it: on every
+// Gateway served from the failed tunnel, never on routes.
+func TestSyncAllRoutes_TunnelWriteFailureEmitsEvent(t *testing.T) {
+	t.Parallel()
+
+	const sharedTunnel = "99999999-9999-4999-8999-999999999999"
+
+	tests := []struct {
+		name   string
+		failed string
+		want   string
+	}{
+		{
+			name:   "class tunnel",
+			failed: sharedTunnel,
+			want:   "Warning TunnelDocumentWriteFailed *v1.Gateway default/shared-gw",
+		},
+		{
+			name:   "dedicated tunnel",
+			failed: tenantTunnelUUID,
+			want:   "Warning TunnelDocumentWriteFailed *v1.Gateway default/infra-gw",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			api := newRecordingTunnelAPI(t)
+			syncer := newPartitionSyncSyncer(t, api, sharedTunnel)
+			recorder := &regardingRecorder{}
+			syncer.Recorder = recorder
+			api.failTunnel(tt.failed)
+
+			_, _, err := syncer.SyncAllRoutes(context.Background())
+			require.NoError(t, err)
+
+			assert.Equal(t, []string{tt.want}, recorder.recorded())
+		})
+	}
+}
+
+// TestReportDocumentWriteFailure_NoteFitsTheAPILimit pins the note cut: the
+// API server rejects an events.k8s.io note over 1024 bytes, and a Cloudflare
+// error body can be longer than that.
+func TestReportDocumentWriteFailure_NoteFitsTheAPILimit(t *testing.T) {
+	t.Parallel()
+
+	recorder := &regardingRecorder{}
+	syncer := &RouteSyncer{Recorder: recorder}
+	group := &tunnelGroup{
+		resolved:   &config.ResolvedConfig{TunnelID: tenantTunnelUUID},
+		partitions: []*routePartition{{Gateway: &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "gw"}}}},
+	}
+
+	syncer.reportDocumentWriteFailure(context.Background(), slog.Default(), group,
+		fmt.Errorf("%w: %s", errLongCloudflareBody, strings.Repeat("é", 5000)))
+
+	require.Len(t, recorder.notes, 1)
+	assert.LessOrEqual(t, len(recorder.notes[0]), 1024)
+	assert.True(t, utf8.ValidString(recorder.notes[0]), "the cut must not split a rune")
+}
+
+// TestSyncAllRoutes_PersistentWriteFailureLogsErrorOnce pins that a write
+// failing the same way on every retry, a bad token or an API outage, is
+// logged at error level once rather than every retry.
+func TestSyncAllRoutes_PersistentWriteFailureLogsErrorOnce(t *testing.T) {
+	t.Parallel()
+
+	api := newRecordingTunnelAPI(t)
+	syncer := newPartitionSyncSyncer(t, api, "99999999-9999-4999-8999-999999999999")
+	api.failTunnel(tenantTunnelUUID)
+
+	var logged bytes.Buffer
+
+	syncer.Logger = slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	for range 3 {
+		_, _, err := syncer.SyncAllRoutes(context.Background())
+		require.NoError(t, err)
+	}
+
+	errorLines := 0
+
+	for line := range strings.Lines(logged.String()) {
+		if strings.Contains(line, "level=ERROR") && strings.Contains(line, "writing the tunnel ingress document failed") {
+			errorLines++
+		}
+	}
+
+	assert.Equal(t, 1, errorLines)
 }

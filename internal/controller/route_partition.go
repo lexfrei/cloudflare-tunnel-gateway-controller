@@ -188,7 +188,7 @@ func applyTunnelOwnership(
 		// partition and hand them to the plane this rule exists to protect.
 		// A rejection is a decision, not a blip: clear any transient mark so
 		// the push cache is not retained for a plane that will keep being
-		// refused, and so gatewaySyncError (which checks rejected first)
+		// refused, and so gatewayPlaneError (which checks rejected first)
 		// cannot report a refused claim for what was really an apiserver
 		// hiccup.
 		infra.broken[key] = true
@@ -345,6 +345,17 @@ func managedInfraGateways(
 	cli client.Client,
 	controllerName string,
 ) ([]*gatewayv1.Gateway, error) {
+	return managedGateways(ctx, cli, controllerName, true)
+}
+
+// managedGateways lists the managed Gateways that opted into a dedicated data
+// plane (infra) or the ones served from the shared plane (!infra).
+func managedGateways(
+	ctx context.Context,
+	cli client.Client,
+	controllerName string,
+	infra bool,
+) ([]*gatewayv1.Gateway, error) {
 	classNames, err := managedClassNames(ctx, cli, controllerName)
 	if err != nil {
 		return nil, errors.Wrap(err, "listing managed gateway classes")
@@ -359,7 +370,7 @@ func managedInfraGateways(
 
 	for i := range gateways.Items {
 		gateway := &gateways.Items[i]
-		if classNames[string(gateway.Spec.GatewayClassName)] && config.HasInfrastructureParametersRef(gateway) {
+		if classNames[string(gateway.Spec.GatewayClassName)] && config.HasInfrastructureParametersRef(gateway) == infra {
 			out = append(out, gateway)
 		}
 	}

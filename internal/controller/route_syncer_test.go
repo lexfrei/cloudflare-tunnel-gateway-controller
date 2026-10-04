@@ -517,6 +517,29 @@ func TestMergeAndSortRules_Ordering(t *testing.T) {
 	assert.Equal(t, "z.example.com", result[1].Hostname.Value)
 }
 
+// TestMergeAndSortRules_OneRulePerHostname pins that a hostname served by both
+// HTTPRoutes and GRPCRoutes on one tunnel is still a single rule, naming the
+// smaller backend URL as each builder does within its own routes.
+func TestMergeAndSortRules_OneRulePerHostname(t *testing.T) {
+	t.Parallel()
+
+	httpRules := []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+		{Hostname: cloudflare.String("app.example.com"), Service: cloudflare.String("http://z-web:80")},
+	}
+	grpcRules := []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+		{Hostname: cloudflare.String("app.example.com"), Service: cloudflare.String("http://a-grpc:50051")},
+	}
+
+	for _, result := range [][]zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
+		mergeAndSortRules(httpRules, grpcRules),
+		mergeAndSortRules(grpcRules, httpRules),
+	} {
+		require.Len(t, result, 1)
+		assert.Equal(t, "app.example.com", result[0].Hostname.Value)
+		assert.Equal(t, "http://a-grpc:50051", result[0].Service.Value)
+	}
+}
+
 func TestMergeAndSortRules_WildcardLast(t *testing.T) {
 	t.Parallel()
 
@@ -580,14 +603,6 @@ func TestSortIngressRules(t *testing.T) {
 			expected: []string{"a.example.com", "z.example.com"},
 		},
 		{
-			name: "same hostname different path lengths",
-			rules: []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
-				{Hostname: cloudflare.String("app.example.com"), Path: cloudflare.String("/"), Service: cloudflare.String("http://short:80")},
-				{Hostname: cloudflare.String("app.example.com"), Path: cloudflare.String("/api/v1"), Service: cloudflare.String("http://long:80")},
-			},
-			expected: []string{"app.example.com", "app.example.com"},
-		},
-		{
 			name: "mixed: wildcard between specific hostnames",
 			rules: []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
 				{Hostname: cloudflare.String("b.example.com"), Service: cloudflare.String("http://b:80")},
@@ -615,21 +630,6 @@ func TestSortIngressRules(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestSortIngressRules_LongerPathFirst(t *testing.T) {
-	t.Parallel()
-
-	rules := []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
-		{Hostname: cloudflare.String("app.example.com"), Path: cloudflare.String("/"), Service: cloudflare.String("http://short:80")},
-		{Hostname: cloudflare.String("app.example.com"), Path: cloudflare.String("/api/v1"), Service: cloudflare.String("http://long:80")},
-	}
-
-	result := sortIngressRules(rules)
-
-	require.Len(t, result, 2)
-	assert.Equal(t, "/api/v1", result[0].Path.Value, "longer path should come first")
-	assert.Equal(t, "/", result[1].Path.Value, "shorter path should come second")
 }
 
 func TestFilterOutCatchAll(t *testing.T) {
@@ -1044,7 +1044,9 @@ func TestRouteSyncer_SyncAllRoutes_AccountIDResolveFailure(t *testing.T) {
 	t.Parallel()
 
 	// Config resolves successfully but account ID auto-detect fails
-	// because API token is invalid
+	// because API token is invalid. The account is needed only to write the
+	// tunnel document, which no route depends on, so the failure is retried
+	// rather than returned.
 	scheme := runtime.NewScheme()
 	require.NoError(t, gatewayv1.Install(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
@@ -1105,9 +1107,10 @@ func TestRouteSyncer_SyncAllRoutes_AccountIDResolveFailure(t *testing.T) {
 
 	result, syncResult, err := syncer.SyncAllRoutes(context.Background())
 
-	require.Error(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, apiErrorRequeueDelay, result.RequeueAfter)
 	require.NotNil(t, syncResult)
+	assert.NotEmpty(t, syncResult.Partitions, "the sync goes on past the failed lookup and builds the proxy config")
 }
 
 func TestRouteSyncer_SyncAllRoutes_TunnelConfigGetFailure(t *testing.T) {
@@ -1201,8 +1204,9 @@ func TestRouteSyncer_SyncAllRoutes_TunnelConfigGetFailure(t *testing.T) {
 
 	result, syncResult, err := syncer.SyncAllRoutes(context.Background())
 
-	// The Cloudflare API call will fail with authentication error
-	require.Error(t, err)
+	// The Cloudflare API call fails with an authentication error. The routes
+	// are served regardless, so the failed read is retried, not a sync error.
+	require.NoError(t, err)
 	assert.Equal(t, apiErrorRequeueDelay, result.RequeueAfter)
 	require.NotNil(t, syncResult)
 	// Route should be in the sync result even on API error

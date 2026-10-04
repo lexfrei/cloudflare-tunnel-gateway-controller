@@ -307,7 +307,7 @@ Expected output includes `"type":"Accepted","status":"True"`.
 
 | Condition | Meaning |
 |-----------|---------|
-| `Accepted: True` | Route is accepted and programmed in the in-process proxy; Cloudflare Tunnel config updated (L7 routing happens in-cluster, not at the Cloudflare edge) |
+| `Accepted: True` | Route is accepted and programmed in the in-process proxy (L7 routing happens in-cluster, not at the Cloudflare edge); the tunnel ingress document may lag behind, see [Limitations](limitations.md#the-tunnel-ingress-document-only-feeds-the-dashboard) |
 | `Accepted: False` | Route was rejected (check reason) |
 | `ResolvedRefs: True` | All backend references resolved |
 | `ResolvedRefs: False` | Backend reference failed (missing service or ReferenceGrant) |
@@ -326,7 +326,7 @@ kubectl logs --selector app.kubernetes.io/name=cloudflare-tunnel-gateway-control
 Common causes:
 
 - Gateway not found (wrong name or namespace in parentRefs)
-- Cloudflare API error (invalid credentials)
+- Cloudflare credentials Secret missing (the one the GatewayClassConfig names)
 - Service not found
 
 ### Cross-Namespace Reference Denied

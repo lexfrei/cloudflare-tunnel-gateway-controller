@@ -31,7 +31,7 @@ Expose in-cluster services through a Cloudflare Tunnel using standard Gateway AP
 
 ## L7 Proxy
 
-The controller runs an in-process L7 reverse proxy inside the cloudflared process via the `OverrideProxy` hook (using a [fork of cloudflared](https://github.com/lexfrei/cloudflared)). All tunnel traffic is intercepted by the proxy, which applies Gateway API routing rules — hostname, path, header, query and method matching, filters, and weighted backend selection — before forwarding to backends. The Cloudflare Tunnel API configuration is used only for DNS / edge routing; request routing is handled entirely by the proxy, so HTTPRoute features work end-to-end regardless of Cloudflare Tunnel's native capabilities.
+The controller runs an in-process L7 reverse proxy inside the cloudflared process via the `OverrideProxy` hook (using a [fork of cloudflared](https://github.com/lexfrei/cloudflared)). All tunnel traffic is intercepted by the proxy, which applies Gateway API routing rules — hostname, path, header, query and method matching, filters, and weighted backend selection — before forwarding to backends. The tunnel ingress document the controller writes through the Cloudflare API only feeds the Cloudflare dashboard; request routing is handled entirely by the proxy, so HTTPRoute features work end-to-end regardless of Cloudflare Tunnel's native capabilities.
 
 See [L7 Proxy Architecture](https://cf.k8s.lex.la/latest/development/architecture/) for full details.
 
@@ -198,7 +198,6 @@ The L7 proxy handles routing for every tunnel request, so most Gateway API behav
 - Informational `1xx` responses such as `103 Early Hints` are not forwarded through the tunnel; the client gets only the final response.
 - `HTTPRouteRule.name` uniqueness is not enforced at admission; an opt-in `ValidatingAdmissionPolicy` (`ruleNameUniquenessPolicy` Helm value) enforces it.
 - The non-canonical `group: core` is accepted for `backendRef`s and `BackendTLSPolicy` CA refs, and rejected for a Gateway's `clientCertificateRef` and the `ReferenceGrant` authorising it. Write `group: ""`, the spelling the Gateway API defines, and the asymmetry cannot bite.
-- The controller refuses to write a tunnel document above 1000 ingress rules. Rules are counted per hostname and path match rather than per route, and every namespace on a tunnel shares one document, so while the budget is exceeded no new hostname on that tunnel can be programmed.
 - Knative Serving via `net-gateway-api` needs a split-horizon setup — see the [Knative Serving guide](https://cf.k8s.lex.la/latest/guides/knative-serving/) — because its readiness prober dials the Gateway's tunnel address directly, which is not reachable in-cluster.
 
 The proxy can emit a structured per-request access log via `proxy.accessLog.enabled: true`. See [Access Logging](https://cf.k8s.lex.la/latest/operations/access-logging/).

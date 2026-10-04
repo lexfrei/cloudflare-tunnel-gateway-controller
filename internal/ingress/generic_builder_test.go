@@ -1,9 +1,7 @@
 package ingress_test
 
 import (
-	"bytes"
 	"context"
-	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -300,40 +298,4 @@ func TestGenericBuilder_FailedRefsNotDuplicatedPerHostname(t *testing.T) {
 
 	assert.Len(t, result.FailedRefs, 1,
 		"one invalid backendRef on a two-hostname route must be reported exactly once")
-}
-
-// TestGenericBuilder_UnsupportedFeatureWarningsNotGatedOnBackends pins the
-// deliberate logging behaviour of the projection split: unsupported-feature
-// warnings describe the rule's matches, which are ignored by the tunnel
-// ingress regardless of backend resolvability, so they are emitted even for
-// a rule with no resolvable backend (historically they were silently skipped
-// exactly when an operator was debugging such a rule).
-func TestGenericBuilder_UnsupportedFeatureWarningsNotGatedOnBackends(t *testing.T) {
-	t.Parallel()
-
-	var logBuf bytes.Buffer
-
-	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
-
-	builder := ingress.NewGenericBuilder[gatewayv1.HTTPRoute](
-		"cluster.local", nil, nil, nil, logger, ingress.HTTPRouteAdapter{},
-	)
-
-	method := gatewayv1.HTTPMethodPost
-	routes := []gatewayv1.HTTPRoute{{
-		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "default"},
-		Spec: gatewayv1.HTTPRouteSpec{
-			Hostnames: []gatewayv1.Hostname{"app.example.com"},
-			Rules: []gatewayv1.HTTPRouteRule{{
-				// A method match the tunnel ingress cannot express, and NO
-				// backendRefs -- the rule can never resolve a backend.
-				Matches: []gatewayv1.HTTPRouteMatch{{Method: &method}},
-			}},
-		},
-	}}
-
-	builder.Build(context.Background(), routes)
-
-	assert.Contains(t, logBuf.String(), "method matching is not expressible in tunnel ingress rules",
-		"the unsupported-feature warning must be emitted even when the rule has no resolvable backend")
 }

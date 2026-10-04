@@ -402,6 +402,7 @@ func Run(ctx context.Context, cfg *Config) error {
 		baseLogger,
 	)
 	routeSyncer.ViewStore = viewStore
+	routeSyncer.Recorder = mgr.GetEventRecorder("route-syncer")
 	routeSyncer.ProxyConfigAPIPort = cfg.ProxyConfigAPIPort
 
 	if cfg.HostnameOwnershipEnforce {

@@ -673,12 +673,11 @@ func droppedConfigMessage(diagnostics []proxy.RouteDiagnostic, partial bool) str
 	return truncateConditionMessage("Dropped Rule " + strings.Join(idxStrs, ", ") + ": " + detail)
 }
 
-// perParentSyncErr resolves the sync error for a single parentRef. A
-// tunnel-group failure affects only the parents on that tunnel: the global
+// perParentSyncErr resolves the sync error for a single parentRef. The global
 // syncErr (early-error path, before partitioning) applies to every parent,
-// while a per-Gateway error overrides it for that parent only — so a healthy
-// parent of a multi-parent route stays Accepted when a sibling parent's tunnel
-// failed.
+// while a per-Gateway data-plane refusal overrides it for that parent only —
+// so a healthy parent of a multi-parent route stays Accepted when a sibling
+// parent's Gateway is refused.
 func perParentSyncErr(bindingInfo routeBindingInfo, refIdx int, globalErr error) error {
 	gwKey, ok := bindingInfo.parentGateways[refIdx]
 	if !ok {
@@ -953,8 +952,8 @@ func buildFailedRefsMessage(failedRefs []ingress.BackendRefError) string {
 // routeStatusEntry represents a single route that needs status update.
 //
 // Partial-failure isolation (#479) is per parent, not per route: the binding's
-// syncErrByGateway carries the sync error of each parent's tunnel, so a
-// multi-parent route reports Pending only on the parents whose tunnel failed.
+// syncErrByGateway carries each parent's data-plane refusal, so a
+// multi-parent route reports Pending only on the refused parents.
 // The global syncErr below covers the early-error path (sync failed before
 // partitioning), where every parent goes Pending.
 type routeStatusEntry struct {

@@ -4,14 +4,18 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"net/textproto"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -369,6 +373,21 @@ func TestRetry_TunnelMode(t *testing.T) {
 				return backend.URL
 			},
 			contentLength: new(int64(-1)),
+			check: func(t *testing.T, fake *fakeCloudflaredRespWriter) {
+				t.Helper()
+				assert.Equal(t, http.StatusOK, fake.Status())
+				assert.Equal(t, "ok", string(fake.Body()))
+			},
+		},
+		{
+			name: "1xx from an abandoned attempt does not become the status",
+			backend: func(t *testing.T) string {
+				t.Helper()
+
+				// The fake has no 1xx filter of its own, so only the
+				// abandoned attempt sends one.
+				return earlyHintsBackend(t, false).URL
+			},
 			check: func(t *testing.T, fake *fakeCloudflaredRespWriter) {
 				t.Helper()
 				assert.Equal(t, http.StatusOK, fake.Status())
@@ -753,4 +772,343 @@ func TestRetry_FullDuplexUploadSurvivesEarlyAnswer(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	assert.Equal(t, int64(size), received.Load(), "the backend must receive the whole upload")
 	assert.Equal(t, size, rec.Body.Len(), "the echoed response must reach the client whole")
+}
+
+// TestRetry_MislengthBodyFailsBeforeAnyAttempt pins that a body whose length
+// differs from its declared Content-Length is refused up front: every attempt
+// would fail the same length check, so retrying it only multiplies backend
+// load.
+func TestRetry_MislengthBodyFailsBeforeAnyAttempt(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		contentLength int64
+	}{
+		{name: "body longer than declared", contentLength: 3},
+		{name: "body shorter than declared", contentLength: 10},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// The transport fails the length check after sending the request
+			// head, often before the backend dispatches it, so attempts are
+			// counted as connections rather than handler hits.
+			var conns atomic.Int32
+
+			backend := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+				_, _ = io.Copy(io.Discard, req.Body)
+				writer.WriteHeader(http.StatusInternalServerError)
+			}))
+			backend.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+				if state == http.StateNew {
+					conns.Add(1)
+				}
+			}
+			backend.Start()
+			t.Cleanup(backend.Close)
+
+			handler := retryHandler(t, backend.URL, &proxy.RouteRetry{Codes: []int{500}, Attempts: 2}, nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://app.example.com/", strings.NewReader("payload"))
+			req.ContentLength = tt.contentLength
+
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusBadGateway, rec.Code)
+			assert.Zero(t, conns.Load(), "a body that does not match its length must not reach the backend")
+		})
+	}
+}
+
+func TestRetry_RetriesAreCounted(t *testing.T) {
+	t.Parallel()
+
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closed.Close()
+
+	failing, _ := failingBackend(t, 2, http.StatusInternalServerError)
+
+	tests := []struct {
+		name       string
+		backendURL string
+		reason     string
+	}{
+		{name: "listed status code", backendURL: failing.URL, reason: "status"},
+		{name: "transport error", backendURL: closed.URL, reason: "dial"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			reg := prometheus.NewRegistry()
+			router := proxy.NewRouter()
+			handler := proxy.NewHandler(router, proxy.WithMetrics(proxy.NewMetrics(reg)))
+			require.NoError(t, router.UpdateConfig(&proxy.Config{
+				Version: 1,
+				Rules: []proxy.RouteRule{{
+					Hostnames: []string{"app.example.com"},
+					Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+					Backends:  []proxy.BackendRef{{URL: tt.backendURL, Weight: 1, Protocol: proxy.BackendProtocolHTTP}},
+					Retry:     &proxy.RouteRetry{Codes: []int{500}, Attempts: 2},
+				}},
+			}))
+
+			serve(handler, http.MethodGet, "")
+
+			assert.InDelta(t, 2, gatherValue(t, reg, "cftunnel_proxy_backend_retries_total",
+				map[string]string{"hostname": "app.example.com", "reason": tt.reason}), 0)
+		})
+	}
+}
+
+// earlyHintsBackend answers 500 to the first attempt and 200 "ok" after that,
+// preceded by 103 Early Hints carrying "Link: </attempt-N>" on the first
+// attempt, and on later ones too when hintEvery is set.
+func earlyHintsBackend(t *testing.T, hintEvery bool) *httptest.Server {
+	t.Helper()
+
+	var hits atomic.Int32
+
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		hit := hits.Add(1)
+
+		if hit == 1 || hintEvery {
+			writer.Header().Set("Link", fmt.Sprintf("</attempt-%d>", hit))
+			writer.WriteHeader(http.StatusEarlyHints)
+			writer.Header().Del("Link")
+		}
+
+		if hit == 1 {
+			writer.WriteHeader(http.StatusInternalServerError)
+
+			return
+		}
+
+		_, _ = io.WriteString(writer, "ok")
+	}))
+	t.Cleanup(backend.Close)
+
+	return backend
+}
+
+func TestRetry_InformationalFromAbandonedAttemptIsDropped(t *testing.T) {
+	t.Parallel()
+
+	handler := retryHandler(t, earlyHintsBackend(t, true).URL, &proxy.RouteRetry{Codes: []int{500}, Attempts: 1}, nil)
+	front := httptest.NewServer(handler)
+	t.Cleanup(front.Close)
+
+	var (
+		mu    sync.Mutex
+		hints []string
+	)
+
+	ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{
+		Got1xxResponse: func(code int, header textproto.MIMEHeader) error {
+			mu.Lock()
+			defer mu.Unlock()
+
+			hints = append(hints, fmt.Sprintf("%d %s", code, header.Get("Link")))
+
+			return nil
+		},
+	})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, front.URL, nil)
+	require.NoError(t, err)
+
+	resp, err := front.Client().Do(req)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, []string{"103 </attempt-2>"}, hints, "only the answering attempt's hints may reach the client")
+}
+
+// TestRetry_ResetAfterHeadWithOpenStreamIsRetried covers a tunnel GET whose
+// stream is still open when the backend drops the connection after reading
+// the request head. The transport returns only once its probe read of the
+// body ends, so the empty stream the edge then closes is replayed.
+func TestRetry_ResetAfterHeadWithOpenStreamIsRetried(t *testing.T) {
+	t.Parallel()
+
+	var hits atomic.Int32
+
+	firstHit := make(chan struct{})
+
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		if hits.Add(1) == 1 {
+			conn, _, err := http.NewResponseController(writer).Hijack()
+			if err == nil {
+				_ = conn.Close()
+			}
+
+			close(firstHit)
+
+			return
+		}
+
+		_, _ = io.WriteString(writer, "ok")
+	}))
+	t.Cleanup(backend.Close)
+
+	handler := retryHandler(t, backend.URL, &proxy.RouteRetry{Attempts: 1}, nil)
+
+	bodyReader, bodyWriter := io.Pipe()
+	t.Cleanup(func() { _ = bodyWriter.Close() })
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", bodyReader)
+	req.ContentLength = -1
+
+	fake := newFakeCloudflaredRespWriter()
+	t.Cleanup(func() {
+		_ = fake.serverSide.Close()
+		_ = fake.clientSide.Close()
+	})
+
+	go func() {
+		<-firstHit
+		time.Sleep(300 * time.Millisecond)
+
+		_ = bodyWriter.Close()
+	}()
+
+	handler.ServeHTTP(fake, req)
+
+	assert.Equal(t, http.StatusOK, fake.Status())
+	assert.Equal(t, "ok", string(fake.Body()))
+	assert.Equal(t, int32(2), hits.Load())
+}
+
+// TestRetry_AttemptsThatAreNotRetriedAreNotCounted pins that the retry counter
+// moves only when another attempt is actually made: an attempt cut short by
+// the client leaving or by timeouts.request also fails with an error, which
+// the policy would otherwise retry.
+func TestRetry_AttemptsThatAreNotRetriedAreNotCounted(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		timeouts   *proxy.RouteTimeouts
+		cancel     bool
+		wantStatus int
+	}{
+		{name: "client went away", cancel: true},
+		{name: "request timeout ran out", timeouts: &proxy.RouteTimeouts{Request: 100 * time.Millisecond}, wantStatus: http.StatusGatewayTimeout},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			arrived := make(chan struct{}, 1)
+			backend := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+				arrived <- struct{}{}
+				<-req.Context().Done()
+			}))
+			t.Cleanup(backend.Close)
+
+			reg := prometheus.NewRegistry()
+			router := proxy.NewRouter()
+			handler := proxy.NewHandler(router, proxy.WithMetrics(proxy.NewMetrics(reg)))
+			require.NoError(t, router.UpdateConfig(&proxy.Config{
+				Version: 1,
+				Rules: []proxy.RouteRule{{
+					Hostnames: []string{"app.example.com"},
+					Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+					Backends:  []proxy.BackendRef{{URL: backend.URL, Weight: 1, Protocol: proxy.BackendProtocolHTTP}},
+					Retry:     &proxy.RouteRetry{Attempts: 2},
+					Timeouts:  tt.timeouts,
+				}},
+			}))
+
+			ctx, cancel := context.WithCancel(t.Context())
+			t.Cleanup(cancel)
+
+			if tt.cancel {
+				go func() {
+					<-arrived
+					cancel()
+				}()
+			}
+
+			req := httptest.NewRequestWithContext(ctx, http.MethodGet, "http://app.example.com/", nil)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if tt.wantStatus != 0 {
+				assert.Equal(t, tt.wantStatus, rec.Code)
+			}
+
+			families, err := reg.Gather()
+			require.NoError(t, err)
+
+			for _, family := range families {
+				assert.NotEqual(t, "cftunnel_proxy_backend_retries_total", family.GetName(),
+					"no retry was made, so no retry series may exist")
+			}
+		})
+	}
+}
+
+// TestRetry_LastAttemptForwardsInformationalAtOnce pins that holding 1xx
+// responses stops at the last allowed attempt: nothing can replace it, so a
+// 103 Early Hints goes out as it arrives, ahead of a slow final response.
+func TestRetry_LastAttemptForwardsInformationalAtOnce(t *testing.T) {
+	t.Parallel()
+
+	const finalDelay = 300 * time.Millisecond
+
+	var hits atomic.Int32
+
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		if hits.Add(1) == 1 {
+			writer.WriteHeader(http.StatusInternalServerError)
+
+			return
+		}
+
+		writer.Header().Set("Link", "</hint>")
+		writer.WriteHeader(http.StatusEarlyHints)
+		writer.Header().Del("Link")
+		time.Sleep(finalDelay)
+		_, _ = io.WriteString(writer, "ok")
+	}))
+	t.Cleanup(backend.Close)
+
+	front := httptest.NewServer(retryHandler(t, backend.URL, &proxy.RouteRetry{Codes: []int{500}, Attempts: 1}, nil))
+	t.Cleanup(front.Close)
+
+	var hintAt atomic.Int64
+
+	ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{
+		Got1xxResponse: func(int, textproto.MIMEHeader) error {
+			hintAt.Store(time.Now().UnixNano())
+
+			return nil
+		},
+	})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, front.URL, nil)
+	require.NoError(t, err)
+
+	resp, err := front.Client().Do(req)
+	require.NoError(t, err)
+
+	headersAt := time.Now()
+
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NotZero(t, hintAt.Load(), "the hint must reach the client")
+	assert.GreaterOrEqual(t, headersAt.Sub(time.Unix(0, hintAt.Load())), finalDelay/2,
+		"the hint must arrive well before the final response")
 }

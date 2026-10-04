@@ -2,7 +2,6 @@ package ingress_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,48 +12,12 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 )
 
-func TestBuild_WarnMultipleBackendRefs(t *testing.T) {
-	t.Parallel()
-
-	logger, buf := logging.TestLogger(t)
-	builder := ingress.NewBuilder("cluster.local", nil, nil, nil, logger)
-	routes := []gatewayv1.HTTPRoute{
-		{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-route",
-				Namespace: "default",
-			},
-			Spec: gatewayv1.HTTPRouteSpec{
-				Hostnames: []gatewayv1.Hostname{"app.example.com"},
-				Rules: []gatewayv1.HTTPRouteRule{
-					{
-						BackendRefs: []gatewayv1.HTTPBackendRef{
-							newHTTPBackendRefWithWeight("service1", nil, int32Ptr(8080)),
-							newHTTPBackendRefWithWeight("service2", nil, int32Ptr(8080)),
-							newHTTPBackendRefWithWeight("service3", nil, int32Ptr(8080)),
-						},
-					},
-				},
-			},
-		},
-	}
-
-	_ = builder.Build(context.Background(), routes)
-
-	logs := buf.String()
-	assert.Contains(t, logs, "cloudflare tunnel ingress document reduced")
-	assert.Contains(t, logs, `"route":"default/test-route"`)
-	assert.Contains(t, logs, "uses only the highest-weight backend URL")
-	assert.Contains(t, logs, `"total_backends":3`)
-	assert.Contains(t, logs, `"additional_backends":2`)
-}
-
 // TestBuild_WeightedBackendRefsNoWeightWarning pins the fix for the
 // misleading "backendRef weight ignored, traffic splitting not supported"
 // log: weight is fully honored end-to-end by the in-process L7 proxy
 // (weighted-random selection across all backendRefs), so the Cloudflare-side
-// ingress builder — which only programs DNS/edge routing and never serves
-// traffic itself — must not claim weight is ignored or that traffic
+// ingress builder — whose document only feeds the Cloudflare dashboard and
+// never serves traffic itself — must not claim weight is ignored or that traffic
 // splitting is unsupported.
 func TestBuild_WeightedBackendRefsNoWeightWarning(t *testing.T) {
 	t.Parallel()
@@ -87,12 +50,7 @@ func TestBuild_WeightedBackendRefsNoWeightWarning(t *testing.T) {
 	_ = builder.Build(context.Background(), routes)
 
 	logs := buf.String()
-	assert.NotContains(t, logs, "backendRef weight ignored")
-	assert.NotContains(t, logs, "traffic splitting not supported")
-	// Multiple backendRefs still legitimately reduces to one Cloudflare-side
-	// ingress URL, which stays a genuine (and separately logged) fact about
-	// that document — untouched by this fix.
-	assert.Contains(t, logs, "uses only the highest-weight backend URL")
+	assert.Empty(t, logs, "weighted backends are served by the proxy and must not warn")
 }
 
 // TestBuild_SingleWeightedBackendRefNoWarnings reproduces the exact report
@@ -133,242 +91,7 @@ func TestBuild_SingleWeightedBackendRefNoWarnings(t *testing.T) {
 	assert.Empty(t, logs, "a single weighted backendRef involves no splitting and must not warn")
 }
 
-func TestBuild_WarnHeaderMatching(t *testing.T) {
-	t.Parallel()
-
-	logger, buf := logging.TestLogger(t)
-	builder := ingress.NewBuilder("cluster.local", nil, nil, nil, logger)
-	headerType := gatewayv1.HeaderMatchExact
-
-	routes := []gatewayv1.HTTPRoute{
-		{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "header-route",
-				Namespace: "default",
-			},
-			Spec: gatewayv1.HTTPRouteSpec{
-				Hostnames: []gatewayv1.Hostname{"app.example.com"},
-				Rules: []gatewayv1.HTTPRouteRule{
-					{
-						Matches: []gatewayv1.HTTPRouteMatch{
-							{
-								Headers: []gatewayv1.HTTPHeaderMatch{
-									{
-										Type:  &headerType,
-										Name:  "X-Custom-Header",
-										Value: "custom-value",
-									},
-									{
-										Type:  &headerType,
-										Name:  "Authorization",
-										Value: "Bearer token",
-									},
-								},
-							},
-						},
-						BackendRefs: []gatewayv1.HTTPBackendRef{
-							newHTTPBackendRefWithWeight("service1", nil, int32Ptr(8080)),
-						},
-					},
-				},
-			},
-		},
-	}
-
-	_ = builder.Build(context.Background(), routes)
-
-	logs := buf.String()
-	assert.Contains(t, logs, "cloudflare tunnel ingress document reduced")
-	assert.Contains(t, logs, `"route":"default/header-route"`)
-	assert.Contains(t, logs, "header matching is not expressible")
-	assert.Contains(t, logs, `"header_matches":2`)
-}
-
-func TestBuild_WarnQueryParamMatching(t *testing.T) {
-	t.Parallel()
-
-	logger, buf := logging.TestLogger(t)
-	builder := ingress.NewBuilder("cluster.local", nil, nil, nil, logger)
-	queryType := gatewayv1.QueryParamMatchExact
-
-	routes := []gatewayv1.HTTPRoute{
-		{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "query-route",
-				Namespace: "default",
-			},
-			Spec: gatewayv1.HTTPRouteSpec{
-				Hostnames: []gatewayv1.Hostname{"app.example.com"},
-				Rules: []gatewayv1.HTTPRouteRule{
-					{
-						Matches: []gatewayv1.HTTPRouteMatch{
-							{
-								QueryParams: []gatewayv1.HTTPQueryParamMatch{
-									{
-										Type:  &queryType,
-										Name:  "version",
-										Value: "v2",
-									},
-								},
-							},
-						},
-						BackendRefs: []gatewayv1.HTTPBackendRef{
-							newHTTPBackendRefWithWeight("service1", nil, int32Ptr(8080)),
-						},
-					},
-				},
-			},
-		},
-	}
-
-	_ = builder.Build(context.Background(), routes)
-
-	logs := buf.String()
-	assert.Contains(t, logs, "cloudflare tunnel ingress document reduced")
-	assert.Contains(t, logs, `"route":"default/query-route"`)
-	assert.Contains(t, logs, "query parameter matching is not expressible")
-	assert.Contains(t, logs, `"query_param_matches":1`)
-}
-
-func TestBuild_WarnMethodMatching(t *testing.T) {
-	t.Parallel()
-
-	logger, buf := logging.TestLogger(t)
-	builder := ingress.NewBuilder("cluster.local", nil, nil, nil, logger)
-	method := gatewayv1.HTTPMethodPost
-
-	routes := []gatewayv1.HTTPRoute{
-		{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "method-route",
-				Namespace: "default",
-			},
-			Spec: gatewayv1.HTTPRouteSpec{
-				Hostnames: []gatewayv1.Hostname{"app.example.com"},
-				Rules: []gatewayv1.HTTPRouteRule{
-					{
-						Matches: []gatewayv1.HTTPRouteMatch{
-							{
-								Method: &method,
-							},
-						},
-						BackendRefs: []gatewayv1.HTTPBackendRef{
-							newHTTPBackendRefWithWeight("service1", nil, int32Ptr(8080)),
-						},
-					},
-				},
-			},
-		},
-	}
-
-	_ = builder.Build(context.Background(), routes)
-
-	logs := buf.String()
-	assert.Contains(t, logs, "cloudflare tunnel ingress document reduced")
-	assert.Contains(t, logs, `"route":"default/method-route"`)
-	assert.Contains(t, logs, "method matching is not expressible")
-	assert.Contains(t, logs, `"method":"POST"`)
-}
-
-func TestBuild_WarnRegularExpressionPath(t *testing.T) {
-	t.Parallel()
-
-	logger, buf := logging.TestLogger(t)
-	builder := ingress.NewBuilder("cluster.local", nil, nil, nil, logger)
-	pathType := gatewayv1.PathMatchRegularExpression
-	pathValue := "/api/v[0-9]+/.*"
-
-	routes := []gatewayv1.HTTPRoute{
-		{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "regex-route",
-				Namespace: "default",
-			},
-			Spec: gatewayv1.HTTPRouteSpec{
-				Hostnames: []gatewayv1.Hostname{"app.example.com"},
-				Rules: []gatewayv1.HTTPRouteRule{
-					{
-						Matches: []gatewayv1.HTTPRouteMatch{
-							{
-								Path: &gatewayv1.HTTPPathMatch{
-									Type:  &pathType,
-									Value: &pathValue,
-								},
-							},
-						},
-						BackendRefs: []gatewayv1.HTTPBackendRef{
-							newHTTPBackendRefWithWeight("service1", nil, int32Ptr(8080)),
-						},
-					},
-				},
-			},
-		},
-	}
-
-	_ = builder.Build(context.Background(), routes)
-
-	logs := buf.String()
-	assert.Contains(t, logs, "cloudflare tunnel ingress document reduced")
-	assert.Contains(t, logs, `"route":"default/regex-route"`)
-	assert.Contains(t, logs, "in-process proxy applies the regex match")
-	assert.Contains(t, logs, `"path":"/api/v[0-9]+/.*"`)
-}
-
-func TestBuild_WarnFilters(t *testing.T) {
-	t.Parallel()
-
-	logger, buf := logging.TestLogger(t)
-	builder := ingress.NewBuilder("cluster.local", nil, nil, nil, logger)
-	filterType := gatewayv1.HTTPRouteFilterRequestHeaderModifier
-
-	routes := []gatewayv1.HTTPRoute{
-		{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "filter-route",
-				Namespace: "default",
-			},
-			Spec: gatewayv1.HTTPRouteSpec{
-				Hostnames: []gatewayv1.Hostname{"app.example.com"},
-				Rules: []gatewayv1.HTTPRouteRule{
-					{
-						Filters: []gatewayv1.HTTPRouteFilter{
-							{
-								Type: filterType,
-								RequestHeaderModifier: &gatewayv1.HTTPHeaderFilter{
-									Set: []gatewayv1.HTTPHeader{
-										{
-											Name:  "X-Custom-Header",
-											Value: "value",
-										},
-									},
-								},
-							},
-							{
-								Type: gatewayv1.HTTPRouteFilterRequestRedirect,
-								RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
-									Hostname: preciseHostnamePtr("redirect.example.com"),
-								},
-							},
-						},
-						BackendRefs: []gatewayv1.HTTPBackendRef{
-							newHTTPBackendRefWithWeight("service1", nil, int32Ptr(8080)),
-						},
-					},
-				},
-			},
-		},
-	}
-
-	_ = builder.Build(context.Background(), routes)
-
-	logs := buf.String()
-	assert.Contains(t, logs, "cloudflare tunnel ingress document reduced")
-	assert.Contains(t, logs, `"route":"default/filter-route"`)
-	assert.Contains(t, logs, "filters are not expressible")
-	assert.Contains(t, logs, `"filters":2`)
-}
-
-func TestBuild_MultipleWarnings(t *testing.T) {
+func TestBuild_ProxyOnlyFeaturesAreNotLogged(t *testing.T) {
 	t.Parallel()
 
 	logger, buf := logging.TestLogger(t)
@@ -411,15 +134,9 @@ func TestBuild_MultipleWarnings(t *testing.T) {
 
 	_ = builder.Build(context.Background(), routes)
 
-	logs := buf.String()
-	// Should have warnings for: multiple backends, method, headers.
-	// Weight itself is fully honored by the L7 proxy and never warned about.
-	assert.Contains(t, logs, "uses only the highest-weight backend URL")
-	assert.NotContains(t, logs, "backendRef weight ignored")
-	assert.Contains(t, logs, "method matching is not expressible")
-	assert.Contains(t, logs, "header matching is not expressible")
-	// All warnings should reference the same route
-	assert.GreaterOrEqual(t, strings.Count(logs, `"route":"default/complex-route"`), 3)
+	// The document carries hostnames only, so nothing a route can declare is
+	// a reduction of it worth logging.
+	assert.Empty(t, buf.String())
 }
 
 func TestBuild_NoWarningsForValidConfig(t *testing.T) {
@@ -479,10 +196,4 @@ func newHTTPBackendRefWithWeight(name string, weight *int32, port *int32) gatewa
 	}
 
 	return ref
-}
-
-// preciseHostnamePtr converts string to *gatewayv1.PreciseHostname.
-func preciseHostnamePtr(s string) *gatewayv1.PreciseHostname {
-	h := gatewayv1.PreciseHostname(s)
-	return &h
 }

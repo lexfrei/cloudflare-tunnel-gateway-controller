@@ -4,12 +4,13 @@
 // # Overview
 //
 // The Builder type converts a list of HTTPRoute resources into Cloudflare
-// tunnel ingress rules. It handles:
+// tunnel ingress rules, one per distinct hostname. The in-process proxy
+// receives every tunnel request and does all path and match handling, so no
+// rule carries a path. It handles:
 //
 //   - Hostname extraction from HTTPRoute.spec.hostnames
-//   - Path matching (Exact and PathPrefix types)
 //   - Backend service resolution to cluster-internal URLs
-//   - Rule ordering by priority and path specificity
+//   - One rule per hostname, naming the smallest backend URL serving it
 //
 // # Diff-based Synchronization
 //
@@ -22,16 +23,6 @@
 //
 // This approach only adds new rules and removes orphaned rules,
 // rather than replacing the entire configuration.
-//
-// # Path Matching
-//
-// The builder supports two path match types as defined by Gateway API:
-//
-//   - PathMatchExact: Matches the path exactly (priority 1)
-//   - PathMatchPathPrefix: Matches paths with the given prefix (priority 0)
-//
-// Rules are sorted by hostname, then by priority (exact matches first),
-// then by path length (longer paths first for prefix matches).
 //
 // # Service Resolution
 //

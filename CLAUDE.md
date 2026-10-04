@@ -101,7 +101,7 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 
 - **internal/config/resolver.go**: Resolves GatewayClassConfig from GatewayClass parametersRef, reads credentials from Secrets, auto-detects account ID via Cloudflare API.
 
-- **internal/ingress/builder.go**: Converts HTTPRoute specs to Cloudflare tunnel ingress rules. Handles hostnames, path matching (prefix/exact), backend service resolution.
+- **internal/ingress/builder.go**: Converts HTTPRoute specs to Cloudflare tunnel ingress rules, one per distinct hostname (the proxy does all path matching). Handles backend service resolution.
 
 - **internal/dns/detect.go**: Auto-detects Kubernetes cluster domain from `/etc/resolv.conf` search domains.
 
@@ -143,7 +143,7 @@ The project uses a fork of cloudflared: `github.com/lexfrei/cloudflared` (via `r
 
 **Why:** The v2 in-process proxy needs to inject a custom `OriginProxy` into cloudflared's `Orchestrator`. Upstream cloudflared doesn't expose this capability, so the fork adds an `OverrideProxy` field to `Orchestrator` and modifies `GetOriginProxy()` to return it when set.
 
-**Key architectural consequence:** Because the proxy hooks into cloudflared at the `OriginProxy` layer, ALL tunnel traffic flows through our in-process L7 proxy and bypasses cloudflared's native ingress rules. The Cloudflare-side tunnel API config (Cloudflare ingress rules) only serves DNS / edge routing purposes — actual L7 routing, hostname matching, path matching, filters etc. are all done by the in-cluster proxy. This means features like wildcard routes, regex path matching, and CORS work end-to-end regardless of what the Cloudflare Tunnel API itself supports.
+**Key architectural consequence:** Because the proxy hooks into cloudflared at the `OriginProxy` layer, ALL tunnel traffic flows through our in-process L7 proxy and bypasses cloudflared's native ingress rules. The Cloudflare-side tunnel API config (Cloudflare ingress rules) only feeds the Cloudflare dashboard: the edge reaches the tunnel through the hostname's DNS record, whether or not the document lists it, so a failed document write never touches route status — actual L7 routing, hostname matching, path matching, filters etc. are all done by the in-cluster proxy. This means features like wildcard routes, regex path matching, and CORS work end-to-end regardless of what the Cloudflare Tunnel API itself supports.
 
 **Fork maintenance:**
 

@@ -522,7 +522,7 @@ func TestDataPlaneQuotaWordingIsShared(t *testing.T) {
 
 	infra := &infraGateways{overQuota: map[string]int32{"team-a/gw": 1}}
 
-	routeErr := gatewaySyncError("team-a/gw", map[string]error{}, infra)
+	routeErr := gatewayPlaneError("team-a/gw", infra)
 	require.Error(t, routeErr)
 
 	limit := dataPlaneQuotaLimit(1)
