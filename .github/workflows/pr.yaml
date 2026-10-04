@@ -75,6 +75,15 @@ jobs:
             go.sum
             hack/tools/go.sum
 
+      # Nothing else fails on a requirement that is unused or in the wrong
+      # require block; the drift surfaces later as an unrelated diff.
+      - name: Verify go.mod and go.sum are tidy
+        run: |
+          set -euo pipefail
+          go mod tidy -diff
+          cd hack/tools
+          go mod tidy -diff
+
       # go.sum pins module zips, not the vendored copies, so no other check
       # notices a hand-edit under vendor/ or a go.mod change that was never
       # re-vendored. Re-vendor in place and let git report the difference;
