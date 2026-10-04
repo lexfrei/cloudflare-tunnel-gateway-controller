@@ -410,8 +410,6 @@ func (r *GatewayReconciler) handleResolveError(
 	// would misreport a healthy Gateway and, on the shared plane, clear the
 	// address external-dns publishes, dropping DNS for every hostname on it.
 	// Propagate for backoff instead and leave the last written status standing.
-	// The per-Gateway resolver still marks some class-chain read failures as
-	// ErrInvalidParameters; issue #896 tracks that.
 	if !errors.Is(err, config.ErrInvalidParameters) {
 		return ctrl.Result{}, err
 	}
@@ -1371,6 +1369,8 @@ func (r *GatewayReconciler) getAllManagedGateways(ctx context.Context) []reconci
 
 	err := r.List(ctx, &gatewayList)
 	if err != nil {
+		logging.FromContext(ctx).Warn("failed to list Gateways in getAllManagedGateways", "error", err)
+
 		return nil
 	}
 

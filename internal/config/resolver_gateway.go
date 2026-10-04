@@ -356,38 +356,12 @@ func (r *Resolver) resolveGatewayAPIToken(
 
 	classResolved, err := r.ResolveFromGatewayClassName(ctx, string(gateway.Spec.GatewayClassName))
 	if err != nil {
-		// Already classified and named after its GatewayClass: keep that, so
-		// the message does not blame the Gateway's infrastructure ref.
-		if errors.Is(err, ErrInvalidParameters) {
-			return "", errors.Wrap(err, "resolving class credentials for per-Gateway data plane")
-		}
-
-		// What reaches here is an unclassified read failure. Retryable
-		// apiserver failures (timeout, throttling, 5xx) keep backing off
-		// without stamping the Gateway; any other, such as Forbidden, is still
-		// stamped ErrInvalidParameters, although it says nothing about the
-		// spec. Issue #896 tracks that. ResolveFromGatewayClassName only reads
-		// Kubernetes objects on this token-only path, so the retryable arm is
-		// purely about transient apiserver reads.
-		if isRetryableAPIError(err) {
-			return "", errors.Wrap(err, "resolving class credentials for per-Gateway data plane")
-		}
-
-		return "", errors.Wrapf(ErrInvalidParameters,
-			"class credentials for per-Gateway data plane: %v", err)
+		// The class chain has classified the error and named the class; a
+		// second classification here would blame the Gateway's own ref.
+		return "", errors.Wrap(err, "resolving class credentials for per-Gateway data plane")
 	}
 
 	return classResolved.APIToken, nil
-}
-
-// isRetryableAPIError reports whether err is a transient apiserver failure that
-// warrants backoff rather than a deterministic, user-fixable config error.
-func isRetryableAPIError(err error) bool {
-	return apierrors.IsServerTimeout(err) ||
-		apierrors.IsTimeout(err) ||
-		apierrors.IsTooManyRequests(err) ||
-		apierrors.IsInternalError(err) ||
-		apierrors.IsServiceUnavailable(err)
 }
 
 // readCredentialOverride fetches the GatewayConfig-level Cloudflare API

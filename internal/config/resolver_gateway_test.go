@@ -610,10 +610,8 @@ func TestHasInfrastructureParametersRef(t *testing.T) {
 
 // errTransientAPIServer simulates an infrastructure failure (apiserver
 // timeout, throttling) — NOT a user-fixable referent problem. It is a real
-// apimachinery StatusError (Reason=Timeout) rather than a bare error, because
-// the class-credential fallback path classifies retryability via
-// apierrors.Is* predicates: a bare error there would be misread as a permanent
-// config problem, which is not what a genuine apiserver timeout is.
+// apimachinery StatusError (Reason=Timeout), the shape a genuine apiserver
+// timeout has.
 var errTransientAPIServer = apierrors.NewTimeoutError("apiserver timeout", 1)
 
 // errRBACDenied is the static cause for the synthetic Forbidden Secret-read
@@ -646,8 +644,7 @@ func TestResolveForGateway_TransientErrorsAreNotInvalidParameters(t *testing.T) 
 		// The class-credential API-token fallback (gwConfig sets no
 		// CloudflareCredentialsSecretRef override) reads the GatewayClass →
 		// GatewayClassConfig → class-credentials Secret chain. A transient
-		// failure on any link must propagate as retryable, exercising the
-		// isRetryableAPIError arm in resolveGatewayAPIToken rather than being
+		// failure on any link must propagate as retryable rather than being
 		// misclassified as a permanent InvalidParameters.
 		{name: "transient GatewayClass read failure", failOn: "cloudflare-tunnel"},
 		{name: "transient GatewayClassConfig read failure", failOn: "class-config"},
@@ -786,4 +783,67 @@ func TestResolveForGateway_ForbiddenTokenSecretIsRetryable(t *testing.T) {
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, config.ErrInvalidParameters,
 		"an RBAC denial is an operator problem, not a tenant-fixable spec error — retry, don't stamp the Gateway")
+}
+
+// TestClassChainReadErrors_SameClassificationOnBothPaths pins one rule for a
+// failed read in the GatewayClass chain, whether a shared-plane Gateway or a
+// per-Gateway data plane resolves it: a referent that does not exist is
+// ErrInvalidParameters, and any other read error, Forbidden included, is
+// retried rather than stamped on the Gateway.
+func TestClassChainReadErrors_SameClassificationOnBothPaths(t *testing.T) {
+	t.Parallel()
+
+	secrets := schema.GroupResource{Resource: "secrets"}
+
+	tests := []struct {
+		name        string
+		readErr     error
+		wantInvalid bool
+	}{
+		{name: "not found", readErr: apierrors.NewNotFound(secrets, "class-credentials"), wantInvalid: true},
+		{name: "forbidden", readErr: apierrors.NewForbidden(secrets, "class-credentials", errRBACDenied)},
+		{name: "unauthorized", readErr: apierrors.NewUnauthorized("expired")},
+		{name: "timeout", readErr: errTransientAPIServer},
+		{name: "plain error", readErr: errRBACDenied},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gwConfig := &v1alpha1.GatewayConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: testGwNamespace},
+				Spec: v1alpha1.GatewayConfigSpec{
+					TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "edge-tunnel-token"},
+				},
+			}
+
+			builder := fake.NewClientBuilder().WithScheme(perGatewayScheme(t))
+			for _, obj := range append(classFixtures(), gwConfig, tokenSecret(t)) {
+				builder = builder.WithRuntimeObjects(obj)
+			}
+
+			builder = builder.WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(ctx context.Context, cli client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if key.Name == "class-credentials" {
+						return tt.readErr
+					}
+
+					return cli.Get(ctx, key, obj, opts...)
+				},
+			})
+
+			resolver := config.NewResolver(builder.Build(), "cf-system", cfmetrics.NewNoopCollector())
+
+			_, sharedErr := resolver.ResolveFromGatewayClassName(context.Background(), "cloudflare-tunnel")
+			_, perGatewayErr := resolver.ResolveForGateway(context.Background(),
+				gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"))
+
+			for path, err := range map[string]error{"shared": sharedErr, "per-Gateway": perGatewayErr} {
+				require.Error(t, err, path)
+				assert.Equal(t, tt.wantInvalid, errors.Is(err, config.ErrInvalidParameters), path)
+				assert.Contains(t, err.Error(), `GatewayClass "cloudflare-tunnel"`, path)
+			}
+		})
+	}
 }
