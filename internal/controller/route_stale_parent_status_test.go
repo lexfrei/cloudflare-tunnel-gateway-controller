@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -417,4 +418,76 @@ func TestFindRoutesForGateway_ListenerSetListErrorKeepsDirectRoutes(t *testing.T
 	requests := FindRoutesForGateway(context.Background(), cli, &gateway, staleStatusController, routes)
 	require.Len(t, requests, 1)
 	assert.Equal(t, "direct", requests[0].Name)
+}
+
+// TestGatewayClassDelete_ReleasesOwnParentStatus pins that deleting a class of
+// ours releases the status entries its routes carry: once the class is gone no
+// route is accepted any more, so the class event has to reach the routes
+// through their status. A route whose status this controller never wrote is
+// not enqueued.
+func TestGatewayClassDelete_ReleasesOwnParentStatus(t *testing.T) {
+	t.Parallel()
+
+	refs := []gatewayv1.ParentReference{{Name: "own-gw"}}
+	route := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "default"},
+		Spec:       gatewayv1.HTTPRouteSpec{CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: refs}},
+		Status:     gatewayv1.HTTPRouteStatus{RouteStatus: staleParentStatus()},
+	}
+	untouched := &gatewayv1.HTTPRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "untouched", Namespace: "default"},
+		Spec:       gatewayv1.HTTPRouteSpec{CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: refs}},
+	}
+	ownGateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "own-gw", Namespace: "default"},
+		Spec:       gatewayv1.GatewaySpec{GatewayClassName: "own-class"},
+	}
+	deletedClass := &gatewayv1.GatewayClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "own-class"},
+		Spec:       gatewayv1.GatewayClassSpec{ControllerName: staleStatusController},
+	}
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+
+	cli := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(ownGateway, route, untouched).
+		WithStatusSubresource(&gatewayv1.HTTPRoute{}).
+		Build()
+
+	reconciler := &HTTPRouteReconciler{Client: cli, ControllerName: staleStatusController}
+	reconciler.startupComplete.Store(true)
+
+	noneAccepted := func(context.Context) []reconcile.Request { return nil }
+	requests := ownClassRoutes(staleStatusController, noneAccepted, reconciler.routesHoldingOwnStatus)(
+		context.Background(), deletedClass)
+	require.Equal(t, []reconcile.Request{{NamespacedName: types.NamespacedName{Name: "r", Namespace: "default"}}}, requests)
+
+	_, err := reconciler.Reconcile(context.Background(), requests[0])
+	require.NoError(t, err)
+
+	var updated gatewayv1.HTTPRoute
+	require.NoError(t, cli.Get(context.Background(), requests[0].NamespacedName, &updated))
+	assert.Empty(t, ownParentEntries(updated.Status.Parents))
+}
+
+// TestGRPCRouteReconciler_RoutesHoldingOwnStatus pins the GRPCRoute side of
+// the lookup the class watch uses.
+func TestGRPCRouteReconciler_RoutesHoldingOwnStatus(t *testing.T) {
+	t.Parallel()
+
+	withStatus := &gatewayv1.GRPCRoute{
+		ObjectMeta: metav1.ObjectMeta{Name: "with-status", Namespace: "default"},
+		Status:     gatewayv1.GRPCRouteStatus{RouteStatus: staleParentStatus()},
+	}
+	without := &gatewayv1.GRPCRoute{ObjectMeta: metav1.ObjectMeta{Name: "without", Namespace: "default"}}
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, gatewayv1.Install(scheme))
+
+	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(withStatus, without).Build()
+	reconciler := &GRPCRouteReconciler{Client: cli, ControllerName: staleStatusController}
+
+	assert.Equal(t, []reconcile.Request{{NamespacedName: types.NamespacedName{Name: "with-status", Namespace: "default"}}},
+		reconciler.routesHoldingOwnStatus(context.Background()))
 }

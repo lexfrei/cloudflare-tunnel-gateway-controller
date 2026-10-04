@@ -16,13 +16,13 @@ Counts are the current `rows-*.md` verdicts (`cat rows-*.md | grep -E '^\| [A-Z]
 
 | Status | Count |
 | --- | --- |
-| MET | 252 |
+| MET | 253 |
 | PARTIAL | 31 |
 | GAP | 2 |
 | REFUTED | 1 |
 | DOWNGRADE-NA | 3 |
 | DOWNGRADE-MET | 2 |
-| DOWNGRADE-CONDITIONAL | 2 |
+| DOWNGRADE-CONDITIONAL | 1 |
 | DOWNGRADE-DOCUMENTED | 1 |
 | N/A (tunnel architecture / exempt / MAY not taken) | 86 |
 
@@ -61,7 +61,7 @@ The v1.6.0 baseline bump was audited against the verified upstream tag diff; v1.
 | GC-09 | GAP | RESOLVED (was: DOWNGRADE-DEFENSIBLE) | Accepted is set False when the class cannot be served because its parametersRef is unusable (see GC-05). |
 | GC-22 | GAP | DOWNGRADE-CONDITIONAL | Publishing `status.supportedFeatures` is optional; the "MUST be sorted" clause governs order only if published. Not published → vacuously satisfied. |
 | SH-36 | GAP | REFUTED | The "Dropped Rule" PartiallyInvalid approach is implemented and tested (route_status.go:334, route_status_diagnostics_test.go:76); the spec requires only one of two approaches. |
-| SH-43 | GAP | DOWNGRADE-CONDITIONAL | The per-reconcile full rebuild re-adds only currently-valid own parentRefs, so stale own-entries are dropped naturally; the SHOULD is satisfied for the realistic case. |
+| SH-43 | GAP | RESOLVED (was: DOWNGRADE-CONDITIONAL) | The controller removes its own entries from a route that no longer leads to a managed Gateway, including after its GatewayClass is deleted. |
 | HR-61 | GAP | DOWNGRADE-NA | Redirect `Scheme` enum is http;https; both have well-known ports, so the "scheme without well-known port" precondition is unreachable. |
 | GR-44, GR-45 | GAP | DOWNGRADE-NA | A GRPCRoute backend is gRPC-over-HTTP/2 by definition; forcing h2c is correct, and the one protocol-relevant signal (TLS via BackendTLSPolicy) is honoured. |
 | OR-03 | GAP | DOWNGRADE-DOCUMENTED | ExternalName Service support is a deliberate, documented deviation (limitations.md:10/38) with a stated trust-boundary rationale that already cites CVE-2021-25740. |
@@ -90,7 +90,7 @@ The SHOULD and MAY tiers were re-verified in a second pass after the MUST audit 
 - HONOURED-TESTED (~22) and N/A for the tunnel architecture (~20) account for the bulk.
 - HONOURED-TESTED since the audit (was HONOURED-UNTESTED, 7): HR-21, HR-24, HR-63, BTLS-06, SH-31, SH-32, LS-05 — each now pinned by a regression test (explicit-zero timeouts, redirect Location port, BackendTLS HTTP/gRPC equivalence, reason-vocabulary AST guard, ListenerSet status leak guard).
 - HONOURED-TESTED since the audit (was N/A, 3): HR-26 (except a request body that cannot be resent), HR-32, HR-34 — the proxy gained Experimental-channel retry support.
-- DEVIATED-DOCUMENTED (4): GW-74, BTLS-04, SH-43, OR-03 — permitted deviations with a written rationale in limitations.md. GC-05, a fifth at the audit, is HONOURED-TESTED since the GatewayClass reconciler began reporting an unusable parametersRef as Accepted=False/InvalidParameters; GC-10 moved from N/A to HONOURED-TESTED with it.
+- DEVIATED-DOCUMENTED (3): GW-74, BTLS-04, OR-03 — permitted deviations with a written rationale in limitations.md. SH-43, a fourth at the audit, is HONOURED-TESTED since the controller removes its own status entries from routes that no longer lead to a managed Gateway. GC-05, another at the audit, is HONOURED-TESTED since the GatewayClass reconciler began reporting an unusable parametersRef as Accepted=False/InvalidParameters; GC-10 moved from N/A to HONOURED-TESTED with it.
 - DEVIATED-SILENT (originally 3 distinct gaps across 4 clause IDs) — all resolved since the audit: GC-02 and its v1beta1 alias OTHER-45 are HONOURED (the reconciler now manages the gateway-exists-finalizer); GEP-08 (discoverability condition on the policy ancestor status, not the affected Gateway/Service) and HR-61 (no redirect-port fallback to the listener port — unreachable through the Standard CRD scheme enum http/https) are DEVIATED-DOCUMENTED with rationales in limitations.md. Also resolved earlier: GR-44 / GR-45 (gRPC silently dialing cleartext when a Service declared a TLS appProtocol without a BackendTLSPolicy) now fails the backend closed, matching the HTTP path — #438.
 
 ### MAY (34 clauses)

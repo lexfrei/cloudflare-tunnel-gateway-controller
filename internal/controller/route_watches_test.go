@@ -29,13 +29,17 @@ var (
 	// watchDirectRoute is what the per-Gateway mapper answers, told apart from
 	// the full relevant set so a test can see which path a Gateway event took.
 	watchDirectRoute = reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "direct"}}
+	// watchOwnStatusRoute is what the lookup of routes carrying this
+	// controller's status answers.
+	watchOwnStatusRoute = reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "own-status"}}
 )
 
 // watchTestParams wires a route controller's watches against a fake cluster in
 // which every mapper has something to match: a managed class whose config
 // names the credentials Secret, and a BackendTLSPolicy naming the CA ConfigMap.
 // Every mapper that would enqueue answers with watchTestRoute, except the
-// per-Gateway one, which answers with watchDirectRoute.
+// per-Gateway one, which answers with watchDirectRoute, and the own-status
+// lookup, which answers with watchOwnStatusRoute.
 func watchTestParams() *routeControllerSetupParams {
 	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
@@ -88,6 +92,9 @@ func watchTestParams() *routeControllerSetupParams {
 		watchBackendTLS:              true,
 		getAllRelevantRoutes: func(context.Context) []reconcile.Request {
 			return []reconcile.Request{watchTestRoute}
+		},
+		getRoutesHoldingOwnStatus: func(context.Context) []reconcile.Request {
+			return []reconcile.Request{watchOwnStatusRoute}
 		},
 	}
 }
@@ -273,7 +280,7 @@ func TestRouteWatches_GatewayClassUpdateReachesQueue(t *testing.T) {
 		}
 	}
 
-	assert.Equal(t, []reconcile.Request{watchTestRoute},
+	assert.Equal(t, []reconcile.Request{watchTestRoute, watchOwnStatusRoute},
 		updateReachesQueue(t, class(watchTestController, "old", 1), class(watchTestController, "new", 2)),
 		"a parametersRef edit on a managed class must enqueue the routes")
 
