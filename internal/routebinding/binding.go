@@ -1,10 +1,12 @@
 package routebinding
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"strings"
 
+	"github.com/cockroachdb/errors"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
@@ -27,7 +29,11 @@ type RouteInfo struct {
 
 // BindingResult represents the result of route-to-listener binding validation.
 type BindingResult struct {
-	Accepted         bool
+	Accepted bool
+	// Incomplete is set when an entry the route might also bind to could not
+	// be evaluated, so MatchedListeners may be missing it and the binding has
+	// to be evaluated again.
+	Incomplete       bool
 	Reason           gatewayv1.RouteConditionReason
 	Message          string
 	MatchedListeners []gatewayv1.SectionName
@@ -35,7 +41,10 @@ type BindingResult struct {
 
 // ValidateBinding validates whether a route can bind to a gateway's listeners.
 // It returns a BindingResult indicating acceptance status, reason, and matched listeners.
-// The error is nil today and kept for the namespace read failures #895 covers.
+// The error reports that no listener admits the route while one could not be
+// evaluated, such as one whose namespace selector needs a namespace that cannot
+// be read. When another listener admits the route, the result is Incomplete
+// instead.
 func (v *Validator) ValidateBinding(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
@@ -43,7 +52,7 @@ func (v *Validator) ValidateBinding(
 ) (BindingResult, error) {
 	listeners := gateway.Spec.Listeners
 
-	matched, rejectionReason, invalid, detail := findMatchingEntries(
+	matched, rejectionReason, invalid, detail, err := findMatchingEntries(
 		"listener",
 		len(listeners),
 		func(i int) (gatewayv1.SectionName, gatewayv1.PortNumber) {
@@ -55,22 +64,31 @@ func (v *Validator) ValidateBinding(
 		route.SectionName,
 		route.Port,
 	)
+	v.logUnevaluatedListeners(ctx, route, "Gateway "+gateway.Namespace+"/"+gateway.Name, detail)
 
-	v.logUnevaluatedListeners(ctx, route, detail)
+	if err != nil && len(matched) == 0 {
+		return BindingResult{}, err
+	}
 
-	return makeBindingResult(matched, rejectionReason, invalid), nil
+	result := makeBindingResult(matched, rejectionReason, invalid)
+	result.Incomplete = err != nil
+
+	return result, nil
 }
 
 // logUnevaluatedListeners logs the errors of listeners that could not be
 // evaluated. They quote the Gateway's spec, which the route's authors may not
 // be allowed to read, so they go to the controller log and not to route status.
-func (v *Validator) logUnevaluatedListeners(ctx context.Context, route *RouteInfo, detail string) {
+func (v *Validator) logUnevaluatedListeners(ctx context.Context, route *RouteInfo, parent, detail string) {
 	if detail == "" {
 		return
 	}
 
-	logging.FromContext(ctx).Log(ctx, v.unevaluatedLevel, "listeners could not be evaluated for a route",
-		"route", route.Namespace+"/"+route.Name, "detail", detail)
+	name := route.Namespace + "/" + route.Name
+	key := fmt.Sprintf("%s %s %s", route.Kind, name, parent)
+
+	logging.FromContext(ctx).Log(ctx, v.repeats.Level(key, detail, v.unevaluatedLevel),
+		"listeners could not be evaluated for a route", "route", name, "parent", parent, "detail", detail)
 }
 
 // makeBindingResult turns the tuple returned by findMatchingEntries into a
@@ -114,10 +132,12 @@ func makeBindingResult(
 // matches, the last observed non-accepted reason is the rejection reason, and
 // NoMatchingParent is reserved for a sectionName or port that no entry has.
 //
-// An entry whose evaluation fails (an unparseable namespace selector) admits
-// nothing. Its error is returned in detail, and, when no entry matched, its name
-// in invalid. It does not stop the loop: the error belongs to that entry, and a
-// sibling entry may still admit the route.
+// An entry with an unparseable namespace selector admits nothing. Its error is
+// returned in detail, and, when no entry matched, its name in invalid. It does
+// not stop the loop: the error belongs to that entry, and a sibling entry may
+// still admit the route. Any other evaluation error, such as a failed namespace
+// read, leaves that entry undecided: it is added to detail, the loop goes on,
+// and the first such error is returned with whatever the other entries matched.
 func findMatchingEntries(
 	entryKind string,
 	count int,
@@ -125,9 +145,9 @@ func findMatchingEntries(
 	accept func(int) (gatewayv1.RouteConditionReason, error),
 	routeSectionName *gatewayv1.SectionName,
 	routePort *gatewayv1.PortNumber,
-) ([]gatewayv1.SectionName, gatewayv1.RouteConditionReason, []string, string) {
+) ([]gatewayv1.SectionName, gatewayv1.RouteConditionReason, []string, string, error) {
 	if count == 0 {
-		return nil, gatewayv1.RouteReasonNoMatchingParent, nil, ""
+		return nil, gatewayv1.RouteReasonNoMatchingParent, nil, "", nil
 	}
 
 	var (
@@ -135,20 +155,28 @@ func findMatchingEntries(
 		lastRejectionReason gatewayv1.RouteConditionReason
 		invalid             []string
 		entryErrors         []string
+		readErr             error
 	)
 
 	for i := range count {
 		name, port := nameAndPort(i)
 
-		if routeSectionName != nil && *routeSectionName != name {
-			continue
-		}
-
-		if routePort != nil && *routePort != port {
+		if (routeSectionName != nil && *routeSectionName != name) || (routePort != nil && *routePort != port) {
 			continue
 		}
 
 		reason, err := accept(i)
+		if err != nil && !errors.Is(err, errInvalidSelector) {
+			err = fmt.Errorf("%s %q: %w", entryKind, name, err)
+			entryErrors = append(entryErrors, err.Error())
+
+			if readErr == nil {
+				readErr = err
+			}
+
+			continue
+		}
+
 		if err != nil {
 			reason = gatewayv1.RouteReasonNotAllowedByListeners
 
@@ -165,15 +193,11 @@ func findMatchingEntries(
 
 	detail := strings.Join(entryErrors, "; ")
 
-	if len(matched) == 0 {
-		if lastRejectionReason == "" {
-			return nil, gatewayv1.RouteReasonNoMatchingParent, invalid, detail
-		}
-
-		return nil, lastRejectionReason, invalid, detail
+	if len(matched) > 0 {
+		return matched, "", nil, detail, readErr
 	}
 
-	return matched, "", nil, detail
+	return nil, cmp.Or(lastRejectionReason, gatewayv1.RouteReasonNoMatchingParent), invalid, detail, readErr
 }
 
 // listenerAcceptsRoute checks if a single listener accepts the route.

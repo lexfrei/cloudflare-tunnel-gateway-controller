@@ -10,6 +10,8 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 )
 
 // Validator performs route binding validation against Gateway listeners.
@@ -19,6 +21,7 @@ type Validator struct {
 	// evaluated are logged at. Several passes of one sync evaluate the same
 	// listeners, so only the route binding pass warns.
 	unevaluatedLevel slog.Level
+	repeats          *logging.Repeats
 }
 
 // NewValidator creates a new Validator with the given client. It logs
@@ -28,9 +31,10 @@ func NewValidator(cli client.Client) *Validator {
 }
 
 // NewReportingValidator is NewValidator for the route binding pass: it logs
-// listeners whose allowedRoutes it cannot evaluate as warnings.
-func NewReportingValidator(cli client.Client) *Validator {
-	return &Validator{client: cli, unevaluatedLevel: slog.LevelWarn}
+// listeners whose allowedRoutes it cannot evaluate as warnings, repeats of
+// which repeats lowers to debug.
+func NewReportingValidator(cli client.Client, repeats *logging.Repeats) *Validator {
+	return &Validator{client: cli, unevaluatedLevel: slog.LevelWarn, repeats: repeats}
 }
 
 // IsNamespaceAllowed checks if a route from routeNamespace is allowed to attach
@@ -96,7 +100,12 @@ func getNamespaceFrom(allowedRoutes *gatewayv1.AllowedRoutes) gatewayv1.FromName
 	return *allowedRoutes.Namespaces.From
 }
 
+// errInvalidSelector marks a selector that does not parse: a property of the
+// listener, unlike a failed namespace read, which decides nothing.
+var errInvalidSelector = errors.New("invalid label selector")
+
 // namespaceMatchesSelector checks if the route namespace matches the selector.
+// A namespace that does not exist does not match.
 func (v *Validator) namespaceMatchesSelector(
 	ctx context.Context,
 	allowedRoutes *gatewayv1.AllowedRoutes,
@@ -108,14 +117,14 @@ func (v *Validator) namespaceMatchesSelector(
 
 	selector, err := metav1.LabelSelectorAsSelector(allowedRoutes.Namespaces.Selector)
 	if err != nil {
-		return false, errors.Wrap(err, "invalid label selector")
+		return false, errors.Wrap(errors.Mark(err, errInvalidSelector), "invalid label selector")
 	}
 
 	var namespace corev1.Namespace
 
 	err = v.client.Get(ctx, client.ObjectKey{Name: routeNamespace}, &namespace)
 	if err != nil {
-		return false, nil //nolint:nilerr // namespace not found means not allowed
+		return false, errors.Wrapf(client.IgnoreNotFound(err), "reading namespace %s", routeNamespace)
 	}
 
 	return selector.Matches(labels.Set(namespace.Labels)), nil

@@ -58,7 +58,8 @@ func TestRouteReferencesOurGateways_ListenerSetOnlyParent(t *testing.T) {
 
 	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gc, gw, ls, route).Build()
 
-	got := routeReferencesOurGateways(context.Background(), cli, testListenerSetController, HTTPRouteWrapper{route})
+	got, err := routeReferencesOurGateways(context.Background(), cli, testListenerSetController, HTTPRouteWrapper{route})
+	require.NoError(t, err)
 	assert.True(t, got, "HTTPRoute with Kind=ListenerSet parentRef must be recognised as referencing our managed Gateway")
 }
 
@@ -100,7 +101,8 @@ func TestRouteReferencesOurGateways_ListenerSetWithForeignGateway(t *testing.T) 
 
 	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(foreignClass, gw, ls, route).Build()
 
-	got := routeReferencesOurGateways(context.Background(), cli, testListenerSetController, HTTPRouteWrapper{route})
+	got, err := routeReferencesOurGateways(context.Background(), cli, testListenerSetController, HTTPRouteWrapper{route})
+	require.NoError(t, err)
 	assert.False(t, got, "ListenerSet parent owned by a foreign controller must NOT register as our route")
 }
 
@@ -323,8 +325,8 @@ func TestIncrementListenerSetAttachedRoutes_DeduplicatesDuplicateParentRefs(t *t
 		}}},
 	}
 
-	incrementListenerSetAttachedRoutes(context.Background(), validator, testListenerSetController, ls,
-		HTTPRouteWrapper{route}, counts)
+	require.NoError(t, incrementListenerSetAttachedRoutes(context.Background(), validator, testListenerSetController, ls,
+		HTTPRouteWrapper{route}, counts))
 
 	assert.Equal(t, int32(1), counts["entry"], "duplicate parentRefs to the same ListenerSet must count the route once")
 }

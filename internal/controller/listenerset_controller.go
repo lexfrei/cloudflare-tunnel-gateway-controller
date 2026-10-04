@@ -176,6 +176,8 @@ func (r *ListenerSetReconciler) reconcileStatus(
 ) error {
 	key := types.NamespacedName{Name: listenerSet.Name, Namespace: listenerSet.Namespace}
 
+	var evalErr error
+
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var fresh gatewayv1.ListenerSet
 		if err := r.Get(ctx, key, &fresh); err != nil {
@@ -190,7 +192,9 @@ func (r *ListenerSetReconciler) reconcileStatus(
 
 		now := metav1.Now()
 
-		acceptance := r.computeAcceptance(ctx, gateway, &fresh)
+		var acceptance listenerSetAcceptanceResult
+
+		acceptance, evalErr = r.computeAcceptance(ctx, gateway, &fresh)
 
 		conditions := buildListenerSetAggregateConditions(fresh.Generation, now, acceptance)
 		for _, cond := range conditions {
@@ -224,8 +228,11 @@ func (r *ListenerSetReconciler) reconcileStatus(
 
 		return nil
 	})
+	if err != nil {
+		return errors.Wrap(err, "failed to update listenerset status after retries")
+	}
 
-	return errors.Wrap(err, "failed to update listenerset status after retries")
+	return errors.Wrap(evalErr, "computing listenerset status")
 }
 
 // listenerSetAcceptanceResult bundles the data the status writer needs in
@@ -248,15 +255,30 @@ type listenerSetAcceptanceResult struct {
 	AttachedRoutes map[gatewayv1.SectionName]int32
 }
 
+// computeAcceptance returns, with the result the reconcile writes, the error
+// that makes the reconcile retry: one that left the acceptance undecided comes
+// with a Pending result; a sibling ListenerSet left out of the merged view
+// because it could not be evaluated, or an attachedRoutes count that could not
+// finish, comes with the acceptance as computed and the counts already
+// written.
+//
 //nolint:funlen // single sequential pipeline; splitting hurts readability
 func (r *ListenerSetReconciler) computeAcceptance(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 	listenerSet *gatewayv1.ListenerSet,
-) listenerSetAcceptanceResult {
+) (listenerSetAcceptanceResult, error) {
 	validator := routebinding.NewValidator(r.Client)
 
 	allowed, err := validator.EvaluateListenerSetAcceptance(ctx, gateway, listenerSet)
+	if err != nil {
+		return listenerSetAcceptanceResult{
+			Accepted: false,
+			Reason:   gatewayv1.ListenerSetReasonPending,
+			Message:  "The controller could not evaluate the parent Gateway's allowedListeners; the controller log names the error",
+		}, errors.Wrap(err, "evaluating the parent Gateway's allowedListeners")
+	}
+
 	if allowed.Err != nil {
 		// This reconcile runs once per ListenerSet, where the route passes run
 		// once per route, so the warning an operator needs is logged here.
@@ -266,7 +288,7 @@ func (r *ListenerSetReconciler) computeAcceptance(
 			"error", allowed.Err)
 	}
 
-	if err != nil || !allowed.Accepted {
+	if !allowed.Accepted {
 		reason := gatewayv1.ListenerSetReasonNotAllowed
 
 		message := listenerSetMsgNotAllowed
@@ -278,7 +300,7 @@ func (r *ListenerSetReconciler) computeAcceptance(
 			Accepted: false,
 			Reason:   reason,
 			Message:  message,
-		}
+		}, nil
 	}
 
 	// The merged view spans the parent Gateway plus every sibling ListenerSet
@@ -290,8 +312,8 @@ func (r *ListenerSetReconciler) computeAcceptance(
 		return listenerSetAcceptanceResult{
 			Accepted: false,
 			Reason:   gatewayv1.ListenerSetReasonPending,
-			Message:  "Failed to enumerate sibling ListenerSets: " + err.Error(),
-		}
+			Message:  "Failed to enumerate sibling ListenerSets; the controller log names the error",
+		}, err
 	}
 
 	merged := view.merged
@@ -301,18 +323,19 @@ func (r *ListenerSetReconciler) computeAcceptance(
 		return listenerSetAcceptanceResult{
 			Accepted: false,
 			Reason:   gatewayv1.ListenerSetReasonPending,
-			Message:  "Failed to evaluate ListenerSet TLS references: " + refErr.Error(),
-		}
+			Message:  "Failed to evaluate ListenerSet TLS references; the controller log names the error",
+		}, refErr
 	}
 
 	accepted, summaryReason, summaryMessage := summariseListenerSet(merged, listenerSet, refChecks)
 
+	// A count that could not be finished keeps the counts already written and
+	// leaves the acceptance as computed; the error makes the reconcile count again.
 	attached, attachErr := r.countAttachedRoutesPerEntry(ctx, listenerSet)
 	if attachErr != nil {
-		return listenerSetAcceptanceResult{
-			Accepted: false,
-			Reason:   gatewayv1.ListenerSetReasonPending,
-			Message:  "Failed to count attached routes: " + attachErr.Error(),
+		attached = make(map[gatewayv1.SectionName]int32, len(listenerSet.Status.Listeners))
+		for i := range listenerSet.Status.Listeners {
+			attached[listenerSet.Status.Listeners[i].Name] = listenerSet.Status.Listeners[i].AttachedRoutes
 		}
 	}
 
@@ -323,7 +346,7 @@ func (r *ListenerSetReconciler) computeAcceptance(
 		MergeResult:    merged,
 		RefChecks:      refChecks,
 		AttachedRoutes: attached,
-	}
+	}, errors.Wrap(errors.CombineErrors(view.undecided, attachErr), "completing listenerset status")
 }
 
 // countAttachedRoutesPerEntry returns the number of accepted HTTPRoutes (and
@@ -347,55 +370,34 @@ func (r *ListenerSetReconciler) countAttachedRoutesPerEntry(
 		out[listenerSet.Spec.Listeners[i].Name] = 0
 	}
 
-	validator := routebinding.NewValidator(r.Client)
-
-	if err := r.countAttachedHTTPRoutes(ctx, listenerSet, validator, out); err != nil {
-		return nil, err
+	var httpRoutes gatewayv1.HTTPRouteList
+	if err := r.List(ctx, &httpRoutes); err != nil {
+		return nil, errors.Wrap(err, "failed to list httproutes")
 	}
 
-	if err := r.countAttachedGRPCRoutes(ctx, listenerSet, validator, out); err != nil {
-		return nil, err
+	var grpcRoutes gatewayv1.GRPCRouteList
+	if err := r.List(ctx, &grpcRoutes); err != nil {
+		return nil, errors.Wrap(err, "failed to list grpcroutes")
+	}
+
+	routes := make([]Route, 0, len(httpRoutes.Items)+len(grpcRoutes.Items))
+	for i := range httpRoutes.Items {
+		routes = append(routes, HTTPRouteWrapper{&httpRoutes.Items[i]})
+	}
+
+	for i := range grpcRoutes.Items {
+		routes = append(routes, GRPCRouteWrapper{&grpcRoutes.Items[i]})
+	}
+
+	validator := routebinding.NewValidator(r.Client)
+
+	for _, route := range routes {
+		if err := incrementListenerSetAttachedRoutes(ctx, validator, r.ControllerName, listenerSet, route, out); err != nil {
+			return nil, err
+		}
 	}
 
 	return out, nil
-}
-
-func (r *ListenerSetReconciler) countAttachedHTTPRoutes(
-	ctx context.Context,
-	listenerSet *gatewayv1.ListenerSet,
-	validator *routebinding.Validator,
-	counts map[gatewayv1.SectionName]int32,
-) error {
-	var routes gatewayv1.HTTPRouteList
-	if err := r.List(ctx, &routes); err != nil {
-		return errors.Wrap(err, "failed to list httproutes")
-	}
-
-	for i := range routes.Items {
-		route := &routes.Items[i]
-		incrementListenerSetAttachedRoutes(ctx, validator, r.ControllerName, listenerSet, HTTPRouteWrapper{route}, counts)
-	}
-
-	return nil
-}
-
-func (r *ListenerSetReconciler) countAttachedGRPCRoutes(
-	ctx context.Context,
-	listenerSet *gatewayv1.ListenerSet,
-	validator *routebinding.Validator,
-	counts map[gatewayv1.SectionName]int32,
-) error {
-	var routes gatewayv1.GRPCRouteList
-	if err := r.List(ctx, &routes); err != nil {
-		return errors.Wrap(err, "failed to list grpcroutes")
-	}
-
-	for i := range routes.Items {
-		route := &routes.Items[i]
-		incrementListenerSetAttachedRoutes(ctx, validator, r.ControllerName, listenerSet, GRPCRouteWrapper{route}, counts)
-	}
-
-	return nil
 }
 
 func incrementListenerSetAttachedRoutes(
@@ -405,7 +407,7 @@ func incrementListenerSetAttachedRoutes(
 	listenerSet *gatewayv1.ListenerSet,
 	route Route,
 	counts map[gatewayv1.SectionName]int32,
-) {
+) error {
 	routeNamespace := route.GetNamespace()
 
 	// A single route counts at most once per listener entry, even if it
@@ -431,7 +433,15 @@ func incrementListenerSetAttachedRoutes(
 		// The Accepted gate above reads the route's own status; binding here
 		// only names the entries the ref attaches to.
 		result, err := validator.ValidateBindingForListenerSet(ctx, listenerSet, routeInfo)
-		if err != nil || !result.Accepted {
+		if err == nil && result.Incomplete {
+			err = errListenerNotEvaluated
+		}
+
+		if err != nil {
+			return errors.Wrapf(err, "binding %s %s/%s", route.GetRouteKind(), routeNamespace, route.GetName())
+		}
+
+		if !result.Accepted {
 			continue
 		}
 
@@ -444,6 +454,8 @@ func incrementListenerSetAttachedRoutes(
 			counts[section]++
 		}
 	}
+
+	return nil
 }
 
 // parentRefSelectsListenerSet returns true when a route parentRef targets

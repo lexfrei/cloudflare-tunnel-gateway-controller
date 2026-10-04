@@ -849,48 +849,40 @@ func FilterAcceptedRoutes(
 // managed by the given controllerName. Unlike IsRouteAcceptedByGateway, this does
 // not perform binding validation — it only checks if the parentRef points to our Gateway.
 // This is used to decide whether to trigger a full sync (which includes status updates
-// for both accepted and rejected routes).
+// for both accepted and rejected routes). A parent that cannot be read decides
+// nothing: its error is returned unless another parent is ours.
 func routeReferencesOurGateways(
 	ctx context.Context,
 	cli client.Client,
 	controllerName string,
 	route Route,
-) bool {
+) (bool, error) {
+	var readErr error
+
 	for _, ref := range route.GetParentRefs() {
-		gateway, found := resolveParentGatewayFromRef(ctx, cli, ref, route.GetNamespace())
-		if !found {
+		gateway, found, err := lookupParentGatewayFromRef(ctx, cli, ref, route.GetNamespace())
+		if err == nil && found {
+			found, err = gatewayIsManaged(ctx, cli, controllerName, gateway)
+		}
+
+		if err != nil {
+			readErr = err
+
 			continue
 		}
 
-		if isGatewayManagedByController(ctx, cli, gateway, controllerName) {
-			return true
+		if found {
+			return true, nil
 		}
 	}
 
-	return false
+	return false, readErr
 }
 
-// resolveParentGatewayFromRef returns the Gateway selected by a route's
-// parentRef. The ref may target the Gateway directly (Kind=Gateway) or via a
-// ListenerSet (Kind=ListenerSet), in which case the ListenerSet's
-// spec.parentRef is followed to the Gateway. Returns (nil, false) when the
-// ref's Group is foreign to the Gateway API, the Kind is anything other than
-// Gateway/ListenerSet, or the named resource cannot be loaded.
-func resolveParentGatewayFromRef(
-	ctx context.Context,
-	cli client.Client,
-	ref gatewayv1.ParentReference,
-	routeNamespace string,
-) (*gatewayv1.Gateway, bool) {
-	gateway, found, err := lookupParentGatewayFromRef(ctx, cli, ref, routeNamespace)
-
-	return gateway, found && err == nil
-}
-
-// lookupParentGatewayFromRef is resolveParentGatewayFromRef that tells an
-// absent parent from one that could not be read: found is false with no error
-// for a foreign Group or Kind or a referent that does not exist, and the error
-// is returned for any other failed read.
+// lookupParentGatewayFromRef returns the Gateway selected by a route's
+// parentRef, directly or through a ListenerSet's spec.parentRef. found is false
+// with no error for a foreign Group or Kind or a referent that does not exist,
+// and the error is returned for any other failed read.
 func lookupParentGatewayFromRef(
 	ctx context.Context,
 	cli client.Client,
@@ -984,4 +976,18 @@ func withRefFilters(template *routebinding.RouteInfo, ref gatewayv1.ParentRefere
 	clone.Port = ref.Port
 
 	return &clone
+}
+
+// listForWatchEvent lists into list for a watch mapper. A mapper cannot return
+// an error, so a failed List drops the enqueue, and the log is the only trace
+// of the dropped event.
+func listForWatchEvent(ctx context.Context, cli client.Client, list client.ObjectList) bool {
+	if err := cli.List(ctx, list); err != nil {
+		logging.FromContext(ctx).Warn("watch event dropped: list failed",
+			"list", fmt.Sprintf("%T", list), "error", err)
+
+		return false
+	}
+
+	return true
 }

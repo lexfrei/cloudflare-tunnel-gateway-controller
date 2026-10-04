@@ -142,7 +142,9 @@ func TestListenerSetEntriesAccepted_SkipsInvalidSelector(t *testing.T) {
 
 	cli := buildGatewayFakeClient(t, ls)
 
-	assert.False(t, listenerSetEntriesAccepted(context.Background(), cli, ls, nil))
+	accepted, err := listenerSetEntriesAccepted(context.Background(), cli, ls, nil)
+	require.NoError(t, err)
+	assert.False(t, accepted)
 }
 
 // TestListenerSetAggregate_UnsupportedProtocolEntry pins that an entry with a
@@ -193,8 +195,9 @@ func TestListenerSetAggregate_UnsupportedProtocolEntry(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra"},
 				Spec:       gatewayv1.ListenerSetSpec{Listeners: tt.entries},
 			}
-			assert.Equal(t, tt.accepted == metav1.ConditionTrue,
-				listenerSetEntriesAccepted(context.Background(), buildGatewayFakeClient(t, spec), spec, nil),
+			entriesAccepted, err := listenerSetEntriesAccepted(context.Background(), buildGatewayFakeClient(t, spec), spec, nil)
+			require.NoError(t, err)
+			assert.Equal(t, tt.accepted == metav1.ConditionTrue, entriesAccepted,
 				"the Gateway's attachedListenerSets follows the ListenerSet's own verdict")
 		})
 	}

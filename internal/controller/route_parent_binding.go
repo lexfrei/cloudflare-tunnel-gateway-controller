@@ -170,9 +170,10 @@ func filterMatchedGatewayListenersByConflict(
 
 	if len(kept) == 0 {
 		return routebinding.BindingResult{
-			Accepted: false,
-			Reason:   gatewayv1.RouteReasonNoMatchingParent,
-			Message:  msgConflictedListeners,
+			Accepted:   false,
+			Incomplete: result.Incomplete,
+			Reason:     gatewayv1.RouteReasonNoMatchingParent,
+			Message:    msgConflictedListeners,
 		}
 	}
 
@@ -269,6 +270,11 @@ func filterMatchedListenersByConflict(
 		return result
 	}
 
+	// A sibling left out of the view because it could not be evaluated may
+	// outrank these entries once it is read. Any such sibling marks the
+	// binding incomplete, including a newer one that cannot outrank them.
+	result.Incomplete = result.Incomplete || view.undecided != nil
+
 	kept := make([]gatewayv1.SectionName, 0, len(result.MatchedListeners))
 
 	for _, section := range result.MatchedListeners {
@@ -281,9 +287,10 @@ func filterMatchedListenersByConflict(
 
 	if len(kept) == 0 {
 		return routebinding.BindingResult{
-			Accepted: false,
-			Reason:   gatewayv1.RouteReasonNoMatchingParent,
-			Message:  msgConflictedListeners,
+			Accepted:   false,
+			Incomplete: result.Incomplete,
+			Reason:     gatewayv1.RouteReasonNoMatchingParent,
+			Message:    msgConflictedListeners,
 		}
 	}
 

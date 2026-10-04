@@ -1033,7 +1033,7 @@ func TestGatewayReconciler_CountAttachedRoutes(t *testing.T) {
 		ControllerName: "test-controller",
 	}
 
-	counts := reconciler.countAttachedRoutes(ctx, gateway)
+	counts := mustCountAttachedRoutes(ctx, t, reconciler, gateway)
 
 	assert.Equal(t, int32(2), counts["http"])
 	assert.Equal(t, int32(1), counts["https"])
@@ -2583,7 +2583,7 @@ func TestGatewayReconciler_CountAttachedRoutes_NoRoutes(t *testing.T) {
 		Scheme: fakeClient.Scheme(),
 	}
 
-	counts := reconciler.countAttachedRoutes(ctx, gateway)
+	counts := mustCountAttachedRoutes(ctx, t, reconciler, gateway)
 	assert.Equal(t, int32(0), counts["http"])
 	assert.Equal(t, int32(0), counts["https"])
 }
@@ -2920,7 +2920,7 @@ func TestGatewayReconciler_CountAttachedRoutes_WithGRPCRoutes(t *testing.T) {
 		ControllerName: "test-controller",
 	}
 
-	counts := reconciler.countAttachedRoutes(ctx, gateway)
+	counts := mustCountAttachedRoutes(ctx, t, reconciler, gateway)
 
 	// Both HTTP and GRPC routes match both listeners (no sectionName filter)
 	assert.Equal(t, int32(2), counts["http"])
@@ -2996,7 +2996,7 @@ func TestGatewayReconciler_CountAttachedRoutes_MixedNamespaces(t *testing.T) {
 		ControllerName: "test-controller",
 	}
 
-	counts := reconciler.countAttachedRoutes(ctx, gateway)
+	counts := mustCountAttachedRoutes(ctx, t, reconciler, gateway)
 
 	// Only route1 matches (route2 is in "other" namespace and ref doesn't have explicit namespace)
 	assert.Equal(t, int32(1), counts["http"])
@@ -3147,7 +3147,7 @@ func TestGatewayReconciler_CountAttachedRoutes_MultipleHTTPAndGRPC(t *testing.T)
 		ControllerName: "test-controller",
 	}
 
-	counts := reconciler.countAttachedRoutes(ctx, gateway)
+	counts := mustCountAttachedRoutes(ctx, t, reconciler, gateway)
 
 	// http listener: httpRoute1 + httpRoute2 (sectionName=http) + httpRoute3 (no sectionName => matches both)
 	assert.Equal(t, int32(3), counts["http"])
@@ -3872,7 +3872,7 @@ func TestGatewayReconciler_CountAttachedRoutes_RejectedByBinding(t *testing.T) {
 		ControllerName: "test-controller",
 	}
 
-	result := reconciler.countAttachedRoutes(ctx, gateway)
+	result := mustCountAttachedRoutes(ctx, t, reconciler, gateway)
 
 	// Only the matching route should be counted
 	assert.Equal(t, int32(1), result["http"])

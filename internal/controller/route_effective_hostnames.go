@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -290,9 +291,8 @@ func reportNarrowedRoute(
 	if len(declared) > 0 && !slices.ContainsFunc(declared, func(hostname gatewayv1.Hostname) bool {
 		return !slices.Contains(effective, hostname)
 	}) {
-		logging.FromContext(ctx).Info("a parent could not be evaluated; the route already serves every hostname it declares",
-			"route", route.GetNamespace()+"/"+route.GetName(),
-			"error", err)
+		logUndecidedParent(ctx, slog.LevelInfo, "a parent could not be evaluated; the route already serves every hostname it declares",
+			kind, route, err)
 
 		return proxy.RouteDiagnostic{}, false
 	}
@@ -321,9 +321,7 @@ func reportUndecidedParent(ctx context.Context, kind string, route client.Object
 			"the error and the sync is retried. This route remains Accepted."
 	}
 
-	logging.FromContext(ctx).Error(logMessage,
-		"route", route.GetNamespace()+"/"+route.GetName(),
-		"error", err)
+	logUndecidedParent(ctx, slog.LevelError, logMessage, kind, route, err)
 
 	return proxy.RouteDiagnostic{
 		Kind:      kind,
@@ -333,6 +331,15 @@ func reportUndecidedParent(ctx context.Context, kind string, route client.Object
 		Reason:    routeReasonParentNotEvaluated,
 		Message:   message,
 	}
+}
+
+// logUndecidedParent logs at level the first time a route reports a parent
+// failure, and at debug while the same failure repeats across syncs.
+func logUndecidedParent(ctx context.Context, level slog.Level, message, kind string, route client.Object, err error) {
+	name := route.GetNamespace() + "/" + route.GetName()
+	level = logging.RepeatsFromContext(ctx).Level(kind+" "+name+" proxy config", message+": "+err.Error(), level)
+
+	logging.FromContext(ctx).Log(ctx, level, message, "route", name, "error", err)
 }
 
 func effectiveHostnamesForParentRef(
@@ -451,8 +458,12 @@ func gatewayEffectiveHostnames(
 	}
 
 	result, err := bindGatewayListeners(ctx, cli, validator, &gateway, routeInfo, views)
-	if err != nil || !result.Accepted {
+	if err != nil {
 		return nil, err
+	}
+
+	if !result.Accepted {
+		return nil, incompleteBindingError(result)
 	}
 
 	hostByName := make(map[gatewayv1.SectionName]*gatewayv1.Hostname, len(gateway.Spec.Listeners))
@@ -461,7 +472,20 @@ func gatewayEffectiveHostnames(
 	}
 
 	return effectiveHostnamesForSections(result.MatchedListeners, hostByName, routeInfo.Hostnames,
-		client.ObjectKeyFromObject(&gateway).String()), nil
+		client.ObjectKeyFromObject(&gateway).String()), incompleteBindingError(result)
+}
+
+// errListenerNotEvaluated reports a binding that left out a listener the
+// parentRef selects because it could not be evaluated: the hostnames returned
+// with it may be missing that listener's.
+var errListenerNotEvaluated = errors.New("a listener the parentRef selects could not be evaluated; the binding pass logs the error")
+
+func incompleteBindingError(result routebinding.BindingResult) error {
+	if result.Incomplete {
+		return errListenerNotEvaluated
+	}
+
+	return nil
 }
 
 func listenerSetEffectiveHostnames(
@@ -495,7 +519,7 @@ func listenerSetEffectiveHostnames(
 	}
 
 	return effectiveHostnamesForSections(matched, hostByName, routeInfo.Hostnames,
-		listenerSetParentKey(&listenerSet).String()), nil
+		listenerSetParentKey(&listenerSet).String()), incompleteBindingError(result)
 }
 
 // gatewayOwnedElsewhere reports whether the Gateway's GatewayClass names a

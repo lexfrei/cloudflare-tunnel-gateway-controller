@@ -88,7 +88,7 @@ A `ListenerSet` is successfully attached to a Gateway when:
 1. The parent Gateway's `spec.allowedListeners.namespaces.from` permits the ListenerSet's namespace (`Same`, `All`, `Selector`, or unset/`None` to reject).
 2. The ListenerSet has `Accepted: True` on its status — at least one of its listener entries is conflict-free AND has its TLS cert refs resolved (`ResolvedRefs: True`, or it carries no TLS material).
 
-The Gateway's `status.attachedListenerSets` field is the count of ListenerSets meeting both criteria.
+The Gateway's `status.attachedListenerSets` field is the count of ListenerSets meeting both criteria. When the controller cannot finish that count, for example because a ListenerSet's namespace or a certificate Secret cannot be read, the Gateway keeps the count it had and the controller counts again.
 
 ### Hostnames and redirect schemes from a ListenerSet
 
@@ -135,6 +135,7 @@ spec:
 | `Accepted` | `True` | `Accepted` | Permitted by Gateway and at least one entry is valid |
 | `Accepted` | `True` | `ListenersNotValid` | At least one entry is valid, and another is conflict-marked, has unresolved refs, uses a protocol this controller does not serve or has an `allowedRoutes.namespaces.selector` that does not parse |
 | `Accepted` | `False` | `NotAllowed` | Gateway's `spec.allowedListeners` rejects this ListenerSet. A `selector` that does not parse rejects every ListenerSet; the message says so without quoting the selector, the controller log names the parse error, and the parent Gateway gets an `InvalidAllowedListeners` Warning Event |
+| `Accepted` | `False` | `Pending` | The controller could not evaluate the parent Gateway's `allowedListeners`, for example because the ListenerSet's namespace could not be read for its `selector`, or could not enumerate the sibling ListenerSets. The controller log names the error and the ListenerSet is reconciled again |
 | `Accepted` | `False` | `ListenersNotValid` | No entry is usable: each one is conflict-marked, has unresolved refs, uses a protocol this controller does not serve or has an `allowedRoutes.namespaces.selector` that does not parse |
 | `Programmed` | `True` | `Programmed` | Attached and programmed against the parent Gateway |
 | `Programmed` | `False` | `ListenersNotValid` / `NotAllowed` / `Pending` | Mirrors the `Accepted` reason when not programmed |
@@ -156,7 +157,7 @@ spec:
 
 ## AttachedRoutes
 
-Each per-entry status reports `attachedRoutes`: the number of Routes attached to that listener entry and `Accepted` for the ListenerSet. Per the Gateway API spec, attachment depends on the entry's `allowedRoutes` and the Route's `parentRefs`, not on the entry's own status, and only Routes with `Accepted: True` are counted. A Route whose parentRef also matches a usable entry is counted through that same parentRef on a `Conflicted` entry too, and so is a Route on an entry whose `Programmed` is `False` because its TLS certificate ref failed to resolve. A Route whose only matching entries are `Conflicted` is rejected, so it counts nowhere. A Route that is `Accepted: False` with reason `Pending`, for example while a Cloudflare sync fails, is not counted either, so the count can drop while the Cloudflare API is unavailable. Each Route counts once per entry. The field therefore measures binding and blast radius, not whether the entry currently serves traffic. A ListenerSet rejected at the resource level (not permitted by the parent Gateway's `allowedListeners`) reports `attachedRoutes: 0` for every entry, because the entries are not part of any merged Gateway.
+Each per-entry status reports `attachedRoutes`: the number of Routes attached to that listener entry and `Accepted` for the ListenerSet. Per the Gateway API spec, attachment depends on the entry's `allowedRoutes` and the Route's `parentRefs`, not on the entry's own status, and only Routes with `Accepted: True` are counted. A Route whose parentRef also matches a usable entry is counted through that same parentRef on a `Conflicted` entry too, and so is a Route on an entry whose `Programmed` is `False` because its TLS certificate ref failed to resolve. A Route whose only matching entries are `Conflicted` is rejected, so it counts nowhere. A Route that is `Accepted: False` with reason `Pending`, for example while a Cloudflare sync fails, is not counted either, so the count can drop while the Cloudflare API is unavailable. Each Route counts once per entry. When the controller cannot finish a count, for example because a Route's namespace cannot be read for a `from: Selector` entry, every entry keeps the count it had, the ListenerSet keeps its `Accepted` condition, and the controller counts again. The field therefore measures binding and blast radius, not whether the entry currently serves traffic. A ListenerSet rejected at the resource level (not permitted by the parent Gateway's `allowedListeners`) reports `attachedRoutes: 0` for every entry, because the entries are not part of any merged Gateway.
 
 ## DNS automation (external-dns)
 

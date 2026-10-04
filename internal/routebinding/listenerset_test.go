@@ -435,7 +435,7 @@ func TestEvaluateListenerSetAcceptance_InvalidSelectorLogsAtDebug(t *testing.T) 
 	logger, logs := logging.TestLogger(t)
 	ctx := logging.WithLogger(context.Background(), logger)
 
-	result, err := NewReportingValidator(setupFakeClient()).EvaluateListenerSetAcceptance(ctx, gateway, listenerSet)
+	result, err := NewReportingValidator(setupFakeClient(), nil).EvaluateListenerSetAcceptance(ctx, gateway, listenerSet)
 	require.NoError(t, err)
 	require.Error(t, result.Err, "the parse error is handed to the caller for its own log")
 
