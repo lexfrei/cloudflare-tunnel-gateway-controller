@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -19,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -68,6 +68,10 @@ type RouteSyncer struct {
 	// the CEL ValidatingAdmissionPolicy by design — defence in depth: the data
 	// plane stays clean even when the admission layer is absent or bypassed.
 	HostnameOwnership *hostnameownership.Policy
+
+	// Recorder reports failed tunnel document writes, which route status no
+	// longer carries. Nil is a no-op.
+	Recorder events.EventRecorder
 
 	// ViewStore caches the per-Gateway ListenerSet merge view across reconciles
 	// (issue #332). Set by the manager after construction and shared with the
@@ -159,9 +163,9 @@ type routeBindingInfo struct {
 
 	// parentGateways maps ParentRef index to the managed Gateway key
 	// ("namespace/name") that parent binds to. It lets the status writer
-	// attribute a tunnel-group sync failure to exactly the parents on that
-	// tunnel — RouteParentStatus is per-parent, so a multi-parent route with
-	// one failed and one healthy tunnel must not flip the healthy parent.
+	// attribute a data-plane refusal to exactly the parents on that Gateway —
+	// RouteParentStatus is per-parent, so a multi-parent route with one
+	// refused and one healthy Gateway must not flip the healthy parent.
 	parentGateways map[int]string
 
 	// parentPartitions maps ParentRef index to the key of the data-plane
@@ -175,10 +179,10 @@ type routeBindingInfo struct {
 	// recovers, so the sync that recorded it has to be retried.
 	unevaluated bool
 
-	// syncErrByGateway maps a managed Gateway key to the sync error of the
-	// tunnel serving it, populated AFTER the tunnel-group sync. A parent whose
-	// Gateway is absent here synced fine. Nil on the early-error path, where
-	// the global syncErr applies to every parent instead.
+	// syncErrByGateway maps a managed Gateway key to the refusal of its
+	// dedicated data plane, populated AFTER the tunnel-group sync. A parent
+	// whose Gateway is absent here is served. Nil on the early-error path,
+	// where the global syncErr applies to every parent instead.
 	syncErrByGateway map[string]error
 }
 
@@ -338,12 +342,11 @@ type syncUpdateParams struct {
 	// with nothing to retry (#581).
 	onSyncError func(error)
 	// onPushError, when set, observes proxy config push failures, which are
-	// otherwise non-blocking by design (route statuses already reflect the
-	// tunnel sync). The startup-sync retry loop needs them: the initial push
-	// is what makes route-less proxy replicas ready, and a failed push leaves
-	// no cached config for endpoint-event resyncs to replay, so ending the
-	// startup retry on a sync-succeeded/push-failed attempt would re-open the
-	// #581 deadlock through the push side.
+	// otherwise non-blocking by design. The startup-sync retry loop needs
+	// them: the initial push is what makes route-less proxy replicas ready,
+	// and a failed push leaves no cached config for endpoint-event resyncs to
+	// replay, so ending the startup retry on a sync-succeeded/push-failed
+	// attempt would re-open the #581 deadlock through the push side.
 	onPushError func(error)
 }
 
@@ -360,9 +363,9 @@ func syncAndUpdateStatusCommon(ctx context.Context, params *syncUpdateParams) (c
 	// h2c upstream (internal/proxy/grpc_converter.go), so gRPC traffic routes
 	// through the same in-process proxy as HTTP. The Cloudflare-side tunnel
 	// ingress rules built by internal/ingress/grpc_builder are not consulted
-	// at runtime in v3 — they only populate the Cloudflare dashboard's
-	// edge-routing view. Both route reconcilers set pushProxy=true; each push
-	// rebuilds the full merged config from the SyncResult.
+	// at runtime — they only populate the Cloudflare dashboard. Both route
+	// reconcilers set pushProxy=true; each push rebuilds the full merged
+	// config from the SyncResult.
 	// Converter diagnostics (unsupported/dropped config surfaced on route status)
 	// are produced by buildProxyConfig and returned by syncPartition, so they are
 	// only collected on the proxy-push path below. In v3 the proxy is the sole
@@ -422,8 +425,8 @@ func syncOutcome(
 
 	if syncErr != nil {
 		if result.RequeueAfter > 0 {
-			// Specific requeue interval requested (e.g., ingress rule limit exceeded).
-			// Don't propagate error — controller-runtime would override the interval.
+			// Specific requeue interval requested. Don't propagate the
+			// error: controller-runtime would override the interval.
 			return result, nil
 		}
 
@@ -443,9 +446,8 @@ func syncOutcome(
 // pushPartitionConfigs delivers each partition's proxy config to its own
 // data plane: the shared partition to the chart-deployed proxy endpoints
 // (default auth token), each per-Gateway partition to its rendered config
-// Service with its OWN token. Push failures are logged non-blocking (the
-// route statuses already reflect the tunnel sync), and stale partition
-// caches are evicted.
+// Service with its OWN token. Push failures are logged non-blocking, and
+// stale partition caches are evicted.
 //
 // A result WITHOUT partitions (the early-error paths via
 // buildResultForError) pushes nothing and evicts nothing: that route set was
@@ -1032,11 +1034,12 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 
 	// Resolve account ID (auto-detect if not in config) and stash it on the
 	// resolved config so the shared tunnel group below skips a second lookup.
+	// The account only serves the document write, so a failure here is left
+	// to that write, which retries it and counts the failure.
 	accountID, err := s.ConfigResolver.ResolveAccountID(ctx, cfClient, resolvedConfig)
 	if err != nil {
-		logger.Error("failed to resolve account ID", "error", err)
-
-		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)}, s.buildResultForError(ctx), err
+		level := s.logRepeats.Level("account id", cfmetrics.ClassifyCloudflareError(err), slog.LevelError)
+		logger.Log(ctx, level, "failed to resolve account ID; the tunnel document write will retry it", "error", err)
 	}
 
 	resolvedConfig.AccountID = accountID
@@ -1122,13 +1125,11 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	outcome := s.syncTunnelGroups(ctx, logger, groups)
 	s.emptyAbandonedTunnels(ctx, logger, groups, infra, &outcome)
 
-	// Attribute each failed tunnel group to exactly the parents on it: a
-	// route's parent binds to a Gateway, which maps to a partition (its own,
-	// for an infra Gateway; the shared partition otherwise). Per-parent
-	// status precision — a multi-parent route stays Accepted on the parents
-	// whose tunnel synced fine.
-	injectPartitionSyncErrors(httpResult.bindings, outcome.failedPartitions, infra)
-	injectPartitionSyncErrors(grpcResult.bindings, outcome.failedPartitions, infra)
+	// Only data-plane refusals reach route status. A failed document write
+	// does not: the edge routes a hostname by its DNS record and the proxy
+	// serves it, so the document only feeds the dashboard.
+	injectPlaneRefusals(httpResult.bindings, infra)
+	injectPlaneRefusals(grpcResult.bindings, infra)
 	assignParentPartitions(httpResult.bindings, infra)
 	assignParentPartitions(grpcResult.bindings, infra)
 
@@ -1139,18 +1140,7 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	syncResult.TransientBrokenKeys = infra.transientKeys()
 	syncResult.CollisionDiagnostics = collisionDiagnostics
 
-	// All groups failed: total sync outage — global error, every route goes
-	// Pending (matches the historic single-tunnel failure shape).
-	if len(outcome.groupErrs) == len(groups) && len(groups) > 0 {
-		s.Metrics.RecordSyncDuration(ctx, "error", time.Since(startTime))
-
-		return ctrl.Result{RequeueAfter: apiErrorRequeueDelay, Priority: new(priorityRoute)},
-			syncResult, errors.Join(outcome.groupErrs...)
-	}
-
-	// Partial failure: only the failed partitions' routes carry a sync error
-	// (via RouteSyncErrors) — one tenant's broken tunnel must not flip other
-	// tenants' route statuses. Requeue to retry the failed tunnels.
+	// A failed document write is retried, and is never a sync error.
 	if len(outcome.groupErrs) > 0 {
 		s.recordSyncSuccessMetrics(ctx, "partial", startTime, httpResult, grpcResult,
 			len(outcome.httpFailedRefs), len(outcome.grpcFailedRefs), outcome.totalRules)
@@ -1354,18 +1344,30 @@ func (s *RouteSyncer) emptyAbandonedTunnels(
 			continue
 		}
 
-		switch cfmetrics.ClassifyCloudflareError(result.err) {
-		case cfmetrics.ErrorTypeAuth, cfmetrics.ErrorTypeClientError:
-			logger.Error("could not empty the ingress document of a tunnel no Gateway claims any more; giving up",
-				"tunnel", tunnelID, "error", result.err)
-		default:
-			logger.Error("could not empty the ingress document of a tunnel no Gateway claims any more; retrying on the next sync",
-				"tunnel", tunnelID, "error", result.err)
-
+		if s.retryEmptying(ctx, logger, tunnelID, result.err) {
 			s.claimedTunnels[tunnelID] = tunnel
 			outcome.emptyingPending = true
 		}
 	}
+}
+
+// retryEmptying counts and logs a failed emptying write and reports whether
+// it is worth retrying: a write Cloudflare refused outright is not.
+func (s *RouteSyncer) retryEmptying(ctx context.Context, logger *slog.Logger, tunnelID string, err error) bool {
+	errorType := cfmetrics.ClassifyCloudflareError(err)
+	s.Metrics.RecordSyncError(ctx, errorType)
+
+	if errorType == cfmetrics.ErrorTypeAuth || errorType == cfmetrics.ErrorTypeClientError {
+		logger.Error("could not empty the ingress document of a tunnel no Gateway claims any more; giving up",
+			"tunnel", tunnelID, "error", err)
+
+		return false
+	}
+
+	logger.Error("could not empty the ingress document of a tunnel no Gateway claims any more; retrying on the next sync",
+		"tunnel", tunnelID, "error", err)
+
+	return true
 }
 
 // tunnelCollision names the opted-in Gateways that share one tunnel — an
@@ -1451,7 +1453,10 @@ func sharedTunnelCredentialDrops(groups []tunnelGroup) []credentialOverrideDrop 
 			}
 
 			resolved := &partition.PerGateway.ResolvedConfig
-			if resolved.APIToken != group.resolved.APIToken || resolved.AccountID != group.resolved.AccountID {
+			// An empty class account is one that failed to resolve this sync,
+			// not a different account.
+			accountDiffers := group.resolved.AccountID != "" && resolved.AccountID != group.resolved.AccountID
+			if resolved.APIToken != group.resolved.APIToken || accountDiffers {
 				drops = append(drops, credentialOverrideDrop{
 					tunnelID: group.resolved.TunnelID,
 					gateway:  partition.Key,
@@ -1473,22 +1478,15 @@ type tunnelGroupsOutcome struct {
 	// emptyingPending reports an abandoned tunnel whose emptying write failed
 	// and is kept for a retry.
 	emptyingPending bool
-	// failedPartitions maps a partition key (sharedPartitionKey or an infra
-	// Gateway's "namespace/name") to the sync error of the tunnel serving it.
-	// The per-route, per-Gateway attribution is derived from this against the
-	// route bindings, so a multi-parent route reports the failure only on the
-	// parents whose tunnel actually failed.
-	failedPartitions map[string]error
 }
 
-// syncTunnelGroups runs the ingress-document sync for every tunnel group,
-// mapping each group's failure onto exactly its partitions' routes.
+// syncTunnelGroups runs the ingress-document sync for every tunnel group.
 func (s *RouteSyncer) syncTunnelGroups(
 	ctx context.Context,
 	logger *slog.Logger,
 	groups []tunnelGroup,
 ) tunnelGroupsOutcome {
-	outcome := tunnelGroupsOutcome{failedPartitions: make(map[string]error)}
+	var outcome tunnelGroupsOutcome
 
 	for i := range groups {
 		group := &groups[i]
@@ -1506,14 +1504,71 @@ func (s *RouteSyncer) syncTunnelGroups(
 			continue
 		}
 
+		s.Metrics.RecordSyncError(ctx, cfmetrics.ClassifyCloudflareError(result.err))
+		s.reportDocumentWriteFailure(ctx, logger, group, result.err)
 		outcome.groupErrs = append(outcome.groupErrs, result.err)
-
-		for _, partition := range group.partitions {
-			outcome.failedPartitions[partition.Key] = result.err
-		}
 	}
 
 	return outcome
+}
+
+// Event for a tunnel document write that failed.
+const (
+	eventReasonTunnelDocumentWriteFailed = "TunnelDocumentWriteFailed"
+	eventActionWriteTunnelDocument       = "WriteTunnelDocument"
+)
+
+// eventNoteLimit is the API server's limit on an events.k8s.io note.
+const eventNoteLimit = 1024
+
+// reportDocumentWriteFailure logs a failed tunnel document write, once for as
+// long as it keeps failing the same way, and emits a Warning Event on every
+// Gateway served from that tunnel. A same-tunnel group reports on each.
+func (s *RouteSyncer) reportDocumentWriteFailure(ctx context.Context, logger *slog.Logger, group *tunnelGroup, err error) {
+	tunnelID := group.resolved.TunnelID
+	level := s.logRepeats.Level("tunnel document "+tunnelID, cfmetrics.ClassifyCloudflareError(err), slog.LevelError)
+	logger.Log(ctx, level, "writing the tunnel ingress document failed; routes keep serving and the write is retried",
+		"tunnel", tunnelID, "error", err)
+
+	if s.Recorder == nil {
+		return
+	}
+
+	note := "writing the ingress document of tunnel " + tunnelID + " failed: " + err.Error() +
+		"; routes keep serving and the write is retried"
+	if len(note) > eventNoteLimit {
+		note = strings.ToValidUTF8(note[:eventNoteLimit], "")
+	}
+
+	for _, gateway := range s.groupGateways(ctx, logger, group) {
+		s.Recorder.Eventf(gateway, nil, corev1.EventTypeWarning,
+			eventReasonTunnelDocumentWriteFailed, eventActionWriteTunnelDocument, "%s", note)
+	}
+}
+
+// groupGateways returns the Gateways a tunnel group serves: each dedicated
+// partition's own, and every shared-plane Gateway for the shared partition.
+func (s *RouteSyncer) groupGateways(ctx context.Context, logger *slog.Logger, group *tunnelGroup) []*gatewayv1.Gateway {
+	var gateways []*gatewayv1.Gateway
+
+	for _, partition := range group.partitions {
+		if partition.Gateway != nil {
+			gateways = append(gateways, partition.Gateway)
+
+			continue
+		}
+
+		shared, err := managedGateways(ctx, s.Client, s.ControllerName, false)
+		if err != nil {
+			logger.Debug("could not list the shared-plane Gateways to report a failed write on", "error", err)
+
+			continue
+		}
+
+		gateways = append(gateways, shared...)
+	}
+
+	return gateways
 }
 
 // errBrokenDataPlane marks a route parent bound to an opted-in Gateway whose
@@ -1529,15 +1584,12 @@ var errBrokenDataPlane = errors.New(
 	"the Gateway's dedicated data plane is unavailable; the route is not programmed " +
 		"(see the Gateway's Accepted condition, which reports InvalidParameters)")
 
-// injectPartitionSyncErrors records, on each route binding, the sync error
-// affecting each Gateway the route is accepted on, attributed per Gateway so
-// the status writer flips only the affected parents. A parent is affected
-// when (a) its Gateway opted into a dedicated data plane that did NOT resolve
-// (broken → served nowhere), or (b) the tunnel serving its partition failed
-// to sync. A parent on a healthy tunnel carries no error.
-func injectPartitionSyncErrors(
+// injectPlaneRefusals records, on each route binding, the error of each
+// Gateway the route is accepted on whose dedicated data plane was refused or
+// did not resolve, so its routes are served nowhere. It is attributed per
+// Gateway so the status writer flips only the affected parents.
+func injectPlaneRefusals(
 	bindings map[string]routeBindingInfo,
-	failedPartitions map[string]error,
 	infra *infraGateways,
 ) {
 	for key := range bindings {
@@ -1546,7 +1598,7 @@ func injectPartitionSyncErrors(
 		var errs map[string]error
 
 		for gatewayKey := range binding.acceptedGateways {
-			err := gatewaySyncError(gatewayKey, failedPartitions, infra)
+			err := gatewayPlaneError(gatewayKey, infra)
 			if err == nil {
 				continue
 			}
@@ -1594,11 +1646,11 @@ func (s *RouteSyncer) applyPlaneRefusals(
 	applyDataPlaneQuota(infra, resolvedConfig.MaxDataPlanesPerNamespace, collectDataPlaneClaims(infra.listed))
 }
 
-// gatewaySyncError returns the error affecting a route accepted on gatewayKey:
-// the broken-data-plane sentinel for an opted-in Gateway that failed to
-// resolve, otherwise the sync error of the partition (own, or shared) serving
-// it, or nil when healthy.
-func gatewaySyncError(gatewayKey string, failedPartitions map[string]error, infra *infraGateways) error {
+// gatewayPlaneError returns the refusal affecting a route accepted on
+// gatewayKey: a refused tunnel claim, a namespace over its data-plane quota,
+// or the broken-data-plane sentinel for an opted-in Gateway that failed to
+// resolve; nil when the Gateway is served.
+func gatewayPlaneError(gatewayKey string, infra *infraGateways) error {
 	// A refused tunnel claim is checked before the generic broken case: both
 	// fail closed, but "your data plane is unavailable" would send the tenant
 	// hunting an outage instead of fixing the tunnel their Gateway named.
@@ -1624,7 +1676,7 @@ func gatewaySyncError(gatewayKey string, failedPartitions map[string]error, infr
 		return errBrokenDataPlane
 	}
 
-	return failedPartitions[partitionKeyForGateway(gatewayKey, infra)]
+	return nil
 }
 
 // partitionKeyForGateway names the partition a Gateway that is not broken is
@@ -1709,7 +1761,7 @@ func groupRoutes(group *tunnelGroup) ([]gatewayv1.HTTPRoute, []gatewayv1.GRPCRou
 
 // syncTunnelGroup builds the desired rules from EXACTLY the group's routes
 // and reconciles the group's tunnel ingress document: get → diff → sort →
-// catch-all → limit check → unchanged skip → whole-document update.
+// catch-all → unchanged skip → whole-document update.
 //
 //nolint:funlen // sequential build → diff → write pipeline, mirrors the historic single-tunnel body
 func (s *RouteSyncer) syncTunnelGroup(
@@ -1754,8 +1806,6 @@ func (s *RouteSyncer) syncTunnelGroup(
 	if err != nil {
 		s.Metrics.RecordAPICall(ctx, "get", "tunnel_config", "error", time.Since(getStart))
 		s.Metrics.RecordAPIError(ctx, "get", cfmetrics.ClassifyCloudflareError(err))
-		logger.Error("failed to get current tunnel configuration",
-			"tunnel", group.resolved.TunnelID, "error", err)
 
 		result.err = err
 
@@ -1775,27 +1825,6 @@ func (s *RouteSyncer) syncTunnelGroup(
 		ingress.ApplyDiff(currentConfig.Config.Ingress, toAdd, toRemove)))
 
 	result.ruleCount = len(finalRules)
-
-	if len(finalRules) > maxIngressRules {
-		// The cap applies to the whole document, and the document is written
-		// as a whole, so one namespace crossing it freezes the edge-side
-		// configuration of every namespace on this tunnel. The operator log is
-		// where that gets attributed; the returned error reaches
-		// tenant-readable route status and must not name anyone.
-		logger.Error("ingress rule budget exhausted: the tunnel document is refused, "+
-			"so no new hostname on this tunnel can be programmed until it is back under the cap; "+
-			"hostnames already deployed keep serving and the proxy keeps receiving config",
-			"tunnel", group.resolved.TunnelID,
-			"count", len(finalRules),
-			"max", maxIngressRules,
-			"rules_by_namespace", ingressRuleAttribution(httpBuild.HostnamesByNamespace, grpcBuild.HostnamesByNamespace),
-		)
-		s.Metrics.RecordSyncError(ctx, "limit_exceeded")
-
-		result.err = errRuleBudgetExhausted(group.resolved.TunnelID)
-
-		return result
-	}
 
 	// Whole-document API: skip the write when the desired document equals the
 	// deployed one — steady-state reconciles hit this constantly.
@@ -1818,9 +1847,6 @@ func (s *RouteSyncer) syncTunnelGroup(
 	if err != nil {
 		s.Metrics.RecordAPICall(ctx, "update", "tunnel_config", "error", time.Since(updateStart))
 		s.Metrics.RecordAPIError(ctx, "update", cfmetrics.ClassifyCloudflareError(err))
-		s.Metrics.RecordSyncError(ctx, cfmetrics.ClassifyCloudflareError(err))
-		logger.Error("failed to update tunnel configuration",
-			"tunnel", group.resolved.TunnelID, "error", err)
 
 		result.err = err
 
@@ -1989,7 +2015,7 @@ func (s *RouteSyncer) bindRouteParents(
 // bindOneParent resolves and records one parentRef into bindingInfo, returning
 // whether the ref references a Gateway we manage and whether it was accepted.
 // parentGateways[refIdx] is recorded for every managed ref (accepted or not)
-// so the status writer can attribute a per-tunnel sync failure to it.
+// so the status writer can attribute a data-plane refusal to it.
 //
 // A ref that could not be evaluated is recorded as not accepted and counted as
 // referencing us, so the route's status is written even when that is its only
@@ -2125,81 +2151,6 @@ func (s *RouteSyncer) evaluateHostnameOwnership(
 	}
 
 	return s.HostnameOwnership.Evaluate(namespace.Labels, hostnames)
-}
-
-// ruleAttributionLimit caps how many namespaces the attribution names, so a
-// cluster with hundreds of tenants cannot turn one log line into a page.
-const ruleAttributionLimit = 10
-
-// ingressRuleAttribution renders, per namespace, how many of one tunnel's
-// document rules its routes need, largest share first, for the OPERATOR log.
-// Ties break on name so the line is stable across reconciles and diffable
-// between them.
-//
-// The document holds one rule per hostname, so a namespace's share is the
-// number of distinct hostnames its HTTPRoutes and GRPCRoutes serve. A hostname
-// several namespaces serve is one rule but counts toward each of them, so the
-// shares can sum to more than the document holds: each says how many rules
-// that namespace keeps in the document, not how many would go if it left.
-func ingressRuleAttribution(builds ...map[string][]string) string {
-	hostnames := make(map[string]map[string]struct{})
-
-	for _, perBuilder := range builds {
-		for namespace, served := range perBuilder {
-			if hostnames[namespace] == nil {
-				hostnames[namespace] = make(map[string]struct{}, len(served))
-			}
-
-			for _, hostname := range served {
-				hostnames[namespace][hostname] = struct{}{}
-			}
-		}
-	}
-
-	merged := make(map[string]int, len(hostnames))
-	for namespace, served := range hostnames {
-		merged[namespace] = len(served)
-	}
-
-	if len(merged) == 0 {
-		return ""
-	}
-
-	namespaces := slices.Sorted(maps.Keys(merged))
-	slices.SortStableFunc(namespaces, func(left, right string) int {
-		return cmp.Compare(merged[right], merged[left])
-	})
-
-	shown := min(len(namespaces), ruleAttributionLimit)
-
-	parts := make([]string, 0, shown)
-	for _, namespace := range namespaces[:shown] {
-		parts = append(parts, fmt.Sprintf("%s=%d", namespace, merged[namespace]))
-	}
-
-	rendered := strings.Join(parts, ",")
-	if len(namespaces) > shown {
-		rendered += fmt.Sprintf(",+%d more", len(namespaces)-shown)
-	}
-
-	return rendered
-}
-
-// errRuleBudgetExhausted is the TENANT-facing form of the same failure. It
-// becomes the Accepted=False message on every route on the tunnel, and a
-// route's status is readable by whoever owns that route, so it names no
-// namespace and carries no count from which one tenant could infer another's
-// share. What it does carry is the one thing the reader can act on.
-//
-//nolint:wrapcheck // errors.Newf creates the error, there is nothing to wrap
-func errRuleBudgetExhausted(tunnelID string) error {
-	return errors.Newf(
-		"tunnel %s is at this controller's ingress-rule limit, so its configuration is frozen: "+
-			"no new hostname on this tunnel can be programmed until it is back under the limit. "+
-			"If this route declares many hostnames, reducing them frees budget; "+
-			"otherwise ask the operator, who can see which namespace filled it, for a dedicated "+
-			"data plane on its own tunnel",
-		tunnelID)
 }
 
 // sortIngressRules sorts ingress rules: specific hostnames alphabetically first,

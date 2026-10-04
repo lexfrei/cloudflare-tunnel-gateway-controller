@@ -307,13 +307,13 @@ func TestPartitionRoutes_InfraOnlyRouteNeverLeaksToShared(t *testing.T) {
 	}
 }
 
-// TestGatewaySyncError_RejectedClaimIsNamedOnTheRoute pins the tenant-facing
+// TestGatewayPlaneError_RejectedClaimIsNamedOnTheRoute pins the tenant-facing
 // half of a refused tunnel claim. Routes of a refused Gateway already fail
 // closed by inheriting the broken set, but the generic broken-data-plane
 // message sends the tenant looking for an outage that is not there. The route
 // must say the tunnel claim was refused, so the tenant can read their own
 // status and act instead of filing a ticket.
-func TestGatewaySyncError_RejectedClaimIsNamedOnTheRoute(t *testing.T) {
+func TestGatewayPlaneError_RejectedClaimIsNamedOnTheRoute(t *testing.T) {
 	t.Parallel()
 
 	const contested = "22222222-2222-2222-2222-222222222222"
@@ -327,7 +327,7 @@ func TestGatewaySyncError_RejectedClaimIsNamedOnTheRoute(t *testing.T) {
 		},
 	}
 
-	err := gatewaySyncError("team-b/gw", map[string]error{}, infra)
+	err := gatewayPlaneError("team-b/gw", infra)
 
 	require.Error(t, err, "a refused Gateway's routes must still fail closed")
 	assert.Contains(t, err.Error(), contested,
@@ -366,7 +366,7 @@ func TestTenantVisibleRejectionHidesTheIncumbent(t *testing.T) {
 		rejected:  map[string]tunnelownership.Rejection{"attacker/gw": rejection},
 	}
 
-	routeErr := gatewaySyncError("attacker/gw", map[string]error{}, infra)
+	routeErr := gatewayPlaneError("attacker/gw", infra)
 	require.Error(t, routeErr)
 
 	for _, surface := range []string{routeErr.Error(), tunnelRejectionMessage(rejection)} {
@@ -528,7 +528,7 @@ func TestApplyDataPlaneQuota(t *testing.T) {
 		infra := newInfra()
 		applyDataPlaneQuota(infra, new(int32(1)), quotaClaimsFrom(infra))
 
-		routeErr := gatewaySyncError("team-a/new", map[string]error{}, infra)
+		routeErr := gatewayPlaneError("team-a/new", infra)
 		require.Error(t, routeErr)
 		assert.Contains(t, routeErr.Error(), "dedicated data plane",
 			"the generic broken-data-plane sentence would send the tenant hunting an outage")
@@ -555,7 +555,7 @@ func TestApplyDataPlaneQuota(t *testing.T) {
 			UID:       "team-a/new",
 		}))
 
-		require.ErrorIs(t, gatewaySyncError("team-a/new", map[string]error{}, infra), errBrokenDataPlane)
+		require.ErrorIs(t, gatewayPlaneError("team-a/new", infra), errBrokenDataPlane)
 	})
 
 	t.Run("no cap refuses nothing", func(t *testing.T) {

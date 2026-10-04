@@ -91,14 +91,6 @@ type BackendRefError struct {
 type BuildResult struct {
 	Rules      []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress
 	FailedRefs []BackendRefError
-
-	// HostnamesByNamespace lists, sorted, the distinct document hostnames each
-	// route namespace's routes serve. A hostname served from several
-	// namespaces is listed under each. The per-tunnel rule cap is enforced on
-	// the merged document, so when it is exceeded this is what says whose
-	// routes filled it; nothing else in the document records where a rule
-	// came from.
-	HostnamesByNamespace map[string][]string
 }
 
 // Build converts a list of HTTPRoute resources to Cloudflare Tunnel ingress

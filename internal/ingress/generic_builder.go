@@ -105,13 +105,9 @@ func (b *GenericBuilder[R]) Build(ctx context.Context, routes []R) BuildResult {
 
 	var failedRefs []BackendRefError
 
-	index := documentIndex{
-		services:           make(map[string]string),
-		namespaceHostnames: make(map[string]map[string]struct{}),
-	}
+	services := make(map[string]string)
 
 	for i := range routes {
-		namespace, _ := b.adapter.GetMeta(&routes[i])
 		routeEntries, routeFailedRefs := extractProjectedEntries(ctx, b.adapter, &routes[i], resolver)
 		failedRefs = append(failedRefs, routeFailedRefs...)
 
@@ -124,11 +120,13 @@ func (b *GenericBuilder[R]) Build(ctx context.Context, routes []R) BuildResult {
 				continue
 			}
 
-			index.add(namespace, entry)
+			if current, ok := services[entry.hostname]; !ok || entry.service < current {
+				services[entry.hostname] = entry.service
+			}
 		}
 	}
 
-	rules := hostnameRules(index.services)
+	rules := hostnameRules(services)
 
 	if b.adapter.AddCatchAll() {
 		rules = append(rules, zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress{
@@ -141,38 +139,9 @@ func (b *GenericBuilder[R]) Build(ctx context.Context, routes []R) BuildResult {
 	}
 
 	return BuildResult{
-		Rules:                rules,
-		FailedRefs:           failedRefs,
-		HostnamesByNamespace: index.hostnamesByNamespace(),
+		Rules:      rules,
+		FailedRefs: failedRefs,
 	}
-}
-
-// documentIndex collects the hostnames that reach the document: the backend
-// URL each one's rule names, and which namespaces serve it.
-type documentIndex struct {
-	services           map[string]string
-	namespaceHostnames map[string]map[string]struct{}
-}
-
-func (d *documentIndex) add(namespace string, entry routeEntry) {
-	if current, ok := d.services[entry.hostname]; !ok || entry.service < current {
-		d.services[entry.hostname] = entry.service
-	}
-
-	if d.namespaceHostnames[namespace] == nil {
-		d.namespaceHostnames[namespace] = make(map[string]struct{})
-	}
-
-	d.namespaceHostnames[namespace][entry.hostname] = struct{}{}
-}
-
-func (d *documentIndex) hostnamesByNamespace() map[string][]string {
-	result := make(map[string][]string, len(d.namespaceHostnames))
-	for namespace, hostnames := range d.namespaceHostnames {
-		result[namespace] = slices.Sorted(maps.Keys(hostnames))
-	}
-
-	return result
 }
 
 // entryReachesDocument reports whether a projected entry's hostname is listed

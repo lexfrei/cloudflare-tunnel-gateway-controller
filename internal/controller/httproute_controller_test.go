@@ -1048,7 +1048,6 @@ func TestHTTPRouteReconciler_Constants(t *testing.T) {
 
 	// Verify important constants
 	assert.Equal(t, "Gateway", kindGateway)
-	assert.Equal(t, 1000, maxIngressRules)
 }
 
 func TestHTTPRouteReconciler_UpdateRouteStatus_Integration(t *testing.T) {

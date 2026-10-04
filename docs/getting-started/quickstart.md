@@ -263,7 +263,7 @@ kubectl logs --selector app.kubernetes.io/name=cloudflare-tunnel-gateway-control
 Common issues:
 
 - Gateway not found (wrong namespace or name in parentRefs)
-- Cloudflare API error (invalid credentials or permissions)
+- Cloudflare credentials Secret missing (the one the GatewayClassConfig names)
 - Service not found (wrong service name or namespace)
 
 ### SSL Certificate Errors

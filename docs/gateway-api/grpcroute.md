@@ -233,7 +233,7 @@ kubectl get grpcroute my-grpc-route --output jsonpath='{.status.parents[*].condi
 
 | Condition | Meaning |
 |-----------|---------|
-| `Accepted: True` | Route is active and synced to Cloudflare |
+| `Accepted: True` | Route is accepted and programmed in the in-process proxy; the tunnel ingress document may lag behind, see [Limitations](limitations.md#the-tunnel-ingress-document-only-feeds-the-dashboard) |
 | `Accepted: False` | Route was rejected (check reason) |
 | `ResolvedRefs: True` | All backend references resolved |
 | `ResolvedRefs: False` | Backend reference failed |

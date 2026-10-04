@@ -1044,7 +1044,9 @@ func TestRouteSyncer_SyncAllRoutes_AccountIDResolveFailure(t *testing.T) {
 	t.Parallel()
 
 	// Config resolves successfully but account ID auto-detect fails
-	// because API token is invalid
+	// because API token is invalid. The account is needed only to write the
+	// tunnel document, which no route depends on, so the failure is retried
+	// rather than returned.
 	scheme := runtime.NewScheme()
 	require.NoError(t, gatewayv1.Install(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
@@ -1105,9 +1107,10 @@ func TestRouteSyncer_SyncAllRoutes_AccountIDResolveFailure(t *testing.T) {
 
 	result, syncResult, err := syncer.SyncAllRoutes(context.Background())
 
-	require.Error(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, apiErrorRequeueDelay, result.RequeueAfter)
 	require.NotNil(t, syncResult)
+	assert.NotEmpty(t, syncResult.Partitions, "the sync goes on past the failed lookup and builds the proxy config")
 }
 
 func TestRouteSyncer_SyncAllRoutes_TunnelConfigGetFailure(t *testing.T) {
@@ -1201,8 +1204,9 @@ func TestRouteSyncer_SyncAllRoutes_TunnelConfigGetFailure(t *testing.T) {
 
 	result, syncResult, err := syncer.SyncAllRoutes(context.Background())
 
-	// The Cloudflare API call will fail with authentication error
-	require.Error(t, err)
+	// The Cloudflare API call fails with an authentication error. The routes
+	// are served regardless, so the failed read is retried, not a sync error.
+	require.NoError(t, err)
 	assert.Equal(t, apiErrorRequeueDelay, result.RequeueAfter)
 	require.NotNil(t, syncResult)
 	// Route should be in the sync result even on API error

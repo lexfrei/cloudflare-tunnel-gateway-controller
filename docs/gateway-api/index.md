@@ -4,7 +4,7 @@ This section documents the Gateway API implementation in the Cloudflare Tunnel G
 
 ## Overview
 
-The controller implements the [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/) to manage an in-process L7 reverse proxy data plane. It watches Gateway and Route resources, pushes routing configuration to the in-cluster proxy, and registers tunnel endpoints with the Cloudflare API for DNS/edge connectivity. All L7 routing, matching, and filter logic executes in the in-cluster proxy; the Cloudflare API is used only for edge configuration.
+The controller implements the [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/) to manage an in-process L7 reverse proxy data plane. It watches Gateway and Route resources, pushes routing configuration to the in-cluster proxy, and writes each tunnel an ingress document through the Cloudflare API. All L7 routing, matching, and filter logic executes in the in-cluster proxy; the ingress document only feeds the Cloudflare dashboard.
 
 ## Supported Resources
 
@@ -92,4 +92,4 @@ flowchart TB
 
 !!! info "Full Sync"
 
-    Any change to an HTTPRoute or GRPCRoute triggers a full desired-state rebuild. The merged config is pushed to the proxy replicas (via `PUT /config`) only when its content or the replica set changed, and the Cloudflare edge registration is rewritten only when the resulting ingress document differs from the deployed one — steady-state reconciles skip both writes. See [Full Sync Behavior](limitations.md#full-sync-behavior).
+    Any change to an HTTPRoute or GRPCRoute triggers a full desired-state rebuild. The merged config is pushed to the proxy replicas (via `PUT /config`) only when its content or the replica set changed, and the tunnel ingress document is rewritten only when the resulting ingress document differs from the deployed one — steady-state reconciles skip both writes. See [Full Sync Behavior](limitations.md#full-sync-behavior).

@@ -96,6 +96,15 @@ func TestSharedTunnelCredentialDrops(t *testing.T) {
 		assert.Empty(t, sharedTunnelCredentialDrops(groups))
 	})
 
+	t.Run("a class account that failed to resolve is not a different account", func(t *testing.T) {
+		t.Parallel()
+
+		unresolved := config.ResolvedConfig{TunnelID: "class-tunnel", APIToken: "class-token"}
+		groups := []tunnelGroup{{resolved: &unresolved, partitions: []*routePartition{shared, infraSameCreds}}}
+
+		assert.Empty(t, sharedTunnelCredentialDrops(groups))
+	})
+
 	t.Run("infra-only group is left to the collision detector", func(t *testing.T) {
 		t.Parallel()
 

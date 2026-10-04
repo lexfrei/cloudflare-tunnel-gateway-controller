@@ -16,8 +16,8 @@ import (
 // misleading "backendRef weight ignored, traffic splitting not supported"
 // log: weight is fully honored end-to-end by the in-process L7 proxy
 // (weighted-random selection across all backendRefs), so the Cloudflare-side
-// ingress builder — which only programs DNS/edge routing and never serves
-// traffic itself — must not claim weight is ignored or that traffic
+// ingress builder — whose document only feeds the Cloudflare dashboard and
+// never serves traffic itself — must not claim weight is ignored or that traffic
 // splitting is unsupported.
 func TestBuild_WeightedBackendRefsNoWeightWarning(t *testing.T) {
 	t.Parallel()

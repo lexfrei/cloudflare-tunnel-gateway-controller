@@ -143,7 +143,7 @@ The project uses a fork of cloudflared: `github.com/lexfrei/cloudflared` (via `r
 
 **Why:** The v2 in-process proxy needs to inject a custom `OriginProxy` into cloudflared's `Orchestrator`. Upstream cloudflared doesn't expose this capability, so the fork adds an `OverrideProxy` field to `Orchestrator` and modifies `GetOriginProxy()` to return it when set.
 
-**Key architectural consequence:** Because the proxy hooks into cloudflared at the `OriginProxy` layer, ALL tunnel traffic flows through our in-process L7 proxy and bypasses cloudflared's native ingress rules. The Cloudflare-side tunnel API config (Cloudflare ingress rules) only serves DNS / edge routing purposes — actual L7 routing, hostname matching, path matching, filters etc. are all done by the in-cluster proxy. This means features like wildcard routes, regex path matching, and CORS work end-to-end regardless of what the Cloudflare Tunnel API itself supports.
+**Key architectural consequence:** Because the proxy hooks into cloudflared at the `OriginProxy` layer, ALL tunnel traffic flows through our in-process L7 proxy and bypasses cloudflared's native ingress rules. The Cloudflare-side tunnel API config (Cloudflare ingress rules) only feeds the Cloudflare dashboard: the edge reaches the tunnel through the hostname's DNS record, whether or not the document lists it, so a failed document write never touches route status — actual L7 routing, hostname matching, path matching, filters etc. are all done by the in-cluster proxy. This means features like wildcard routes, regex path matching, and CORS work end-to-end regardless of what the Cloudflare Tunnel API itself supports.
 
 **Fork maintenance:**
 

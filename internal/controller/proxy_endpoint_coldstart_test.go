@@ -457,9 +457,9 @@ func TestProxyEndpointReconcile_ColdStartHonoursTheRouteSyncRequeue(t *testing.T
 }
 
 // TestProxyEndpointReconcile_ColdStartSyncThatProducesNoPartitionIsNotRerun
-// covers the failure the route sync reports only as a requeue: config or
-// account resolution failing, as before any GatewayClass exists, returns
-// RequeueAfter with no error and no partitions. The same slice version must not
+// covers the failure the route sync reports only as a requeue: config
+// resolution failing, as before any GatewayClass exists, returns RequeueAfter
+// with no error and no partitions. The same slice version must not
 // run the sync again; the reconcile polls for a built config instead.
 func TestProxyEndpointReconcile_ColdStartSyncThatProducesNoPartitionIsNotRerun(t *testing.T) {
 	t.Parallel()

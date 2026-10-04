@@ -337,13 +337,13 @@ spec:
       rules:
         - alert: CloudflareTunnelSyncErrors
           expr: |
-            sum(rate(cftunnel_sync_errors_total[5m])) > 0.1
-          for: 5m
+            sum(increase(cftunnel_sync_errors_total{error_type!="proxy_push"}[15m])) > 0
+          for: 15m
           labels:
             severity: warning
           annotations:
-            summary: "High sync error rate"
-            description: "Controller experiencing {{ $value | humanize }} sync errors/sec"
+            summary: "Sync errors for 15 minutes"
+            description: "A failing tunnel document write, such as a revoked API token, shows up only here, in TunnelDocumentWriteFailed Events and in the controller log"
 
         - alert: CloudflareTunnelSyncSlow
           expr: |

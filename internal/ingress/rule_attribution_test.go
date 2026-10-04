@@ -90,30 +90,3 @@ func TestBuild_SharedHostnameService(t *testing.T) {
 		assert.Equal(t, "http://alpha.team-a.svc.cluster.local:8080", result.Rules[0].Service.Value)
 	}
 }
-
-// TestBuild_HostnamesByNamespace pins the attribution the per-tunnel rule cap
-// depends on. The document records nothing about where a rule came from, so
-// when the cap is hit this is the only thing that can say whose routes filled
-// it. A hostname several namespaces serve is attributed to each of them.
-func TestBuild_HostnamesByNamespace(t *testing.T) {
-	t.Parallel()
-
-	builder := ingress.NewBuilder("cluster.local", nil, nil, nil, nil)
-	routes := []gatewayv1.HTTPRoute{
-		attributionRoute("team-a", "first", "svc", []gatewayv1.Hostname{"a1.example.com", "shared.example.com"}, 3),
-		attributionRoute("team-a", "second", "svc", []gatewayv1.Hostname{"a1.example.com"}, 1),
-		attributionRoute("team-b", "only", "svc", []gatewayv1.Hostname{"shared.example.com"}, 1),
-		attributionRoute("team-wildcard", "catch-all", "svc", nil, 4),
-	}
-
-	result := builder.Build(context.Background(), routes)
-
-	assert.Equal(t, map[string][]string{
-		"team-a": {"a1.example.com", "shared.example.com"},
-		"team-b": {"shared.example.com"},
-	}, result.HostnamesByNamespace,
-		"a namespace is attributed the distinct hostnames its routes put in the document; "+
-			"a wildcard-only namespace puts none there")
-
-	assert.Len(t, result.Rules, 3, "two distinct hostnames plus the catch-all")
-}

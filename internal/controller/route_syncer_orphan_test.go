@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -319,4 +320,25 @@ func TestSyncAllRoutes_FailedEmptyingIsRetried(t *testing.T) {
 
 	assert.Empty(t, api.hostnamesFor(tenantTunnelUUID))
 	assert.Zero(t, result.RequeueAfter, "nothing is left pending once the tunnel is emptied")
+}
+
+// TestSyncAllRoutes_FailedEmptyingIsCounted pins that a failed emptying write
+// is counted as a sync error, like every other failed document write.
+func TestSyncAllRoutes_FailedEmptyingIsCounted(t *testing.T) {
+	t.Parallel()
+
+	api := newRecordingTunnelAPI(t)
+	syncer := newPartitionSyncSyncer(t, api, orphanClassTunnel)
+	syncTenantTunnel(t, syncer, api)
+
+	reg := prometheus.NewRegistry()
+	syncer.Metrics = cfmetrics.NewCollector(reg)
+
+	optOutInfraGateway(t, syncer)
+	api.failTunnel(tenantTunnelUUID)
+
+	_, _, err := syncer.SyncAllRoutes(context.Background())
+	require.NoError(t, err)
+
+	assert.InDelta(t, 1, gatheredCounterTotal(t, reg, "cftunnel_sync_errors_total"), 0)
 }
