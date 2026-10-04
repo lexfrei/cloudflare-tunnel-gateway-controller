@@ -326,6 +326,7 @@ E2E_TUNNEL_HOSTNAME=<your-tunnel-hostname> \
 | Variable | Fallback | Default | Description |
 | --- | --- | --- | --- |
 | `E2E_TUNNEL_HOSTNAME` | `CONFORMANCE_TUNNEL_HOSTNAME` | none (required) | Edge hostname routing to the test tunnel; see `.env.example` |
+| `E2E_TUNNEL_2_HOSTNAME` | (none) | unset | Edge hostname of a second test tunnel in the same Cloudflare account, for the tests that need a data plane on a tunnel of its own. `hack/conformance-setup.sh` sets it from `CF_TUNNEL_2_HOSTNAME` and creates the `cloudflare-tunnel-2-token` Secret from `CF_TUNNEL_2_TOKEN`. When unset, those tests skip with a warning |
 | `E2E_KUBE_CONTEXT` | `CONFORMANCE_KUBE_CONTEXT` | `kind-v2-test` | kubectl context |
 | `E2E_NAMESPACE` | `CONFORMANCE_NAMESPACE` | `cloudflare-tunnel-system` | Controller namespace |
 | `E2E_TEST_NAMESPACE` | `CONFORMANCE_TEST_NAMESPACE` | `e2e-test` | Test resources namespace |
