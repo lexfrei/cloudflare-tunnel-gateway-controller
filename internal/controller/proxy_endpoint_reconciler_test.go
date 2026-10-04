@@ -3,8 +3,10 @@ package controller
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 
+	"github.com/cockroachdb/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -13,7 +15,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -204,11 +208,13 @@ func TestPartitionKeyForLabel(t *testing.T) {
 	testClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(gateway).Build()
 	reconciler := &ProxyEndpointReconciler{Client: testClient}
 
-	key, ok := reconciler.partitionKeyForLabel(context.Background(), "tenant-a", render.GatewayLabelValue("edge"))
+	key, ok, err := reconciler.partitionKeyForLabel(context.Background(), "tenant-a", render.GatewayLabelValue("edge"))
+	require.NoError(t, err)
 	assert.True(t, ok, "a label value matching a live Gateway must be attributable")
 	assert.Equal(t, "tenant-a/edge", key)
 
-	_, ok = reconciler.partitionKeyForLabel(context.Background(), "tenant-a", "ghost-of-a-deleted-gateway")
+	_, ok, err = reconciler.partitionKeyForLabel(context.Background(), "tenant-a", "ghost-of-a-deleted-gateway")
+	require.NoError(t, err)
 	assert.False(t, ok, "a label value matching no live Gateway must be unattributable")
 }
 
@@ -238,4 +244,96 @@ func TestReconcile_UnattributableGatewayLabelResyncsAll(t *testing.T) {
 		NamespacedName: types.NamespacedName{Name: "es-ghost", Namespace: "tenant-a"},
 	})
 	require.NoError(t, err, "an unattributable Gateway label must resync all partitions without error")
+}
+
+// TestReconcile_ReplayAllFailureIsNotRetried pins the replay of every partition
+// that a deleted or unattributable EndpointSlice triggers. Such an event cannot
+// have brought a pod that needs a config, so a partition that fails, here one
+// whose plane has no DNS records, is not retried from it: a retry would fail
+// again and re-push every healthy partition each time.
+func TestReconcile_ReplayAllFailureIsNotRetried(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		objects []client.Object
+	}{
+		{name: "the slice is gone"},
+		{
+			name: "the slice names no live Gateway",
+			objects: []client.Object{proxySlice("system", map[string]string{render.GatewayLabel: "ghost"},
+				sliceEndpoint("127.0.0.1", false))},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			shared := newRaceReplica(t)
+			testClient := fake.NewClientBuilder().WithScheme(replayScheme(t)).WithObjects(tt.objects...).Build()
+			syncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+			syncer.lookupHost = staleDNSLookup
+
+			_, err := syncer.SyncRoutes(context.Background(), 0, []string{shared.endpoint()},
+				[]*gatewayv1.HTTPRoute{pushFallbackRoute("r-a", "a.example.com")}, nil, nil, nil)
+			require.NoError(t, err)
+
+			seedPartition(t, syncer, serviceEndpoint(t, newRaceReplica(t).endpoint()))
+
+			var puts atomic.Int32
+
+			shared.setOnPut(func() { puts.Add(1) })
+
+			syncer.lookupHost = nxdomainLookup
+
+			result, err := reconcileSlice(t, &ProxyEndpointReconciler{Client: testClient, ProxySyncer: syncer}, "system")
+			require.NoError(t, err)
+			assert.Zero(t, result.RequeueAfter)
+			assert.Equal(t, int32(1), puts.Load(), "the healthy partition is replayed once")
+		})
+	}
+}
+
+var errAPIUnavailable = errors.New("API unavailable")
+
+// TestReconcile_UnreadableEventIsRetried pins that a slice, or the Gateways
+// its label is matched against, that cannot be read is retried rather than
+// answered with a replay of every partition: the event may be a pod joining,
+// and only the slice tells which partition must reach it.
+func TestReconcile_UnreadableEventIsRetried(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		funcs interceptor.Funcs
+	}{
+		{
+			name: "the slice cannot be read",
+			funcs: interceptor.Funcs{Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+				return errAPIUnavailable
+			}},
+		},
+		{
+			name: "the Gateways cannot be listed",
+			funcs: interceptor.Funcs{List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+				return errAPIUnavailable
+			}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			testClient := fake.NewClientBuilder().WithScheme(replayScheme(t)).
+				WithObjects(proxySlice("system", map[string]string{render.GatewayLabel: render.GatewayLabelValue("gw")},
+					sliceEndpoint("127.0.0.1", false))).
+				WithInterceptorFuncs(tt.funcs).Build()
+			syncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+
+			_, err := reconcileSlice(t, &ProxyEndpointReconciler{Client: testClient, ProxySyncer: syncer}, "system")
+			require.ErrorIs(t, err, errAPIUnavailable)
+		})
+	}
 }

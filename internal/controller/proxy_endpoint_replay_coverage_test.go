@@ -22,6 +22,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
@@ -653,4 +654,142 @@ func namedServiceEndpoint(t *testing.T, service, replicaURL string) string {
 	parsed.Host = net.JoinHostPort(service+".system.svc", port)
 
 	return parsed.String()
+}
+
+// TestProxyEndpointReconcile_ChecksEverySliceOfTheService covers a proxy
+// Service split over several EndpointSlices: the replay one slice triggers is
+// checked against the pods every slice of the Service lists, so a pod DNS does
+// not return yet is noticed whichever slice holds it, and a plane whose pods
+// are all in another slice is not taken for one scaled to zero. A slice of
+// another Service or of another address family does not count.
+func TestProxyEndpointReconcile_ChecksEverySliceOfTheService(t *testing.T) {
+	t.Parallel()
+
+	const missingIPv6Pod = "2001:db8::10"
+
+	tests := []struct {
+		name         string
+		trigger      *discoveryv1.EndpointSlice
+		otherService string
+		otherType    discoveryv1.AddressType
+		other        []discoveryv1.Endpoint
+		lookup       hostLookup
+		wantRequeue  bool
+		wantErr      bool
+	}{
+		{
+			name:         "the missed pod is in the triggering slice, the stale pods in another",
+			trigger:      proxySlice("system", serviceLabel("proxy-config"), sliceEndpoint(missingPodAddress, false)),
+			otherService: "proxy-config",
+			other:        []discoveryv1.Endpoint{sliceEndpoint("127.0.0.1", false)},
+			wantRequeue:  true,
+		},
+		{
+			name:         "the missed pod is in another slice of the Service",
+			trigger:      proxySlice("system", serviceLabel("proxy-config"), sliceEndpoint("127.0.0.1", false)),
+			otherService: "proxy-config",
+			other:        []discoveryv1.Endpoint{sliceEndpoint(missingPodAddress, false)},
+			wantRequeue:  true,
+		},
+		{
+			name:         "the stale pods are in a slice of another Service",
+			trigger:      proxySlice("system", serviceLabel("proxy-config"), sliceEndpoint(missingPodAddress, false)),
+			otherService: "unrelated",
+			other:        []discoveryv1.Endpoint{sliceEndpoint("127.0.0.1", false)},
+		},
+		{
+			name: "the stale pods are in a slice of another address family",
+			trigger: typedSlice(proxySlice("system", serviceLabel("proxy-config"),
+				sliceEndpoint(missingIPv6Pod, false)), discoveryv1.AddressTypeIPv6),
+			otherService: "proxy-config",
+			other:        []discoveryv1.Endpoint{sliceEndpoint("127.0.0.1", false)},
+		},
+		{
+			name:         "the plane's pods are all in another slice and its name does not resolve",
+			trigger:      proxySlice("system", serviceLabel("proxy-config")),
+			otherService: "proxy-config",
+			other:        []discoveryv1.Endpoint{sliceEndpoint(missingPodAddress, false)},
+			lookup:       nxdomainLookup,
+			wantErr:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			replica := newRaceReplica(t)
+			endpoint := serviceEndpoint(t, replica.endpoint())
+
+			other := typedSlice(proxySlice("system", serviceLabel(tt.otherService), tt.other...), tt.otherType)
+			other.Name = "es-other"
+
+			testClient := fake.NewClientBuilder().WithScheme(replayScheme(t)).WithObjects(tt.trigger, other).Build()
+			syncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+			syncer.lookupHost = staleDNSLookup
+
+			_, err := syncer.SyncRoutes(context.Background(), 0, []string{endpoint},
+				[]*gatewayv1.HTTPRoute{pushFallbackRoute("r-a", "a.example.com")}, nil, nil, nil)
+			require.NoError(t, err)
+
+			if tt.lookup != nil {
+				syncer.lookupHost = tt.lookup
+			}
+
+			reconciler := &ProxyEndpointReconciler{Client: testClient, ProxySyncer: syncer, ProxyEndpoints: []string{endpoint}}
+
+			result, err := reconcileSlice(t, reconciler, "system")
+			if tt.wantErr {
+				require.Error(t, err, "a plane with pods in another slice is not scaled to zero")
+
+				return
+			}
+
+			require.NoError(t, err)
+
+			if tt.wantRequeue {
+				assert.Positive(t, result.RequeueAfter, "the pod the replay missed must be retried")
+				assert.Less(t, result.RequeueAfter, proxyFirstConfigWait)
+			} else {
+				assert.Zero(t, result.RequeueAfter)
+			}
+		})
+	}
+}
+
+var errSliceListUnavailable = errors.New("EndpointSlice list unavailable")
+
+// TestProxyEndpointReconcile_UnlistableSiblingsCheckTheTriggeringSlice pins the
+// fallback when the other slices of the Service cannot be listed: the replay is
+// still checked against the triggering slice rather than failing or skipping it.
+func TestProxyEndpointReconcile_UnlistableSiblingsCheckTheTriggeringSlice(t *testing.T) {
+	t.Parallel()
+
+	replica := newRaceReplica(t)
+	endpoint := serviceEndpoint(t, replica.endpoint())
+
+	testClient := fake.NewClientBuilder().WithScheme(replayScheme(t)).
+		WithObjects(proxySlice("system", serviceLabel("proxy-config"),
+			sliceEndpoint("127.0.0.1", false), sliceEndpoint(missingPodAddress, false))).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*discoveryv1.EndpointSliceList); ok {
+					return errSliceListUnavailable
+				}
+
+				return c.List(ctx, list, opts...)
+			},
+		}).Build()
+	syncer := NewProxySyncer("cluster.local", "", "", testClient, slog.Default())
+	syncer.lookupHost = staleDNSLookup
+
+	_, err := syncer.SyncRoutes(context.Background(), 0, []string{endpoint},
+		[]*gatewayv1.HTTPRoute{pushFallbackRoute("r-a", "a.example.com")}, nil, nil, nil)
+	require.NoError(t, err)
+
+	reconciler := &ProxyEndpointReconciler{Client: testClient, ProxySyncer: syncer, ProxyEndpoints: []string{endpoint}}
+
+	result, err := reconcileSlice(t, reconciler, "system")
+	require.NoError(t, err)
+	assert.Positive(t, result.RequeueAfter, "the pod the replay missed must be retried")
 }
