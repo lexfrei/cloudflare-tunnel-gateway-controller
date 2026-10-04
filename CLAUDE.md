@@ -629,5 +629,6 @@ kubectl --context kind-<cluster-name> rollout restart deployment --namespace clo
 ### Environment Variables
 
 - `CONFORMANCE_TUNNEL_HOSTNAME` — Edge hostname routing to the test tunnel (required; no default — see `.env.example`)
+- `CONFORMANCE_KUBE_CONTEXT` — kubectl context to run against (default: the kubeconfig's current context)
 - `CONFORMANCE_GATEWAY_CLASS` — GatewayClass name (default: `cloudflare-tunnel`)
 - `CONFORMANCE_REPORT_OUTPUT` — Path for YAML conformance report

@@ -398,6 +398,105 @@ else
   flunk "a plain manifest gets the script's own diagnosis (got: ${plain_err##*$'\n'})"
 fi
 
+# A registry error page in place of the index makes jq fail inside the
+# assignment, and set -e would end the script there with no message of its own.
+printf '<html>502 Bad Gateway</html>' > "${tmp}/index-html.json"
+html_err="$(pull_err "${tmp}/index-html.json" amd64)"
+if grep --quiet "is not valid JSON" <<< "${html_err}"; then
+  pass "a non-JSON index is reported as such"
+else
+  flunk "a non-JSON index is reported as such (got: ${html_err##*$'\n'})"
+fi
+
+# --- probe-ttlsh.sh ------------------------------------------------------------
+#
+# ttl.sh can keep answering reads while upload initiation hangs with no
+# response. The probe decides whether CI pushes at all, so a hang has to read
+# as "do not publish" within its own deadline, not hold the job.
+
+prober="${script_dir}/probe-ttlsh.sh"
+probe_stub_dir="${tmp}/probestubs"
+mkdir -p "${probe_stub_dir}"
+# PROBE_CODES lists one response per attempt: an HTTP status, or "hang" for a
+# request that never answers (curl's exit 28 after --max-time).
+cat > "${probe_stub_dir}/curl" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "${CURL_LOG}"
+attempt="$(grep --count . "${CURL_LOG}")"
+read -r -a codes <<< "${PROBE_CODES}"
+code="${codes[$((attempt - 1))]:-hang}"
+if [[ "${code}" == "hang" ]]; then
+  printf '000'
+  exit 28
+fi
+printf '%s' "${code}"
+STUB
+chmod +x "${probe_stub_dir}/curl"
+
+# run_probe <codes> -> sets probe_out (stdout+stderr) and probe_result (the
+# publish= value written to GITHUB_OUTPUT)
+run_probe() {
+  : > "${tmp}/curl.log"
+  : > "${tmp}/probe-output"
+  probe_out="$(PATH="${probe_stub_dir}:/usr/bin:/bin" PROBE_CODES="$1" CURL_LOG="${tmp}/curl.log" \
+    GITHUB_OUTPUT="${tmp}/probe-output" PROBE_RETRY_DELAY=0 bash "${prober}" 2>&1)" || true
+  probe_result="$(sed -n 's/^publish=//p' "${tmp}/probe-output")"
+}
+
+run_probe "202"
+if [[ "${probe_result}" == "true" ]] && ! grep --quiet '::warning' <<< "${probe_out}"; then
+  pass "an accepted upload initiation lets CI publish"
+else
+  flunk "an accepted upload initiation lets CI publish (publish=${probe_result:-unset}, out: ${probe_out})"
+fi
+if grep --quiet -- '--max-time' "${tmp}/curl.log" \
+  && grep --quiet -- '--request POST' "${tmp}/curl.log" \
+  && grep --quiet 'https://ttl.sh/v2/[^ ]*/blobs/uploads/' "${tmp}/curl.log"; then
+  pass "the probe is a bounded POST that starts an upload"
+else
+  flunk "the probe is a bounded POST that starts an upload (curl: $(tr '\n' ';' < "${tmp}/curl.log"))"
+fi
+
+run_probe "hang hang"
+if [[ "${probe_result}" == "false" ]] && grep --quiet '::warning.*ttl.sh' <<< "${probe_out}"; then
+  pass "a hanging upload initiation skips publishing with a warning"
+else
+  flunk "a hanging upload initiation skips publishing with a warning (publish=${probe_result:-unset}, out: ${probe_out})"
+fi
+
+run_probe "hang 202"
+if [[ "${probe_result}" == "true" ]]; then
+  pass "one hung probe is retried"
+else
+  flunk "one hung probe is retried (publish=${probe_result:-unset})"
+fi
+
+run_probe "503 503"
+if [[ "${probe_result}" == "false" ]]; then
+  pass "an upload initiation that is refused skips publishing"
+else
+  flunk "an upload initiation that is refused skips publishing (publish=${probe_result:-unset})"
+fi
+
+# The probe only helps if every write to ttl.sh honours it, and a stall that
+# starts after the probe passed is bounded only by the step's own timeout.
+pr_workflow="${repo_root}/.github/workflows/pr.yaml"
+ttlsh_writes=".jobs | to_entries[] | .value as \$job | \$job.steps[]
+  | select(((.with.outputs // \"\") | test(\"push=true\")) or ((.run // \"\") | test(\"helm push|imagetools create\")))"
+write_count="$(yq "[${ttlsh_writes}] | length" "${pr_workflow}")"
+unbounded="$(yq "${ttlsh_writes} | select(.[\"timeout-minutes\"] == null) | .name" "${pr_workflow}")"
+ungated="$(yq "${ttlsh_writes} | select(((.if // \"\") + (\$job.if // \"\")) | test(\"needs.registry-probe.outputs.publish == 'true'\") | not) | .name" "${pr_workflow}")"
+if [[ "${write_count}" -ge 4 && -z "${unbounded}" ]]; then
+  pass "every pr.yaml step that writes to ttl.sh has its own timeout (${write_count} steps)"
+else
+  flunk "every pr.yaml step that writes to ttl.sh has its own timeout (${write_count} steps; unbounded: ${unbounded//$'\n'/, })"
+fi
+if [[ "${write_count}" -ge 4 && -z "${ungated}" ]]; then
+  pass "every pr.yaml step that writes to ttl.sh is skipped when the probe fails"
+else
+  flunk "every pr.yaml step that writes to ttl.sh is skipped when the probe fails (ungated: ${ungated//$'\n'/, })"
+fi
+
 # --- verify-manifest-children.sh -------------------------------------------
 #
 # The merge job reads its manifest-list digest back from a run-scoped tag on
@@ -608,7 +707,7 @@ cat > "${gh_stub_dir}/gh" <<'STUB'
 #!/usr/bin/env bash
 case "$1" in
   pr)  [[ -n "${FIXTURE_HEAD:-}" ]] || exit 1; echo "${FIXTURE_HEAD}" ;;
-  api) cat "${FIXTURE_RUNS}" ;;
+  api) if [[ "$2" == */artifacts* ]]; then cat "${FIXTURE_ARTIFACTS}"; else cat "${FIXTURE_RUNS}"; fi ;;
   *)   exit 1 ;;
 esac
 STUB
@@ -637,7 +736,7 @@ runs_fixture() {
 check_finder() {
   local expected="$1" label="$2" fixture="$3" want="${4:-}" actual=0 out
   out="$(PATH="${gh_stub_dir}:/usr/bin:/bin" FIXTURE_HEAD="${ci_head}" FIXTURE_RUNS="${fixture}" \
-    bash "${finder}" 733 2>&1)" || actual=$?
+    FIXTURE_ARTIFACTS="${artifacts_fixture}" bash "${finder}" 733 2>&1)" || actual=$?
   if [[ "${actual}" -ne "${expected}" ]]; then
     flunk "${label}: expected exit ${expected}, got ${actual}"
   elif [[ -n "${want}" ]] && ! grep --quiet --fixed-strings "${want}" <<< "${out}"; then
@@ -648,6 +747,11 @@ check_finder() {
 }
 
 good_run="PR Checks and Build|pull_request|success|${ci_head}|2026-09-05T10:00:00Z|111"
+
+printf '{"total_count":1,"artifacts":[{"name":"image-ref-controller","expired":false}]}' > "${tmp}/artifacts-published.json"
+printf '{"total_count":0,"artifacts":[]}' > "${tmp}/artifacts-none.json"
+printf '{"message":"Server Error"}' > "${tmp}/artifacts-malformed.json"
+artifacts_fixture="${tmp}/artifacts-published.json"
 
 runs_fixture "${tmp}/runs-ok.json" "${good_run}"
 check_finder 0 "a successful pull_request run at this head is accepted" \
@@ -686,6 +790,14 @@ check_finder 0 "the newest successful run wins" "${tmp}/runs-two.json" "run_id=2
 runs_fixture "${tmp}/runs-none.json"
 check_finder 1 "an empty run list is refused" "${tmp}/runs-none.json" "No successful"
 
+# A run that skipped publishing because ttl.sh refused uploads succeeds without
+# images; say so instead of reporting its artifacts as expired.
+artifacts_fixture="${tmp}/artifacts-none.json"
+check_finder 1 "a run that published no images is refused as such" "${tmp}/runs-ok.json" "published no images"
+artifacts_fixture="${tmp}/artifacts-malformed.json"
+check_finder 1 "an artifacts response without a count is refused" "${tmp}/runs-ok.json" "no artifact count"
+artifacts_fixture="${tmp}/artifacts-published.json"
+
 # The head the artifacts are bound to is the one the caller must verify against.
 check_finder 0 "the resolved head is reported to the caller" \
   "${tmp}/runs-ok.json" "head_sha=${ci_head}"
@@ -708,7 +820,7 @@ else
   flunk "both pr-privileged.yaml jobs check the PR head against the run (${match_steps} of 2)"
 fi
 for gated in "Download SARIF artifact" "Upload SARIF to GitHub Security" "Check if first build" \
-  "Download image references" "Read and validate image references" "Comment on PR"; do
+  "Check whether the run published" "Remove Container Available label" "Download image references" "Read and validate image references" "Comment on PR"; do
   if grep --after-context=3 --fixed-strings -- "- name: ${gated}" \
     "${repo_root}/.github/workflows/pr-privileged.yaml" \
     | grep --quiet --fixed-strings "steps.match.outputs.current == 'true'"; then

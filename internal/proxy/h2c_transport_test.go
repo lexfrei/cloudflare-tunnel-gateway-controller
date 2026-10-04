@@ -6,8 +6,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -304,39 +306,107 @@ func TestHandler_PruneTransports_ClosesIdleH2CConnection(t *testing.T) {
 // The header deadline starts once the request body has been sent, the same
 // rule ResponseHeaderTimeout applies on HTTP/1.1: an upload that outlasts the
 // deadline is not cut off, and the backend's prompt answer after it gets
-// through.
+// through. The bubble's fake clock keeps the scheduler out of the measurement:
+// on a loaded host, real time spent between the backend's answer and the
+// transport reading it counted against the 100ms deadline.
 func TestHandler_H2C_HeaderTimeoutStartsAfterUpload_TunnelMode(t *testing.T) {
 	t.Parallel()
+
+	const headerTimeout = 100 * time.Millisecond
 
 	for _, mode := range tunnelWriterModes {
 		t.Run(mode.name, func(t *testing.T) {
 			t.Parallel()
 
-			backend := newH2COnlyBackend(t, http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
-				body, _ := io.ReadAll(req.Body)
-				_, _ = writer.Write(body)
-			}))
-			handler := newH2CHandler(t, backend.URL, &proxy.RouteTimeouts{Request: 100 * time.Millisecond})
-			fake := mode.new()
+			synctest.Test(t, func(t *testing.T) {
+				var protocols http.Protocols
 
-			pipeReader, pipeWriter := io.Pipe()
+				protocols.SetUnencryptedHTTP2(true)
 
-			go func() {
-				for _, chunk := range []string{"a", "b", "c", "d"} {
-					time.Sleep(100 * time.Millisecond)
-
-					_, _ = pipeWriter.Write([]byte(chunk))
+				backend := &http.Server{
+					Protocols: &protocols,
+					Handler: http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
+						body, _ := io.ReadAll(req.Body)
+						_, _ = writer.Write(body)
+					}),
 				}
+				listener := newPipeListener()
 
-				_ = pipeWriter.Close()
-			}()
+				go func() { _ = backend.Serve(listener) }()
 
-			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://app.example.com/upload", pipeReader)
+				handler := newH2CHandler(t, "http://backend.test", &proxy.RouteTimeouts{Request: headerTimeout})
+				proxy.UseH2CDialerForTest(handler, "backend.test", headerTimeout, listener.dial)
 
-			handler.ServeHTTP(fake, req)
+				pipeReader, pipeWriter := io.Pipe()
 
-			assert.Equal(t, http.StatusOK, fake.Status(), "a 504 means the upload time counted against the header deadline")
-			assert.Equal(t, "abcd", string(fake.Body()))
+				go func() {
+					for _, chunk := range []string{"a", "b", "c", "d"} {
+						time.Sleep(headerTimeout)
+
+						_, _ = pipeWriter.Write([]byte(chunk))
+					}
+
+					_ = pipeWriter.Close()
+				}()
+
+				fake := mode.new()
+				req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://app.example.com/upload", pipeReader)
+
+				handler.ServeHTTP(fake, req)
+
+				assert.Equal(t, http.StatusOK, fake.Status(), "a 504 means the upload time counted against the header deadline")
+				assert.Equal(t, "abcd", string(fake.Body()))
+
+				handler.PruneTransports(map[string]bool{})
+				require.NoError(t, backend.Close())
+			})
 		})
 	}
 }
+
+// pipeListener serves in-memory net.Pipe connections, which a synctest
+// bubble can wait on, where a TCP socket would stall its fake clock.
+type pipeListener struct {
+	conns  chan net.Conn
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newPipeListener() *pipeListener {
+	return &pipeListener{conns: make(chan net.Conn), closed: make(chan struct{})}
+}
+
+func (l *pipeListener) Accept() (net.Conn, error) {
+	select {
+	case conn := <-l.conns:
+		return conn, nil
+	case <-l.closed:
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *pipeListener) Close() error {
+	l.once.Do(func() { close(l.closed) })
+
+	return nil
+}
+
+func (l *pipeListener) Addr() net.Addr {
+	return pipeAddr{}
+}
+
+func (l *pipeListener) dial(_ context.Context, _, _ string) (net.Conn, error) {
+	server, client := net.Pipe()
+
+	select {
+	case l.conns <- server:
+		return client, nil
+	case <-l.closed:
+		return nil, net.ErrClosed
+	}
+}
+
+type pipeAddr struct{}
+
+func (pipeAddr) Network() string { return "pipe" }
+func (pipeAddr) String() string  { return "pipe" }

@@ -270,8 +270,11 @@ Tests run automatically in CI:
 - name: Run tests
   run: go test -v -race -tags=envtest -coverprofile=coverage.out -covermode=atomic ./...
 
+- name: Run cluster-free conformance-package tests
+  run: go test -race -tags conformance -skip '^TestGatewayAPIConformance$' ./test/conformance/
+
 - name: Upload coverage
-  uses: codecov/codecov-action@v6
+  uses: codecov/codecov-action@v7
   with:
     files: coverage.out
 ```
@@ -300,6 +303,8 @@ A digest binds content, not trust. On a fork PR the artifacts are produced by th
 The run is chosen by the PR's current head commit, and only a successful `pull_request` run for that exact commit is accepted — a run for an earlier head is refused rather than silently deployed. `hack/verify-ci-bundle.sh` then checks the downloaded artifacts before anything reaches the cluster: both image references must be digest-pinned, the recorded commit must match the head being verified, and the chart must carry that PR's version. Any mismatch aborts before the cluster is created.
 
 Two independent clocks limit how long a PR stays deployable this way. The chart and the recorded digests are GitHub Actions artifacts, kept for one day. The images live on `ttl.sh`, which derives a tag's lifetime from the tag itself and only when the whole tag is a bare duration; `pr-<N>-1d` is not, so those images expire on whatever default the service applies, which this repository does not control. The artifacts outliving the images would not help either way, because `controller.ref` records a digest rather than the image: once ttl.sh drops the blobs, the reference points at nothing. Whichever runs out first, the fix is the same: re-run the PR's CI.
+
+A run can also succeed without publishing anything. Before pushing, CI checks that `ttl.sh` accepts uploads; when it does not, the images and the chart are still built, the push is skipped with a warning, and the PR comment says nothing was published. `--use-ci-images` then stops with a message naming that run. Re-run the PR's CI once `ttl.sh` accepts uploads again.
 
 ### Running E2E Tests
 
@@ -357,6 +362,7 @@ CONFORMANCE_REPORT_OUTPUT=./conformance-report.yaml \
 | Variable | Default | Description |
 | --- | --- | --- |
 | `CONFORMANCE_TUNNEL_HOSTNAME` | none (required) | Edge hostname routing to the test tunnel; see `.env.example` |
+| `CONFORMANCE_KUBE_CONTEXT` | kubeconfig's current context | kubectl context the suite runs against |
 | `CONFORMANCE_GATEWAY_CLASS` | `cloudflare-tunnel` | GatewayClass name |
 | `CONFORMANCE_REPORT_OUTPUT` | (none) | Path for YAML conformance report |
 | `CONTROLLER_VERSION` | `dev` | Version for report metadata |

@@ -35,7 +35,8 @@ done
 digests="$(jq --raw-output --arg arch "${arch}" '
     .manifests[]?
     | select(.platform.os == "linux" and .platform.architecture == $arch)
-    | .digest' <<< "${index}")"
+    | .digest' <<< "${index}")" \
+  || die "the image index for ${ref} is not valid JSON"
 # Refuse an ambiguous index outright rather than pick one of the two.
 [[ "$(grep --count . <<< "${digests}")" -le 1 ]] \
   || die "${ref} carries more than one linux/${arch} manifest"

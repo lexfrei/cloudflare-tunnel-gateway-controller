@@ -75,6 +75,15 @@ jobs:
             go.sum
             hack/tools/go.sum
 
+      # Nothing else fails on a requirement that is unused or in the wrong
+      # require block; the drift surfaces later as an unrelated diff.
+      - name: Verify go.mod and go.sum are tidy
+        run: |
+          set -euo pipefail
+          go mod tidy -diff
+          cd hack/tools
+          go mod tidy -diff
+
       # go.sum pins module zips, not the vendored copies, so no other check
       # notices a hand-edit under vendor/ or a go.mod change that was never
       # re-vendored. Re-vendor in place and let git report the difference;
@@ -236,6 +245,12 @@ jobs:
           export KUBEBUILDER_ASSETS
           go test -v -race -tags=envtest -coverprofile=coverage.out -covermode=atomic ./...
 
+      # The files under test/conformance carry the conformance build tag, so
+      # the run above skips them. Everything except the suite itself runs
+      # without a cluster.
+      - name: Run cluster-free conformance-package tests
+        run: go test -race -tags conformance -skip '^TestGatewayAPIConformance$' ./test/conformance/
+
       - name: Upload coverage
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
         with:
@@ -243,15 +258,33 @@ jobs:
           flags: unittests
           name: codecov-umbrella
 
+  # Decides whether this run pushes anything to ttl.sh. Runs right before the
+  # builds so the answer is as fresh as it can be; a hang that starts later is
+  # bounded by each push step's own timeout instead.
+  registry-probe:
+    name: Probe ttl.sh
+    needs: [security, lint, lint-workflows, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      publish: ${{ steps.probe.outputs.publish }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: hack
+
+      - name: Probe upload initiation
+        id: probe
+        run: hack/probe-ttlsh.sh
+
   # Build containers only after lint, test and security succeed
   build-and-push:
     name: Build and Push (${{ matrix.component }}/${{ matrix.arch }})
-    needs: [security, lint, lint-workflows, test]
+    needs: [security, lint, lint-workflows, test, registry-probe]
     runs-on: ${{ matrix.runner }}
-    # ttl.sh sometimes stalls outright or slows a push to tens of minutes;
-    # without a bound a stalled leg holds the runner for the six-hour default.
-    # A push slower than this budget fails and needs a rerun once the
-    # registry recovers.
+    # Covers the build and both push attempts, each of which has its own
+    # timeout below.
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -288,31 +321,34 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
-      # ttl.sh is an anonymous ephemeral registry that intermittently drops
-      # blob writes ("error writing layer blob: not_found"), failing the leg
-      # after a clean build. Tolerate one transient push failure with a
-      # duplicate step: the first attempt is continue-on-error, the retry only
-      # runs when the first attempt failed, and the gha layer cache keeps the
-      # retry cheap (push-only when the first attempt got as far as writing
-      # cache-to). Issue #423.
-      - name: Build and Push to ttl.sh by digest
-        id: build
-        continue-on-error: true
+      # Built whether or not ttl.sh takes uploads, so the Containerfile is
+      # checked either way. The push steps below rebuild from this builder's
+      # cache, so their time is the push alone.
+      - name: Build
+        timeout-minutes: 30
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: ./${{ matrix.file }}
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          outputs: type=cacheonly
           cache-from: type=gha,scope=build-${{ matrix.component }}-${{ matrix.arch }}
           cache-to: type=gha,scope=build-${{ matrix.component }}-${{ matrix.arch }},mode=max
           build-args: |
             VERSION=pr-${{ github.event.pull_request.number }}
             REVISION=${{ github.event.pull_request.head.sha }}
 
-      - name: Build and Push to ttl.sh by digest (retry)
-        id: build-retry
-        if: steps.build.outcome == 'failure'
+      # ttl.sh is an anonymous ephemeral registry that intermittently drops
+      # blob writes ("error writing layer blob: not_found"), failing the leg
+      # after a clean build. Tolerate one transient push failure with a
+      # duplicate step: the first attempt is continue-on-error and the retry
+      # only runs when the first attempt failed. Issue #423. Each attempt has
+      # its own timeout, so a push that stalls fails long before the job does.
+      - name: Push to ttl.sh by digest
+        id: push
+        if: needs.registry-probe.outputs.publish == 'true'
+        continue-on-error: true
+        timeout-minutes: 10
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
@@ -320,22 +356,38 @@ jobs:
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=build-${{ matrix.component }}-${{ matrix.arch }}
-          cache-to: type=gha,scope=build-${{ matrix.component }}-${{ matrix.arch }},mode=max
+          build-args: |
+            VERSION=pr-${{ github.event.pull_request.number }}
+            REVISION=${{ github.event.pull_request.head.sha }}
+
+      - name: Push to ttl.sh by digest (retry)
+        id: push-retry
+        if: needs.registry-probe.outputs.publish == 'true' && steps.push.outcome == 'failure'
+        timeout-minutes: 10
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: ./${{ matrix.file }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=build-${{ matrix.component }}-${{ matrix.arch }}
           build-args: |
             VERSION=pr-${{ github.event.pull_request.number }}
             REVISION=${{ github.event.pull_request.head.sha }}
 
       - name: Export digest
+        if: needs.registry-probe.outputs.publish == 'true'
         run: |
           mkdir -p /tmp/digests
-          if [[ "${{ steps.build.outcome }}" == "success" ]]; then
-            digest="${{ steps.build.outputs.digest }}"
+          if [[ "${{ steps.push.outcome }}" == "success" ]]; then
+            digest="${{ steps.push.outputs.digest }}"
           else
-            digest="${{ steps.build-retry.outputs.digest }}"
+            digest="${{ steps.push-retry.outputs.digest }}"
           fi
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest
+        if: needs.registry-probe.outputs.publish == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: digests-${{ matrix.component }}-${{ matrix.arch }}
@@ -347,7 +399,8 @@ jobs:
   merge-manifests:
     name: Merge Manifests (${{ matrix.component }})
     runs-on: ubuntu-latest
-    needs: build-and-push
+    needs: [registry-probe, build-and-push]
+    if: needs.registry-probe.outputs.publish == 'true'
     timeout-minutes: 20
     # The two legs are independent, and whether both fail the same way is the
     # first thing to know when one does.
@@ -379,6 +432,7 @@ jobs:
 
       - name: Create manifest list and push
         working-directory: /tmp/digests
+        timeout-minutes: 8
         run: |
           set -euo pipefail
 
@@ -404,7 +458,7 @@ jobs:
           # failing the job.
           ok=0
           for attempt in 1 2 3; do
-            if docker buildx imagetools create \
+            if timeout 120 docker buildx imagetools create \
               --tag "${IMAGE_NAME}:${TAG}" \
               --tag "${IMAGE_NAME}:${RUN_TAG}" \
               "${images[@]}"; then
@@ -422,6 +476,7 @@ jobs:
       # overwrite it on ttl.sh. Publish the manifest-list digest so local
       # verification can address the image by content instead.
       - name: Export image reference
+        timeout-minutes: 5
         run: |
           set -euo pipefail
 
@@ -611,9 +666,8 @@ jobs:
   build-chart:
     name: Build Chart
     runs-on: ubuntu-latest
-    needs: [security, lint, lint-workflows, test, lint-chart]
-    # Same ttl.sh budget as the image legs: the chart push stalls the same way.
-    timeout-minutes: 60
+    needs: [security, lint, lint-workflows, test, lint-chart, registry-probe]
+    timeout-minutes: 30
     steps:
       - name: Checkout PR code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -754,6 +808,8 @@ jobs:
           ls -lh -- *.tgz
 
       - name: Push chart to ttl.sh
+        if: needs.registry-probe.outputs.publish == 'true'
+        timeout-minutes: 8
         run: |
           set -euo pipefail
 
@@ -765,7 +821,7 @@ jobs:
           # (issue #423), so retry a couple of times before failing the job.
           ok=0
           for attempt in 1 2 3; do
-            if helm push "${CHART_PKG}" oci://ttl.sh; then
+            if timeout 120 helm push "${CHART_PKG}" oci://ttl.sh; then
               ok=1
               break
             fi
@@ -781,6 +837,7 @@ jobs:
       # The commit rides along with the chart so a consumer can bind the
       # artifact to the revision it was built from.
       - name: Assemble chart bundle
+        if: needs.registry-probe.outputs.publish == 'true'
         run: |
           set -euo pipefail
 
@@ -792,6 +849,7 @@ jobs:
           echo "${{ github.event.pull_request.head.sha }}" > /tmp/bundle/head-sha.txt
 
       - name: Upload chart bundle artifact
+        if: needs.registry-probe.outputs.publish == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ci-chart-bundle
@@ -800,6 +858,7 @@ jobs:
           retention-days: 1
 
       - name: Generate chart summary
+        if: needs.registry-probe.outputs.publish == 'true'
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
           CHART_VERSION="0.0.0-pr.${PR_NUMBER}-1d"
@@ -818,4 +877,15 @@ jobs:
             echo "> **Note:** The \`-1d\` suffix sets no lifetime -- ttl.sh reads one"
             echo "> only from a tag that is entirely a duration. This run also attaches"
             echo "> the packaged chart as an artifact, kept for one day."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Note that nothing was published
+        if: needs.registry-probe.outputs.publish != 'true'
+        run: |
+          {
+            echo "## Not published"
+            echo ""
+            echo "ttl.sh was not accepting uploads when this run checked, so the images and"
+            echo "the chart were built but not pushed. Re-run this workflow once ttl.sh"
+            echo "accepts uploads again to publish them."
           } >> "$GITHUB_STEP_SUMMARY"

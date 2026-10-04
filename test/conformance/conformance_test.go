@@ -29,6 +29,11 @@ func TestGatewayAPIConformance(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	err = selectKubeContext(t, os.Getenv("CONFORMANCE_KUBE_CONTEXT"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	opts := conformance.DefaultOptions(t)
 
 	opts.GatewayClassName = envOrDefault("CONFORMANCE_GATEWAY_CLASS", "cloudflare-tunnel")
