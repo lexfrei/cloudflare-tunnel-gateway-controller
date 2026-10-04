@@ -16,15 +16,21 @@ import (
 // TestConvertRoutes_ClientCertResolverSeesTheRoute pins that the converter
 // asks for a parent's client certificate on behalf of a specific route, so the
 // caller can decide per route which parents may supply one. A parentRef
-// without a namespace resolves to the route's own namespace.
+// without a namespace resolves to the route's own namespace, and a ListenerSet
+// parent is passed on with its kind.
 func TestConvertRoutes_ClientCertResolverSeesTheRoute(t *testing.T) {
 	t.Parallel()
 
-	type lookup struct{ route, gateway types.NamespacedName }
+	type lookup struct {
+		route, parent types.NamespacedName
+		kind          gatewayv1.Kind
+	}
 
 	parentRefs := []gatewayv1.ParentReference{
 		{Namespace: new(gatewayv1.Namespace("other")), Name: "gw-other"},
 		{Name: "gw-local"},
+		{Kind: new(gatewayv1.Kind("ListenerSet")), Name: "ls"},
+		{Kind: new(gatewayv1.Kind("Service")), Name: "not-a-parent-kind"},
 	}
 	backend := gatewayv1.BackendRef{BackendObjectReference: gatewayv1.BackendObjectReference{
 		Name: "svc", Port: new(gatewayv1.PortNumber(443)),
@@ -32,14 +38,16 @@ func TestConvertRoutes_ClientCertResolverSeesTheRoute(t *testing.T) {
 	tlsResolver := func(context.Context, string, string, int32) *proxy.BackendTLSConfig {
 		return &proxy.BackendTLSConfig{ServerName: "svc"}
 	}
+	routeNN := types.NamespacedName{Namespace: "team", Name: "r"}
 	wantLookups := []lookup{
-		{route: types.NamespacedName{Namespace: "team", Name: "r"}, gateway: types.NamespacedName{Namespace: "other", Name: "gw-other"}},
-		{route: types.NamespacedName{Namespace: "team", Name: "r"}, gateway: types.NamespacedName{Namespace: "team", Name: "gw-local"}},
+		{route: routeNN, parent: types.NamespacedName{Namespace: "other", Name: "gw-other"}, kind: "Gateway"},
+		{route: routeNN, parent: types.NamespacedName{Namespace: "team", Name: "gw-local"}, kind: "Gateway"},
+		{route: routeNN, parent: types.NamespacedName{Namespace: "team", Name: "ls"}, kind: "ListenerSet"},
 	}
 
 	recorder := func(lookups *[]lookup) proxy.GatewayClientCertResolver {
-		return func(_ context.Context, route, gateway types.NamespacedName) *proxy.ClientCertConfig {
-			*lookups = append(*lookups, lookup{route: route, gateway: gateway})
+		return func(_ context.Context, route, parent types.NamespacedName, kind gatewayv1.Kind) *proxy.ClientCertConfig {
+			*lookups = append(*lookups, lookup{route: route, parent: parent, kind: kind})
 
 			return nil
 		}

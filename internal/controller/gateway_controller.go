@@ -1755,7 +1755,7 @@ func servableListenerProtocol(protocol gatewayv1.ProtocolType) bool {
 // not parse. Per the Gateway API spec (gateway_types.go), a Gateway holding
 // any invalid listener is marked ListenersNotValid, and one holding no valid
 // listener at all is Accepted=False. Returns (any invalid, all invalid, the
-// message naming the causes present).
+// message naming the causes present and the listeners still accepted).
 func gatewayInvalidListeners(
 	listeners []gatewayv1.Listener,
 	conflicted map[gatewayv1.SectionName]bool,
@@ -1766,7 +1766,7 @@ func gatewayInvalidListeners(
 
 	invalid, unsupported, badSelector := 0, 0, 0
 
-	var conflictedNames []string
+	var conflictedNames, acceptedNames []string
 
 	for i := range listeners {
 		switch {
@@ -1779,6 +1779,8 @@ func gatewayInvalidListeners(
 		case routebinding.NamespaceSelectorInvalid(listeners[i].AllowedRoutes):
 			badSelector++
 			invalid++
+		default:
+			acceptedNames = append(acceptedNames, string(listeners[i].Name))
 		}
 	}
 
@@ -1795,6 +1797,10 @@ func gatewayInvalidListeners(
 
 	if badSelector > 0 {
 		causes = append(causes, "one or more listeners have an invalid allowedRoutes.namespaces.selector")
+	}
+
+	if invalid > 0 && len(acceptedNames) > 0 {
+		causes = append(causes, "accepted listeners: "+strings.Join(acceptedNames, ", "))
 	}
 
 	return invalid > 0, invalid == len(listeners), strings.Join(causes, "; ")

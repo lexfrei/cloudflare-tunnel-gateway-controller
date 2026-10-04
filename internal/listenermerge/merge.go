@@ -30,7 +30,8 @@
 // listener whose protocol this controller does not serve takes no part in
 // conflict detection: the spec says it SHOULD NOT be accepted and exempts it
 // from the conflict rule, so it neither claims its port nor refuses another
-// listener there.
+// listener there. A ListenerSet entry with such a protocol still loses to an
+// earlier claimant, but claims nothing either.
 package listenermerge
 
 import (
@@ -238,6 +239,12 @@ func annotateConflicts(merged []MergedListener) {
 		if owner, taken := hostnameOwner[key]; taken {
 			markConflict(merged, owner, i, gatewayv1.ListenerReasonHostnameConflict, "hostname")
 
+			continue
+		}
+
+		// An unservable ListenerSet entry is refused as unsupported, so it
+		// must not make a later servable entry on its port lose.
+		if !ServableProtocol(entry.Protocol) {
 			continue
 		}
 

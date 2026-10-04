@@ -35,6 +35,9 @@ type echoResponse struct {
 	Headers   map[string][]string `json:"headers"`
 	Namespace string              `json:"namespace"`
 	Pod       string              `json:"pod"`
+	TLS       struct {
+		PeerCertificates []string `json:"peerCertificates"`
+	} `json:"tls"`
 }
 
 // testConfig holds environment-driven test configuration.

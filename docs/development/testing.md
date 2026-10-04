@@ -384,7 +384,7 @@ What actually gets exercised against a real Cloudflare Tunnel, and by which suit
 | Service types: ClusterIP, headless, ExternalName | conformance (`HTTPRouteServiceTypes`) | headless targetPort resolution covered |
 | BackendTLSPolicy (CA ConfigMap, SNI hostname, DNS + URI SANs) — HTTP path | conformance | `SupportBackendTLSPolicy` + `SANValidation` |
 | BackendTLSPolicy — gRPC path | e2e (`TestGRPCRouteOverTLSBackend`) | the upstream suite has no BackendTLSPolicy-over-GRPCRoute conformance test |
-| Gateway client certificate (backend mTLS) | conformance | multi-parent edge case unit-only (documented in limitations) |
+| Gateway client certificate (backend mTLS) | conformance + e2e (`TestBackendClientCertSelectionEndToEnd`) | the e2e covers a route with several parents (shared and dedicated plane, spec order, a refused first parent, a ListenerSet parent) on the suite tunnel; certificate selection across distinct tunnels is unit-tested (`backend_client_cert_parent_test.go`) |
 | GRPCRoute matching + header modifiers through the tunnel transport | e2e (`TestGRPCRouteEndToEnd`) | conformance gRPC tests dial the Cloudflare edge via the injectable client; the e2e adds the production pattern — a real registered hostname with no `X-Original-Host` header |
 | WebSocket upgrade through the tunnel (+ response filters) | conformance + e2e | `ws` cleartext; `wss` (TLS WebSocket backend) is unit-only, see below |
 | `appProtocol` semantics: `kubernetes.io/h2c` | conformance | |

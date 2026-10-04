@@ -175,3 +175,49 @@ func TestMerge_UnservableGatewayListenerClaimsNothing(t *testing.T) {
 		})
 	}
 }
+
+// TestMerge_UnservableListenerSetEntryClaimsNothing pins that a ListenerSet
+// entry with a protocol this controller does not serve claims neither its
+// port's protocol nor its hostname, so a later servable entry on that port
+// stays usable. The unservable entry itself still loses to an earlier HTTP
+// claim, which ListenerSetProtocolConflict requires.
+func TestMerge_UnservableListenerSetEntryClaimsNothing(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		hostname *gatewayv1.Hostname
+	}{
+		{name: "no hostname"},
+		{name: "same hostname", hostname: hostnamePtr("a.example.com")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gw := &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"}}
+			first := newListenerSet("first", "infra", "2026-01-01T00:00:00Z", []gatewayv1.ListenerEntry{
+				{Name: "raw", Port: 81, Protocol: gatewayv1.TCPProtocolType, Hostname: tt.hostname},
+			})
+			second := newListenerSet("second", "infra", "2026-01-02T00:00:00Z", []gatewayv1.ListenerEntry{
+				{Name: "web", Port: 81, Protocol: gatewayv1.HTTPProtocolType, Hostname: tt.hostname},
+			})
+			third := newListenerSet("third", "infra", "2026-01-03T00:00:00Z", []gatewayv1.ListenerEntry{
+				{Name: "late-raw", Port: 81, Protocol: gatewayv1.TCPProtocolType},
+			})
+
+			res := listenermerge.Merge(gw, []*gatewayv1.ListenerSet{third, second, first})
+			require.Len(t, res.Listeners, 3)
+
+			reasons := map[gatewayv1.SectionName]gatewayv1.ListenerConditionReason{}
+			for _, listener := range res.Listeners {
+				reasons[listener.Name] = listener.ConflictReason
+			}
+
+			assert.Empty(t, reasons["raw"], "nothing precedes the first unservable entry")
+			assert.Empty(t, reasons["web"], "an unservable entry must not make a servable one lose")
+			assert.Equal(t, gatewayv1.ListenerReasonProtocolConflict, reasons["late-raw"])
+		})
+	}
+}
