@@ -289,8 +289,6 @@ func (r *ListenerSetReconciler) computeAcceptance(
 	}
 
 	if !allowed.Accepted {
-		reason := gatewayv1.ListenerSetReasonNotAllowed
-
 		message := listenerSetMsgNotAllowed
 		if allowed.Message != "" {
 			message = allowed.Message
@@ -298,7 +296,7 @@ func (r *ListenerSetReconciler) computeAcceptance(
 
 		return listenerSetAcceptanceResult{
 			Accepted: false,
-			Reason:   reason,
+			Reason:   allowed.Reason,
 			Message:  message,
 		}, nil
 	}

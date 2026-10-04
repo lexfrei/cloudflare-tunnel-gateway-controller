@@ -177,15 +177,8 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	//   - the GatewayClassConfig or credentials Secret is missing.
 	// Without this early strip the Gateway would hang in Terminating forever,
 	// contradicting the migration guide's "automatic on delete" promise.
-	if !gateway.DeletionTimestamp.IsZero() &&
-		controllerutil.ContainsFinalizer(&gateway, legacyCloudflaredFinalizer) {
-		controllerutil.RemoveFinalizer(&gateway, legacyCloudflaredFinalizer)
-
-		if err := r.Update(ctx, &gateway); err != nil {
-			return ctrl.Result{}, errors.Wrap(err, "failed to remove legacy cloudflared finalizer")
-		}
-
-		return ctrl.Result{}, nil
+	if stripped, err := r.stripLegacyFinalizer(ctx, &gateway); stripped || err != nil {
+		return ctrl.Result{}, err
 	}
 
 	if managed, err := gatewayIsManaged(ctx, r.Client, r.ControllerName, &gateway); err != nil || !managed {
@@ -202,6 +195,10 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	r.warnInvalidAllowedListeners(&gateway)
+
+	if routebinding.RequestsFrontendValidation(&gateway) {
+		return ctrl.Result{}, r.refuseFrontendValidation(ctx, &gateway)
+	}
 
 	resolvedConfig, perGatewayMode, err := r.resolveGatewayConfig(ctx, &gateway)
 	if err != nil {
@@ -234,6 +231,22 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// stripLegacyFinalizer removes the v2 cloudflared finalizer from a Gateway
+// being deleted. It reports whether it handled the Gateway.
+func (r *GatewayReconciler) stripLegacyFinalizer(ctx context.Context, gateway *gatewayv1.Gateway) (bool, error) {
+	if gateway.DeletionTimestamp.IsZero() || !controllerutil.ContainsFinalizer(gateway, legacyCloudflaredFinalizer) {
+		return false, nil
+	}
+
+	controllerutil.RemoveFinalizer(gateway, legacyCloudflaredFinalizer)
+
+	if err := r.Update(ctx, gateway); err != nil {
+		return true, errors.Wrap(err, "failed to remove legacy cloudflared finalizer")
+	}
+
+	return true, nil
 }
 
 // eventReasonInvalidAllowedListeners names the Warning Event raised on a
@@ -419,6 +432,31 @@ func (r *GatewayReconciler) handleResolveError(
 	}
 
 	return ctrl.Result{RequeueAfter: configErrorRequeueDelay, Priority: new(priorityGateway)}, nil
+}
+
+// frontendValidationMessage is the Accepted=False message of a Gateway that
+// sets spec.tls.frontend. It names where client certificates can be checked
+// instead, and must fit maxConditionMessageLength with refusedConditionPrefix.
+const frontendValidationMessage = "spec.tls.frontend (client certificate validation) is not supported: " +
+	"clients complete TLS with the Cloudflare edge, not this Gateway. " +
+	"Remove it and check client certificates at the Cloudflare edge (mTLS or Access rules)."
+
+// errFrontendValidationRefused marks a Gateway refused because it sets
+// spec.tls.frontend, so the status writer reports it as Invalid.
+var errFrontendValidationRefused = errors.New(frontendValidationMessage)
+
+// refuseFrontendValidation reports a Gateway that sets spec.tls.frontend as
+// Accepted=False and Programmed=False with reason Invalid. Route binding
+// refuses the same Gateway through routebinding.RequestsFrontendValidation,
+// so none of its routes is programmed. No requeue: only a spec edit, which
+// is an event of its own, can change the verdict.
+func (r *GatewayReconciler) refuseFrontendValidation(ctx context.Context, gateway *gatewayv1.Gateway) error {
+	if !isRefusalReported(gateway, frontendValidationMessage) {
+		log.FromContext(ctx).Info("refusing a Gateway that sets spec.tls.frontend",
+			"gateway", gateway.Namespace+"/"+gateway.Name)
+	}
+
+	return r.setConfigErrorStatus(ctx, gateway, errFrontendValidationRefused)
 }
 
 // errTunnelClaimRefused marks a Gateway refused by the tunnel-ownership rule,
@@ -994,8 +1032,9 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 		now := metav1.Now()
 
 		prefix := "Failed to resolve Gateway configuration: "
-		if errors.Is(configErr, errTunnelClaimRefused) || errors.Is(configErr, errDataPlaneQuotaExceeded) {
-			// The configuration resolved fine; the plane it asked for was refused.
+		if errors.Is(configErr, errTunnelClaimRefused) || errors.Is(configErr, errDataPlaneQuotaExceeded) ||
+			errors.Is(configErr, errFrontendValidationRefused) {
+			// Nothing failed to resolve; the Gateway was refused.
 			prefix = refusedConditionPrefix
 		}
 
@@ -1090,6 +1129,14 @@ func configErrorReasons(configErr error) configErrorReasonSet {
 		}
 	}
 
+	if errors.Is(configErr, errFrontendValidationRefused) {
+		return configErrorReasonSet{
+			accepted:   string(gatewayv1.GatewayReasonInvalid),
+			programmed: string(gatewayv1.GatewayReasonInvalid),
+			listener:   string(gatewayv1.ListenerReasonInvalid),
+		}
+	}
+
 	return configErrorReasonSet{
 		accepted:   string(gatewayv1.GatewayReasonInvalidParameters),
 		programmed: string(gatewayv1.GatewayReasonInvalid),
@@ -1108,9 +1155,10 @@ type configErrorReasonSet struct {
 
 // configErrorGatewayConditions is the Gateway-level verdict when a Gateway
 // cannot be programmed for a deterministic reason: its configuration did not
-// resolve, it claimed a tunnel it does not own, or its namespace is at the
-// operator's data-plane cap. The reasons differ per case and are chosen by
-// configErrorReasons; the message is shared.
+// resolve, it claimed a tunnel it does not own, its namespace is at the
+// operator's data-plane cap, or it sets spec.tls.frontend. The reasons
+// differ per case and are chosen by configErrorReasons; the message is
+// shared.
 func configErrorGatewayConditions(
 	generation int64,
 	now metav1.Time,
