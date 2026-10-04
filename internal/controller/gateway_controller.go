@@ -188,8 +188,8 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil
 	}
 
-	if !isGatewayManagedByController(ctx, r.Client, &gateway, r.ControllerName) {
-		return ctrl.Result{}, nil
+	if managed, err := gatewayIsManaged(ctx, r.Client, r.ControllerName, &gateway); err != nil || !managed {
+		return ctrl.Result{}, err
 	}
 
 	logger.Info("reconciling gateway", "name", gateway.Name, "namespace", gateway.Namespace)

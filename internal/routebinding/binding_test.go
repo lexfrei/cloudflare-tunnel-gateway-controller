@@ -714,7 +714,9 @@ func TestValidateBinding_UnevaluatedListenerLogLevel(t *testing.T) {
 		level     string
 	}{
 		{name: "other passes", validator: NewValidator, level: `"level":"DEBUG"`},
-		{name: "binding pass", validator: NewReportingValidator, level: `"level":"WARN"`},
+		{name: "binding pass", validator: func(cli client.Client) *Validator {
+			return NewReportingValidator(cli, logging.NewRepeats())
+		}, level: `"level":"WARN"`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()

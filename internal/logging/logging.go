@@ -14,6 +14,7 @@ type contextKey int
 const (
 	loggerKey contextKey = iota
 	reconcileIDKey
+	repeatsKey
 )
 
 // FromContext extracts logger from context.

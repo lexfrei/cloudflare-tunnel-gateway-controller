@@ -135,6 +135,7 @@ spec:
 | `Accepted` | `True` | `Accepted` | Permitted by Gateway and at least one entry is valid |
 | `Accepted` | `True` | `ListenersNotValid` | At least one entry is valid, and another is conflict-marked, has unresolved refs, uses a protocol this controller does not serve or has an `allowedRoutes.namespaces.selector` that does not parse |
 | `Accepted` | `False` | `NotAllowed` | Gateway's `spec.allowedListeners` rejects this ListenerSet. A `selector` that does not parse rejects every ListenerSet; the message says so without quoting the selector, the controller log names the parse error, and the parent Gateway gets an `InvalidAllowedListeners` Warning Event |
+| `Accepted` | `False` | `Pending` | The controller could not evaluate the parent Gateway's `allowedListeners`, for example because the ListenerSet's namespace could not be read for its `selector`, or could not enumerate the sibling ListenerSets. The controller log names the error and the ListenerSet is reconciled again |
 | `Accepted` | `False` | `ListenersNotValid` | No entry is usable: each one is conflict-marked, has unresolved refs, uses a protocol this controller does not serve or has an `allowedRoutes.namespaces.selector` that does not parse |
 | `Programmed` | `True` | `Programmed` | Attached and programmed against the parent Gateway |
 | `Programmed` | `False` | `ListenersNotValid` / `NotAllowed` / `Pending` | Mirrors the `Accepted` reason when not programmed |

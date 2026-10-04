@@ -56,6 +56,9 @@ type RouteSyncer struct {
 	httpBuilder      *ingress.Builder
 	grpcBuilder      *ingress.GRPCBuilder
 	bindingValidator *routebinding.Validator
+	// logRepeats keeps an evaluation failure that persists across syncs from
+	// being logged at its full level on every one. A pass is one sync.
+	logRepeats *logging.Repeats
 
 	// HostnameOwnership, when non-nil, enables the controller-side layer of
 	// the per-namespace hostname-ownership policy (#475): a route whose
@@ -126,6 +129,7 @@ func NewRouteSyncer(
 	}
 
 	componentLogger := logger.With("component", "route-syncer")
+	logRepeats := logging.NewRepeats()
 
 	return &RouteSyncer{
 		Client:           c,
@@ -137,7 +141,8 @@ func NewRouteSyncer(
 		Logger:           componentLogger,
 		httpBuilder:      ingress.NewBuilder(clusterDomain, refGrantValidator, c, metricsCollector, componentLogger),
 		grpcBuilder:      ingress.NewGRPCBuilder(clusterDomain, refGrantValidator, c, metricsCollector, componentLogger),
-		bindingValidator: routebinding.NewReportingValidator(c),
+		bindingValidator: routebinding.NewReportingValidator(c, logRepeats),
+		logRepeats:       logRepeats,
 	}
 }
 
@@ -586,6 +591,10 @@ func pushPartitionConfigs(
 	params *syncUpdateParams,
 	syncResult *SyncResult,
 ) ([]proxy.RouteDiagnostic, bool) {
+	// The push belongs to the sync that built syncResult, so a failure it logs
+	// is lowered while it repeats across syncs, as the binding pass lowers it.
+	ctx = logging.WithRepeats(ctx, params.routeSyncer.logRepeats)
+
 	partitions := syncResult.Partitions
 	if len(partitions) == 0 {
 		logger.Info("skipping proxy push: sync produced no partition split (early error)")
@@ -991,6 +1000,8 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	// both HTTPRouteReconciler and GRPCRouteReconciler trigger syncs.
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
+
+	s.logRepeats.NextPass()
 
 	startTime := time.Now()
 
@@ -2012,16 +2023,12 @@ func (s *RouteSyncer) bindOneParent(
 
 	binding, err := resolveRouteParentBinding(ctx, s.Client, s.bindingValidator, s.ControllerName, ref, routeNamespace, routeInfo, views)
 	if err != nil {
-		logger.Error("failed to resolve route parentRef",
-			"route", routeNamespace+"/"+routeName, "refIdx", refIdx, "error", err)
+		route := routeNamespace + "/" + routeName
+		level := s.logRepeats.Level(fmt.Sprintf("%s %s/%d", kind, route, refIdx), err.Error(), slog.LevelError)
 
-		// The error stays in the log: it can quote the parent Gateway's spec,
-		// which the route's authors may not be allowed to read.
-		bindingInfo.bindingResults[refIdx] = routebinding.BindingResult{
-			Accepted: false,
-			Reason:   gatewayv1.RouteReasonPending,
-			Message:  "The controller could not evaluate this parent; the controller log names the error",
-		}
+		logger.Log(ctx, level, "failed to resolve route parentRef", "route", route, "refIdx", refIdx, "error", err)
+
+		bindingInfo.bindingResults[refIdx] = unevaluatedParentResult()
 		bindingInfo.unevaluated = true
 
 		return true, false
@@ -2031,7 +2038,13 @@ func (s *RouteSyncer) bindOneParent(
 		return false, false
 	}
 
+	if binding.Result.Incomplete && !binding.Result.Accepted {
+		// A listener that could not be evaluated may still admit the route.
+		binding.Result = unevaluatedParentResult()
+	}
+
 	bindingInfo.bindingResults[refIdx] = binding.Result
+	bindingInfo.unevaluated = bindingInfo.unevaluated || binding.Result.Incomplete
 
 	if binding.GatewayKey != "" {
 		bindingInfo.parentGateways[refIdx] = binding.GatewayKey
@@ -2042,6 +2055,18 @@ func (s *RouteSyncer) bindOneParent(
 	}
 
 	return true, binding.Result.Accepted
+}
+
+// unevaluatedParentResult is the binding recorded for a parent the controller
+// could not evaluate. The error stays in the log: it can quote the parent
+// Gateway's spec, which the route's authors may not be allowed to read.
+func unevaluatedParentResult() routebinding.BindingResult {
+	return routebinding.BindingResult{
+		Accepted:   false,
+		Incomplete: true,
+		Reason:     gatewayv1.RouteReasonPending,
+		Message:    "The controller could not evaluate this parent; the controller log names the error",
+	}
 }
 
 // rejectIfHostnameNotOwned evaluates the hostname-ownership policy for the

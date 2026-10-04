@@ -9,6 +9,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/listenermerge"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
@@ -74,7 +75,12 @@ func acceptedFromCandidates(
 	for _, listenerSet := range candidates {
 		acceptance, err := validator.EvaluateListenerSetAcceptance(ctx, gateway, listenerSet)
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to evaluate listenerset acceptance")
+			// Undecided for this ListenerSet alone, so only it is left out. Its
+			// own reconcile and its routes' bindings report it Pending and retry.
+			logging.FromContext(ctx).Debug("leaving an unevaluated ListenerSet out of the Gateway view",
+				"listenerSet", listenerSet.Namespace+"/"+listenerSet.Name, "error", err)
+
+			continue
 		}
 
 		if acceptance.Accepted {

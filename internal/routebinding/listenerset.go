@@ -3,6 +3,7 @@ package routebinding
 import (
 	"context"
 
+	"github.com/cockroachdb/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -31,8 +32,8 @@ const invalidAllowedListenersMessage = "The parent Gateway's allowedListeners se
 // spec.allowedListeners.namespaces filter to decide if the given ListenerSet
 // is allowed to attach. The default (unset) is From=None, i.e. attachment is
 // rejected unless the Gateway opts in. A selector that does not parse admits
-// no ListenerSet. The error is nil today and kept for the namespace read
-// failures #895 covers.
+// no ListenerSet. The error reports a namespace that could not be read, which
+// leaves the acceptance undecided.
 func (v *Validator) EvaluateListenerSetAcceptance(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
@@ -51,6 +52,10 @@ func (v *Validator) EvaluateListenerSetAcceptance(
 		return rejectedListenerSet(), nil
 	case gatewayv1.NamespacesFromSelector:
 		ok, err := v.listenerSetNamespaceMatchesSelector(ctx, gateway.Spec.AllowedListeners, listenerSet.Namespace)
+		if err != nil && !errors.Is(err, errInvalidSelector) {
+			return ListenerSetAcceptance{}, err
+		}
+
 		if err != nil {
 			// The error quotes the Gateway's spec, which the ListenerSet's and
 			// the routes' authors may not be allowed to read, so the ListenerSet
@@ -115,8 +120,7 @@ func getListenerNamespaceFrom(allowed *gatewayv1.AllowedListeners) gatewayv1.Fro
 
 // listenerSetNamespaceMatchesSelector evaluates the namespace label selector
 // for a ListenerSet's namespace against the Gateway's allowedListeners filter.
-// A missing namespace is treated as "not matching", consistent with the
-// existing route-namespace selector handling.
+// A missing namespace does not match, as for routes.
 func (v *Validator) listenerSetNamespaceMatchesSelector(
 	ctx context.Context,
 	allowed *gatewayv1.AllowedListeners,
@@ -148,7 +152,7 @@ func (v *Validator) ValidateBindingForListenerSet(
 ) (BindingResult, error) {
 	entries := listenerSet.Spec.Listeners
 
-	matched, rejectionReason, invalid, detail := findMatchingEntries(
+	matched, rejectionReason, invalid, detail, err := findMatchingEntries(
 		"ListenerSet entry",
 		len(entries),
 		func(i int) (gatewayv1.SectionName, gatewayv1.PortNumber) {
@@ -165,8 +169,14 @@ func (v *Validator) ValidateBindingForListenerSet(
 		route.SectionName,
 		route.Port,
 	)
+	v.logUnevaluatedListeners(ctx, route, "ListenerSet "+listenerSet.Namespace+"/"+listenerSet.Name, detail)
 
-	v.logUnevaluatedListeners(ctx, route, detail)
+	if err != nil && len(matched) == 0 {
+		return BindingResult{}, err
+	}
 
-	return makeBindingResult(matched, rejectionReason, invalid), nil
+	result := makeBindingResult(matched, rejectionReason, invalid)
+	result.Incomplete = err != nil
+
+	return result, nil
 }

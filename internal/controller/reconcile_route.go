@@ -68,7 +68,13 @@ func reconcileRoute[T client.Object](
 	}
 
 	wrapped := params.wrapRoute(route)
-	if !routeReferencesOurGateways(ctx, params.k8sClient, params.controllerName, wrapped) {
+
+	references, err := routeReferencesOurGateways(ctx, params.k8sClient, params.controllerName, wrapped)
+	if err != nil {
+		return ctrl.Result{}, errors.Wrap(err, "resolving the parents of "+params.componentName)
+	}
+
+	if !references {
 		return ctrl.Result{}, releaseOwnParentStatus(ctx, params.k8sClient, params.controllerName,
 			req.NamespacedName, params.newAccessor)
 	}

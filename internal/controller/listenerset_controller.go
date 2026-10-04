@@ -176,6 +176,8 @@ func (r *ListenerSetReconciler) reconcileStatus(
 ) error {
 	key := types.NamespacedName{Name: listenerSet.Name, Namespace: listenerSet.Namespace}
 
+	var evalErr error
+
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var fresh gatewayv1.ListenerSet
 		if err := r.Get(ctx, key, &fresh); err != nil {
@@ -190,7 +192,9 @@ func (r *ListenerSetReconciler) reconcileStatus(
 
 		now := metav1.Now()
 
-		acceptance := r.computeAcceptance(ctx, gateway, &fresh)
+		var acceptance listenerSetAcceptanceResult
+
+		acceptance, evalErr = r.computeAcceptance(ctx, gateway, &fresh)
 
 		conditions := buildListenerSetAggregateConditions(fresh.Generation, now, acceptance)
 		for _, cond := range conditions {
@@ -224,8 +228,11 @@ func (r *ListenerSetReconciler) reconcileStatus(
 
 		return nil
 	})
+	if err != nil {
+		return errors.Wrap(err, "failed to update listenerset status after retries")
+	}
 
-	return errors.Wrap(err, "failed to update listenerset status after retries")
+	return errors.Wrap(evalErr, "evaluating listenerset acceptance")
 }
 
 // listenerSetAcceptanceResult bundles the data the status writer needs in
@@ -248,15 +255,27 @@ type listenerSetAcceptanceResult struct {
 	AttachedRoutes map[gatewayv1.SectionName]int32
 }
 
+// computeAcceptance returns the error that left the acceptance undecided along
+// with a Pending result, which the reconcile writes before returning the error
+// so it is logged and retried.
+//
 //nolint:funlen // single sequential pipeline; splitting hurts readability
 func (r *ListenerSetReconciler) computeAcceptance(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 	listenerSet *gatewayv1.ListenerSet,
-) listenerSetAcceptanceResult {
+) (listenerSetAcceptanceResult, error) {
 	validator := routebinding.NewValidator(r.Client)
 
 	allowed, err := validator.EvaluateListenerSetAcceptance(ctx, gateway, listenerSet)
+	if err != nil {
+		return listenerSetAcceptanceResult{
+			Accepted: false,
+			Reason:   gatewayv1.ListenerSetReasonPending,
+			Message:  "The controller could not evaluate the parent Gateway's allowedListeners; the controller log names the error",
+		}, errors.Wrap(err, "evaluating the parent Gateway's allowedListeners")
+	}
+
 	if allowed.Err != nil {
 		// This reconcile runs once per ListenerSet, where the route passes run
 		// once per route, so the warning an operator needs is logged here.
@@ -266,7 +285,7 @@ func (r *ListenerSetReconciler) computeAcceptance(
 			"error", allowed.Err)
 	}
 
-	if err != nil || !allowed.Accepted {
+	if !allowed.Accepted {
 		reason := gatewayv1.ListenerSetReasonNotAllowed
 
 		message := listenerSetMsgNotAllowed
@@ -278,7 +297,7 @@ func (r *ListenerSetReconciler) computeAcceptance(
 			Accepted: false,
 			Reason:   reason,
 			Message:  message,
-		}
+		}, nil
 	}
 
 	// The merged view spans the parent Gateway plus every sibling ListenerSet
@@ -290,8 +309,8 @@ func (r *ListenerSetReconciler) computeAcceptance(
 		return listenerSetAcceptanceResult{
 			Accepted: false,
 			Reason:   gatewayv1.ListenerSetReasonPending,
-			Message:  "Failed to enumerate sibling ListenerSets: " + err.Error(),
-		}
+			Message:  "Failed to enumerate sibling ListenerSets; the controller log names the error",
+		}, err
 	}
 
 	merged := view.merged
@@ -301,8 +320,8 @@ func (r *ListenerSetReconciler) computeAcceptance(
 		return listenerSetAcceptanceResult{
 			Accepted: false,
 			Reason:   gatewayv1.ListenerSetReasonPending,
-			Message:  "Failed to evaluate ListenerSet TLS references: " + refErr.Error(),
-		}
+			Message:  "Failed to evaluate ListenerSet TLS references; the controller log names the error",
+		}, refErr
 	}
 
 	accepted, summaryReason, summaryMessage := summariseListenerSet(merged, listenerSet, refChecks)
@@ -312,8 +331,8 @@ func (r *ListenerSetReconciler) computeAcceptance(
 		return listenerSetAcceptanceResult{
 			Accepted: false,
 			Reason:   gatewayv1.ListenerSetReasonPending,
-			Message:  "Failed to count attached routes: " + attachErr.Error(),
-		}
+			Message:  "Failed to count attached routes; the controller log names the error",
+		}, attachErr
 	}
 
 	return listenerSetAcceptanceResult{
@@ -323,7 +342,7 @@ func (r *ListenerSetReconciler) computeAcceptance(
 		MergeResult:    merged,
 		RefChecks:      refChecks,
 		AttachedRoutes: attached,
-	}
+	}, nil
 }
 
 // countAttachedRoutesPerEntry returns the number of accepted HTTPRoutes (and

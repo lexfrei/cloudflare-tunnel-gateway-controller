@@ -170,9 +170,10 @@ func filterMatchedGatewayListenersByConflict(
 
 	if len(kept) == 0 {
 		return routebinding.BindingResult{
-			Accepted: false,
-			Reason:   gatewayv1.RouteReasonNoMatchingParent,
-			Message:  msgConflictedListeners,
+			Accepted:   false,
+			Incomplete: result.Incomplete,
+			Reason:     gatewayv1.RouteReasonNoMatchingParent,
+			Message:    msgConflictedListeners,
 		}
 	}
 
@@ -281,9 +282,10 @@ func filterMatchedListenersByConflict(
 
 	if len(kept) == 0 {
 		return routebinding.BindingResult{
-			Accepted: false,
-			Reason:   gatewayv1.RouteReasonNoMatchingParent,
-			Message:  msgConflictedListeners,
+			Accepted:   false,
+			Incomplete: result.Incomplete,
+			Reason:     gatewayv1.RouteReasonNoMatchingParent,
+			Message:    msgConflictedListeners,
 		}
 	}
 
