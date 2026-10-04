@@ -12,6 +12,9 @@
 #   head_sha     a run for an older head built a different diff than the one
 #                under review
 #
+# A run that skipped publishing because ttl.sh refused uploads still succeeds;
+# it is reported as such rather than as a run whose artifacts expired.
+#
 # Newest wins, so re-running CI supersedes the run it replaced.
 #
 # Usage: find-ci-run.sh <pr-number>
@@ -42,6 +45,14 @@ run_id="$(gh api "repos/{owner}/{repo}/actions/runs?head_sha=${head_sha}&per_pag
 
 [[ -n "${run_id}" ]] \
   || die "No successful 'PR Checks and Build' run for PR #${pr_number} at head ${head_sha}. Re-run its CI; a run for an earlier head is not accepted."
+
+published="$(gh api "repos/{owner}/{repo}/actions/runs/${run_id}/artifacts?name=image-ref-controller" \
+  | jq --raw-output '.total_count')" \
+  || die "Querying the artifacts of run ${run_id} failed (gh api actions/runs/${run_id}/artifacts)"
+[[ "${published}" =~ ^[0-9]+$ ]] \
+  || die "The artifacts response for run ${run_id} carries no artifact count (got '${published}')"
+[[ "${published}" != "0" ]] \
+  || die "Run ${run_id} for PR #${pr_number} published no images: ttl.sh was not accepting uploads when it ran. Re-run its CI once ttl.sh accepts uploads again."
 
 echo "head_sha=${head_sha}"
 echo "run_id=${run_id}"

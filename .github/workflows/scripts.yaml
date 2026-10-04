@@ -18,6 +18,7 @@ on:
       - hack/pull-ci-image.sh
       - hack/verify-manifest-children.sh
       - hack/find-ci-run.sh
+      - hack/probe-ttlsh.sh
       - .github/workflows/pr.yaml
       - .github/workflows/pr-privileged.yaml
       # labels.yml is included so the drift-pin tests
@@ -44,6 +45,7 @@ on:
       - hack/pull-ci-image.sh
       - hack/verify-manifest-children.sh
       - hack/find-ci-run.sh
+      - hack/probe-ttlsh.sh
       - .github/workflows/pr.yaml
       - .github/workflows/pr-privileged.yaml
       # labels.yml is included so the drift-pin tests

@@ -117,9 +117,26 @@ jobs:
             echo "current=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # When ttl.sh refused uploads the run still succeeds, but merge-manifests
+      # is skipped and leaves no image references behind.
+      - name: Check whether the run published
+        id: published
+        if: steps.match.outputs.current == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          count="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts?name=image-ref-controller" --jq '.total_count')"
+          if [[ "${count}" == "0" ]]; then
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check if first build
         id: first_build
-        if: steps.match.outputs.current == 'true'
+        if: steps.match.outputs.current == 'true' && steps.published.outputs.published == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           result-encoding: string
@@ -145,8 +162,26 @@ jobs:
               labels: ['Container Available']
             })
 
+      # A label left by an earlier published build would contradict the
+      # comment below.
+      - name: Remove Container Available label
+        if: steps.match.outputs.current == 'true' && steps.published.outputs.published == 'false'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ steps.pr.outputs.number }},
+                name: 'Container Available'
+              });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+
       - name: Download image references
-        if: steps.match.outputs.current == 'true'
+        if: steps.match.outputs.current == 'true' && steps.published.outputs.published == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: image-ref-*
@@ -160,7 +195,7 @@ jobs:
       # only the exact shape merge-manifests exports.
       - name: Read and validate image references
         id: refs
-        if: steps.match.outputs.current == 'true'
+        if: steps.match.outputs.current == 'true' && steps.published.outputs.published == 'true'
         run: |
           set -euo pipefail
           read_ref() {
@@ -183,6 +218,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PUBLISHED: ${{ steps.published.outputs.published }}
           CONTROLLER_REF: ${{ steps.refs.outputs.controller }}
           PROXY_REF: ${{ steps.refs.outputs.proxy }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
@@ -194,7 +230,14 @@ jobs:
             const chartVersion = `0.0.0-pr.${prNumber}-1d`;
             const fence = '```';
 
-            const body = [
+            const unpublished = [
+              marker,
+              '## Container images not published',
+              '',
+              `ttl.sh was not accepting uploads when [this run](${process.env.RUN_URL}) built ${process.env.HEAD_SHA}, so the images and the chart were built but not pushed. Re-run this PR's CI once ttl.sh accepts uploads again; until then \`./hack/conformance-setup.sh --use-ci-images ${prNumber}\` has nothing to deploy.`,
+            ].join('\n');
+
+            const published = [
               marker,
               '## Container images available',
               '',
@@ -220,6 +263,8 @@ jobs:
               '',
               `> **Note:** Rebuilt on every commit; this comment follows the latest successful build. The \`-1d\` in these tags sets no lifetime -- ttl.sh reads one only from a tag that is entirely a duration -- so the images expire on ttl.sh's own schedule. Re-run this PR's CI to republish.`,
             ].join('\n');
+
+            const body = process.env.PUBLISHED === 'true' ? published : unpublished;
 
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
