@@ -86,9 +86,10 @@ The route's effective hostname is the parent listener's `team-a.example.com` (in
 A `ListenerSet` is successfully attached to a Gateway when:
 
 1. The parent Gateway's `spec.allowedListeners.namespaces.from` permits the ListenerSet's namespace (`Same`, `All`, `Selector`, or unset/`None` to reject).
-2. The ListenerSet has `Accepted: True` on its status — at least one of its listener entries is conflict-free AND has its TLS cert refs resolved (`ResolvedRefs: True`, or it carries no TLS material).
+2. The parent Gateway is not refused: a Gateway reporting `Accepted=False` for a reason other than `ListenersNotValid` leaves its ListenerSets `Accepted=False` with `ParentNotAccepted`.
+3. The ListenerSet has `Accepted: True` on its status — at least one of its listener entries is conflict-free AND has its TLS cert refs resolved (`ResolvedRefs: True`, or it carries no TLS material).
 
-The Gateway's `status.attachedListenerSets` field is the count of ListenerSets meeting both criteria. When the controller cannot finish that count, for example because a ListenerSet's namespace or a certificate Secret cannot be read, the Gateway keeps the count it had and the controller counts again.
+The Gateway's `status.attachedListenerSets` field is the count of ListenerSets meeting all three criteria, and 0 while the Gateway is refused. When the controller cannot finish that count, for example because a ListenerSet's namespace or a certificate Secret cannot be read, the Gateway keeps the count it had and the controller counts again.
 
 ### Hostnames and redirect schemes from a ListenerSet
 
@@ -136,9 +137,10 @@ spec:
 | `Accepted` | `True` | `ListenersNotValid` | At least one entry is valid, and another is conflict-marked, has unresolved refs, uses a protocol this controller does not serve or has an `allowedRoutes.namespaces.selector` that does not parse |
 | `Accepted` | `False` | `NotAllowed` | Gateway's `spec.allowedListeners` rejects this ListenerSet. A `selector` that does not parse rejects every ListenerSet; the message says so without quoting the selector, the controller log names the parse error, and the parent Gateway gets an `InvalidAllowedListeners` Warning Event |
 | `Accepted` | `False` | `Pending` | The controller could not evaluate the parent Gateway's `allowedListeners`, for example because the ListenerSet's namespace could not be read for its `selector`, or could not enumerate the sibling ListenerSets. The controller log names the error and the ListenerSet is reconciled again |
+| `Accepted` | `False` | `ParentNotAccepted` | The parent Gateway is refused (`Accepted=False` for a reason other than `ListenersNotValid`), for example because its parameters do not resolve, its namespace is at the data-plane cap, or it sets `spec.tls.frontend`. The message names the parent's reason but not its message, which can mention objects the ListenerSet owner cannot read. Route binding reads only specs, never a status, so a route on such a ListenerSet reports its own verdict for that parent: `NoMatchingParent` when the parent sets `spec.tls.frontend`, `Pending` when the parent's dedicated data plane is refused, and the usual binding result otherwise |
 | `Accepted` | `False` | `ListenersNotValid` | No entry is usable: each one is conflict-marked, has unresolved refs, uses a protocol this controller does not serve or has an `allowedRoutes.namespaces.selector` that does not parse |
 | `Programmed` | `True` | `Programmed` | Attached and programmed against the parent Gateway |
-| `Programmed` | `False` | `ListenersNotValid` / `NotAllowed` / `Pending` | Mirrors the `Accepted` reason when not programmed |
+| `Programmed` | `False` | `ListenersNotValid` / `NotAllowed` / `ParentNotAccepted` / `Pending` | Mirrors the `Accepted` reason when not programmed |
 
 ### Per-entry conditions (`status.listeners[]`)
 

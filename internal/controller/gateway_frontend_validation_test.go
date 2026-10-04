@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/cockroachdb/errors"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -45,6 +47,7 @@ func TestGatewayReconciler_RefusesFrontendClientCertificateValidation(t *testing
 			},
 			TLS: clientCertValidationTLS(),
 		},
+		Status: gatewayv1.GatewayStatus{AttachedListenerSets: new(int32(1))},
 	}
 
 	secret := &corev1.Secret{
@@ -105,6 +108,9 @@ func TestGatewayReconciler_RefusesFrontendClientCertificateValidation(t *testing
 	assert.Equal(t, string(gatewayv1.GatewayReasonInvalid), programmed.Reason)
 
 	assert.Empty(t, updated.Status.Addresses, "a refused shared-plane Gateway advertises no tunnel address")
+	require.NotNil(t, updated.Status.AttachedListenerSets)
+	assert.Equal(t, int32(0), *updated.Status.AttachedListenerSets,
+		"a refused Gateway's ListenerSets are ParentNotAccepted, so none is attached")
 
 	require.Len(t, updated.Status.Listeners, 1)
 	listenerProgrammed := meta.FindStatusCondition(updated.Status.Listeners[0].Conditions,
@@ -211,4 +217,105 @@ func TestListenerSetReconciler_ParentRequestingFrontendValidationIsNotAccepted(t
 	assert.Equal(t, metav1.ConditionFalse, accepted.Status)
 	assert.Equal(t, string(gatewayv1.ListenerSetReasonParentNotAccepted), accepted.Reason)
 	assert.Equal(t, routebinding.ParentRequestsFrontendValidationMessage, accepted.Message)
+}
+
+func TestListenerSetReconciler_ParentRefusedIsNotAccepted(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		reason      string
+		wantRefused bool
+	}{
+		{name: "invalid parameters", reason: string(gatewayv1.GatewayReasonInvalidParameters), wantRefused: true},
+		{name: "invalid", reason: string(gatewayv1.GatewayReasonInvalid), wantRefused: true},
+		{name: "data-plane quota", reason: reasonDataPlaneQuotaExceeded, wantRefused: true},
+		{name: "own listeners not valid", reason: string(gatewayv1.GatewayReasonListenersNotValid), wantRefused: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gc := managedGatewayClass()
+			gw := &gatewayv1.Gateway{
+				ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra", Generation: 4},
+				Spec: gatewayv1.GatewaySpec{
+					GatewayClassName: gatewayv1.ObjectName(gc.Name),
+					Listeners: []gatewayv1.Listener{
+						{Name: "gw-l1", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+					},
+					AllowedListeners: &gatewayv1.AllowedListeners{
+						Namespaces: &gatewayv1.ListenerNamespaces{From: namespacesFromAllPtr()},
+					},
+				},
+				Status: gatewayv1.GatewayStatus{Conditions: []metav1.Condition{{
+					Type:               string(gatewayv1.GatewayConditionAccepted),
+					Status:             metav1.ConditionFalse,
+					Reason:             tt.reason,
+					Message:            "parent-only detail",
+					ObservedGeneration: 4,
+					LastTransitionTime: metav1.Now(),
+				}}},
+			}
+			ls := &gatewayv1.ListenerSet{
+				ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "infra", Generation: 1},
+				Spec: gatewayv1.ListenerSetSpec{
+					ParentRef: gatewayv1.ParentGatewayReference{Name: gatewayv1.ObjectName(gw.Name)},
+					Listeners: []gatewayv1.ListenerEntry{
+						{Name: "ls-l1", Port: 80, Protocol: gatewayv1.HTTPProtocolType, Hostname: new(gatewayv1.Hostname("a.example.com"))},
+					},
+				},
+			}
+
+			r, cli := newListenerSetReconciler(t, gc, gw, ls)
+
+			_, err := r.Reconcile(context.Background(), ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: ls.Name, Namespace: ls.Namespace},
+			})
+			require.NoError(t, err)
+
+			accepted := findCondition(getListenerSet(t, cli, ls.Name, ls.Namespace).Status.Conditions,
+				string(gatewayv1.ListenerSetConditionAccepted))
+			require.NotNil(t, accepted)
+
+			if !tt.wantRefused {
+				assert.Equal(t, metav1.ConditionTrue, accepted.Status)
+				assert.Equal(t, string(gatewayv1.ListenerSetReasonAccepted), accepted.Reason)
+
+				return
+			}
+
+			assert.Equal(t, metav1.ConditionFalse, accepted.Status)
+			assert.Equal(t, string(gatewayv1.ListenerSetReasonParentNotAccepted), accepted.Reason)
+			assert.NotContains(t, accepted.Message, "parent-only detail",
+				"the parent's message may name things the ListenerSet owner cannot read")
+		})
+	}
+}
+
+func TestSetConfigErrorStatus_ZeroesAttachedListenerSets(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	gateway := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default", Generation: 2},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: "cloudflare-tunnel",
+			Listeners:        []gatewayv1.Listener{{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType}},
+		},
+		Status: gatewayv1.GatewayStatus{AttachedListenerSets: new(int32(2))},
+	}
+
+	fakeClient := setupGatewayFakeClient(gateway)
+	reconciler := &GatewayReconciler{Client: fakeClient, Scheme: fakeClient.Scheme(), ControllerName: "test-controller"}
+
+	require.NoError(t, reconciler.setConfigErrorStatus(ctx, gateway,
+		config.MarkInvalidParameters(errors.New("GatewayClassConfig not found"))))
+
+	var updated gatewayv1.Gateway
+	require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: "gw", Namespace: "default"}, &updated))
+	require.NotNil(t, updated.Status.AttachedListenerSets)
+	assert.Equal(t, int32(0), *updated.Status.AttachedListenerSets)
 }

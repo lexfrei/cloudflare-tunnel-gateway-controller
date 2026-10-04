@@ -1058,6 +1058,10 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 			freshGateway.Status.Addresses = nil
 		}
 
+		// Every ListenerSet of a Gateway refused here reports ParentNotAccepted
+		// (parentGatewayRefused), so none counts as attached.
+		freshGateway.Status.AttachedListenerSets = clampedInt32Pointer(0)
+
 		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
 
 		reasons := configErrorReasons(configErr)
