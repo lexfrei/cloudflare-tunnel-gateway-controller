@@ -153,19 +153,14 @@ sequenceDiagram
 
 ### Ingress Builder
 
-Converts HTTPRoute specs to Cloudflare Tunnel ingress rules:
+Converts HTTPRoute and GRPCRoute specs to Cloudflare Tunnel ingress rules, one per distinct hostname on the tunnel. The in-process proxy does all matching, so the document carries no paths:
 
-| HTTPRoute Field | Cloudflare Rule Field |
-|-----------------|----------------------|
+| Route Field | Cloudflare Rule Field |
+|-------------|----------------------|
 | `spec.hostnames[]` | `hostname` |
-| `rules[].matches[].path` | `path` (with wildcard for prefix) |
-| `rules[].backendRefs[]` | `service` (cluster DNS URL) |
+| `rules[].backendRefs[]` | `service`: the lexicographically smallest cluster DNS URL among the rules serving the hostname |
 
-**Rule Ordering**:
-
-1. Specific hostnames before the wildcard `*` (Cloudflare requirement), then alphabetically among specific hostnames
-2. Exact matches before prefix matches
-3. Longer paths before shorter paths
+Rules are sorted by hostname and closed by the `http_status:404` catch-all. A route without hostnames contributes no rule.
 
 ### ProxySyncer
 

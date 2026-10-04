@@ -28,26 +28,22 @@ import (
 
 const budgetClassTunnelID = "99999999-9999-4999-8999-999999999999"
 
-// budgetRoute builds a route whose single rule fans out over hostnames x path
-// matches. That product is what fills the ingress document — one entry per
-// (rule, hostname, match) — so a two-object fixture can cross the cap the way
-// a real tenant does, without a thousand routes.
+// budgetRoute builds a route whose single rule serves the given number of
+// hostnames and path matches. The document holds one rule per distinct
+// hostname, so only hostnames fill it; the matches are there to show they do
+// not.
 //
-// The numbers the callers pass are the spec's own ceilings: spec.hostnames is
-// MaxItems=16 and a rule's matches are MaxItems=64, so 16 x 64 = 1024 is the
-// most ONE rule of ONE route can legally contribute — already over a tunnel's
-// 1000-rule budget. (A route may go further still: up to 128 matches across
-// its rules, so 16 x 128 = 2048, twice the budget.) Keeping the fixture inside
-// those limits matters because the fake client enforces neither, and a
-// fixture a real apiserver would reject invites claims about tenant behaviour
-// that no tenant can reproduce.
+// spec.hostnames is MaxItems=16 and a rule's matches are MaxItems=64, so the
+// callers stay inside what a real apiserver accepts: the fake client enforces
+// neither, and a fixture a real apiserver would reject invites claims about
+// tenant behaviour that no tenant can reproduce.
 func budgetRoute(namespace, name string, hostnames, matches int) *gatewayv1.HTTPRoute {
 	pathPrefix := gatewayv1.PathMatchPathPrefix
 	port := gatewayv1.PortNumber(80)
 
 	hosts := make([]gatewayv1.Hostname, 0, hostnames)
 	for i := range hostnames {
-		hosts = append(hosts, gatewayv1.Hostname(fmt.Sprintf("h%d.%s.example.com", i, namespace)))
+		hosts = append(hosts, gatewayv1.Hostname(fmt.Sprintf("h%d.%s.%s.example.com", i, name, namespace)))
 	}
 
 	pathMatches := make([]gatewayv1.HTTPRouteMatch, 0, matches)
@@ -82,12 +78,26 @@ func budgetRoute(namespace, name string, hostnames, matches int) *gatewayv1.HTTP
 	}
 }
 
-// budgetObjects is one shared tunnel serving two namespaces: tenant-a is far
-// over the cap on its own, tenant-b contributes a single rule and is the
-// bystander whose configuration the refusal also freezes.
+// budgetTenantARoutes is how many 16-hostname routes tenant-a needs to cross
+// the cap on its own: 63 x 16 = 1008 hostnames.
+const budgetTenantARoutes = 63
+
+// budgetObjects is one shared tunnel serving two namespaces: tenant-a is over
+// the cap on its own, tenant-b contributes a single rule and is the bystander
+// whose configuration the refusal also freezes.
 func budgetObjects(t *testing.T) []runtime.Object {
 	t.Helper()
 
+	objects := budgetBaseObjects()
+	for i := range budgetTenantARoutes {
+		objects = append(objects, budgetRoute("tenant-a", fmt.Sprintf("r%02d", i), 16, 64))
+	}
+
+	return append(objects, budgetRoute("tenant-b", "small", 1, 1))
+}
+
+// budgetBaseObjects is the shared tunnel and the backends both tenants use.
+func budgetBaseObjects() []runtime.Object {
 	return []runtime.Object{
 		&gatewayv1.GatewayClass{
 			ObjectMeta: metav1.ObjectMeta{Name: "cf-test"},
@@ -122,9 +132,22 @@ func budgetObjects(t *testing.T) []runtime.Object {
 			ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "tenant-b"},
 			Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80}}},
 		},
-		budgetRoute("tenant-a", "big", 16, 64),
-		budgetRoute("tenant-b", "small", 1, 1),
 	}
+}
+
+// TestSyncAllRoutes_SpecMaximumRouteFitsTheBudget pins what the hostname-only
+// document buys: a route at the spec's ceilings, 16 hostnames and a rule with
+// 64 matches, costs 16 rules, not 1024, and is written.
+func TestSyncAllRoutes_SpecMaximumRouteFitsTheBudget(t *testing.T) {
+	t.Parallel()
+
+	api := newRecordingTunnelAPI(t)
+	syncer := partitionSyncSyncerFor(t, api, append(budgetBaseObjects(), budgetRoute("tenant-a", "big", 16, 64)))
+
+	_, _, err := syncer.SyncAllRoutes(context.Background())
+	require.NoError(t, err)
+
+	assert.Len(t, api.lastIngress(t, budgetClassTunnelID), 17, "16 hostnames plus the catch-all")
 }
 
 // TestSyncAllRoutes_RuleBudgetExhausted_OperatorLogNamesTheNamespaces pins the
@@ -147,7 +170,7 @@ func TestSyncAllRoutes_RuleBudgetExhausted_OperatorLogNamesTheNamespaces(t *test
 
 	assert.Equal(t, 0, api.tunnelsWritten(), "nothing is written while the document is over the cap")
 
-	assert.Contains(t, logged.String(), "tenant-a=1024",
+	assert.Contains(t, logged.String(), "tenant-a=1008",
 		"the operator log attributes the rules to the namespace that owns them")
 	assert.Contains(t, logged.String(), "tenant-b=1",
 		"every contributing namespace is attributed, not just the largest")
@@ -173,7 +196,7 @@ func TestSyncAllRoutes_RuleBudgetExhausted_TenantMessageNamesNoNeighbour(t *test
 	assert.NotContains(t, message, "tenant-b", "nor the reader's own, which would still leak the pattern")
 	// Naming specific numbers would pin the fixture's arithmetic rather than
 	// the contract, and would miss the likeliest leak: the document total is
-	// 1026, not the 1025 the per-namespace counts sum to, because the
+	// 1010, not the 1009 the per-namespace counts sum to, because the
 	// catch-all rule belongs to no namespace. The tunnel ID is the only
 	// number a tenant may see, so strip it and require that no digit is left.
 	assert.NotRegexp(t, `\d`, strings.ReplaceAll(message, budgetClassTunnelID, ""),
@@ -194,38 +217,40 @@ func TestSyncAllRoutes_RuleBudgetExhausted_TenantMessageNamesNoNeighbour(t *test
 func TestIngressRuleAttribution(t *testing.T) {
 	t.Parallel()
 
-	crowded := make(map[string]int, ruleAttributionLimit+1)
+	crowded := make(map[string][]string, ruleAttributionLimit+1)
 	for i := 1; i <= ruleAttributionLimit+1; i++ {
-		crowded[fmt.Sprintf("ns%02d", i)] = i
+		for j := range i {
+			crowded[fmt.Sprintf("ns%02d", i)] = append(crowded[fmt.Sprintf("ns%02d", i)], fmt.Sprintf("h%d", j))
+		}
 	}
 
 	tests := []struct {
 		name string
-		http map[string]int
-		grpc map[string]int
+		http map[string][]string
+		grpc map[string][]string
 		want string
 	}{
 		{name: "nothing to attribute", want: ""},
 		{
-			name: "http and grpc shares of one namespace add up",
-			http: map[string]int{"team-a": 2},
-			grpc: map[string]int{"team-a": 3, "team-b": 1},
-			want: "team-a=5,team-b=1",
+			name: "a hostname served by http and grpc routes of one namespace counts once",
+			http: map[string][]string{"team-a": {"a.example.com", "b.example.com"}},
+			grpc: map[string][]string{"team-a": {"b.example.com", "c.example.com"}, "team-b": {"d.example.com"}},
+			want: "team-a=3,team-b=1",
 		},
 		{
-			name: "a namespace that contributed nothing is not named",
-			http: map[string]int{"serving": 3, "wildcard-only": 0},
-			want: "serving=3",
+			name: "a hostname shared by two namespaces counts for each",
+			http: map[string][]string{"team-a": {"shared.example.com"}, "team-b": {"shared.example.com"}},
+			want: "team-a=1,team-b=1",
 		},
 		{
 			name: "largest share leads",
-			http: map[string]int{"small": 1, "big": 9, "middle": 4},
-			want: "big=9,middle=4,small=1",
+			http: map[string][]string{"small": {"s"}, "big": {"b1", "b2", "b3"}, "middle": {"m1", "m2"}},
+			want: "big=3,middle=2,small=1",
 		},
 		{
 			name: "equal shares are ordered by name",
-			http: map[string]int{"b": 2, "a": 2, "c": 2},
-			want: "a=2,b=2,c=2",
+			http: map[string][]string{"b": {"x"}, "a": {"x"}, "c": {"x"}},
+			want: "a=1,b=1,c=1",
 		},
 		{
 			name: "the tail is counted, not listed",
@@ -241,4 +266,36 @@ func TestIngressRuleAttribution(t *testing.T) {
 			assert.Equal(t, tt.want, ingressRuleAttribution(tt.http, tt.grpc))
 		})
 	}
+}
+
+// TestSyncAllRoutes_PerPathDocumentIsRewrittenPerHostname covers the first
+// sync over a document written with one rule per path match, duplicate
+// entries included: every old rule goes, and each hostname is left exactly
+// once, without a path.
+func TestSyncAllRoutes_PerPathDocumentIsRewrittenPerHostname(t *testing.T) {
+	t.Parallel()
+
+	api := newRecordingTunnelAPI(t)
+	route := budgetRoute("tenant-a", "app", 2, 3)
+	hostname := string(route.Spec.Hostnames[0])
+	service := "http://svc.tenant-a.svc.cluster.local:80"
+
+	api.seed(budgetClassTunnelID, []map[string]any{
+		{"hostname": hostname, "path": "/p0*", "service": service},
+		{"hostname": hostname, "path": "/p1*", "service": service},
+		{"hostname": hostname, "path": "/p1*", "service": service},
+		{"hostname": "gone.example.com", "service": service},
+		{"service": "http_status:404"},
+	})
+
+	syncer := partitionSyncSyncerFor(t, api, append(budgetBaseObjects(), route))
+
+	_, _, err := syncer.SyncAllRoutes(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, []map[string]any{
+		{"hostname": hostname, "service": service},
+		{"hostname": string(route.Spec.Hostnames[1]), "service": service},
+		{"service": "http_status:404"},
+	}, api.lastIngress(t, budgetClassTunnelID))
 }

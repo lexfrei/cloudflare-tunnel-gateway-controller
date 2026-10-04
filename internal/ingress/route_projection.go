@@ -2,45 +2,17 @@ package ingress
 
 import (
 	"context"
-	"fmt"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-// projectedMatch is the kind-neutral form of a single route match: the
-// tunnel-ingress path it contributes plus its sorting priority (1 = exact,
-// 0 = prefix).
-type projectedMatch struct {
-	path     string
-	priority int
-}
-
-// projectedRule is the kind-neutral form of a single route rule. Adapters
-// project their typed rules (HTTPRouteRule / GRPCRouteRule) into this shape;
-// everything downstream — filter logging, backend resolution, entry
-// assembly — is shared and cannot diverge between route kinds.
-type projectedRule struct {
-	// proxyServedFilters counts the rule's filters. They are not dropped: the
-	// tunnel ingress document cannot express them, so the in-process proxy
-	// applies them instead.
-	proxyServedFilters int
-	backendRefs        []gatewayv1.BackendRef
-	matches            []projectedMatch
-}
-
 // extractProjectedEntries is the shared rule-walking skeleton behind every
-// adapter's entry extraction. Rules are projected and their backends
-// resolved exactly once per route — neither depends on the hostname — and
-// the hostname list only multiplies the resulting entries. (Historically
-// resolution ran inside the hostname loop, duplicating every
-// BackendRefError, its log lines, and the failed-ref metric N× for an
-// N-hostname route.)
-//
-// Ingress-reduction warnings are emitted during projection for every rule,
-// including rules whose backends do not resolve — the tunnel document omits
-// those features regardless of backend resolvability, so gating the warnings
-// on a resolved backend (as the historical per-kind code did) hid them exactly
-// when an operator was debugging a broken rule.
+// adapter's entry extraction: one entry per hostname for each rule whose
+// backend resolves. Matches, filters and weights contribute nothing, since
+// the tunnel document carries hostnames only and the in-process proxy does
+// the rest. Backends are resolved exactly once per route — resolution does
+// not depend on the hostname — so a BackendRefError, its log lines and the
+// failed-ref metric are not repeated per hostname.
 func extractProjectedEntries[R any](
 	ctx context.Context,
 	adapter RouteAdapter[R],
@@ -54,11 +26,9 @@ func extractProjectedEntries[R any](
 	namespace, name := adapter.GetMeta(route)
 	hostnames := adapter.GetHostnames(route)
 
-	for _, rule := range adapter.ProjectRules(route, resolver) {
-		logProxyServedFilters(resolver, namespace, name, rule.proxyServedFilters)
-
+	for _, refs := range adapter.RuleBackendRefs(route) {
 		service, ruleFailedRefs := resolveRuleBackendRefs(
-			ctx, resolver, namespace, name, adapter.GatewayKind(), rule.backendRefs,
+			ctx, resolver, namespace, name, adapter.GatewayKind(), refs,
 		)
 		failedRefs = append(failedRefs, ruleFailedRefs...)
 
@@ -67,25 +37,7 @@ func extractProjectedEntries[R any](
 		}
 
 		for _, hostname := range hostnames {
-			if len(rule.matches) == 0 {
-				entries = append(entries, routeEntry{
-					hostname: string(hostname),
-					path:     "",
-					service:  service,
-					priority: 0,
-				})
-
-				continue
-			}
-
-			for _, match := range rule.matches {
-				entries = append(entries, routeEntry{
-					hostname: string(hostname),
-					path:     match.path,
-					service:  service,
-					priority: match.priority,
-				})
-			}
+			entries = append(entries, routeEntry{hostname: string(hostname), service: service})
 		}
 	}
 
@@ -110,8 +62,6 @@ func resolveRuleBackendRefs(
 	if len(refs) == 0 {
 		return "", nil
 	}
-
-	logMultipleBackends(resolver, namespace, routeName, len(refs))
 
 	selectedIdx := SelectHighestWeightIndex(refs)
 	if selectedIdx == -1 {
@@ -150,25 +100,36 @@ func effectiveBackendWeight(ref *gatewayv1.BackendRef) int32 {
 	return DefaultBackendWeight
 }
 
-// logProxyServedFilters reports rule-level filters, which the Cloudflare tunnel
-// ingress path cannot express (the in-process proxy serves them instead).
-func logProxyServedFilters(resolver *backendResolver, namespace, name string, count int) {
-	if count > 0 {
-		resolver.logger.Info("cloudflare tunnel ingress document reduced",
-			"route", fmt.Sprintf("%s/%s", namespace, name),
-			"reason", "filters are not expressible in tunnel ingress rules; the in-process proxy applies them",
-			"filters", count,
-		)
+// hostnamesOrWildcard returns a route's hostnames, or the "*" wildcard when
+// it declares none.
+func hostnamesOrWildcard(hostnames []gatewayv1.Hostname) []gatewayv1.Hostname {
+	if len(hostnames) == 0 {
+		return []gatewayv1.Hostname{"*"}
 	}
+
+	return hostnames
 }
 
-func logMultipleBackends(resolver *backendResolver, namespace, routeName string, totalBackends int) {
-	if totalBackends > 1 {
-		resolver.logger.Info("cloudflare tunnel ingress document reduced",
-			"route", fmt.Sprintf("%s/%s", namespace, routeName),
-			"reason", "tunnel ingress document uses only the highest-weight backend URL; the in-process proxy routes to all backends",
-			"total_backends", totalBackends,
-			"additional_backends", totalBackends-1,
-		)
+// embeddedBackendRefs returns, per rule, the plain BackendRefs embedded in the
+// rule's kind-specific backendRefs; their per-backend filters do not reach the
+// tunnel document.
+func embeddedBackendRefs[Rule, Ref any](
+	rules []Rule,
+	refsOf func(*Rule) []Ref,
+	embedded func(*Ref) gatewayv1.BackendRef,
+) [][]gatewayv1.BackendRef {
+	out := make([][]gatewayv1.BackendRef, 0, len(rules))
+
+	for i := range rules {
+		typed := refsOf(&rules[i])
+		plain := make([]gatewayv1.BackendRef, len(typed))
+
+		for j := range typed {
+			plain[j] = embedded(&typed[j])
+		}
+
+		out = append(out, plain)
 	}
+
+	return out
 }

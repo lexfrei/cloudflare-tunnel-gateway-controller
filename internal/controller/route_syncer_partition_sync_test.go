@@ -147,6 +147,28 @@ func (a *recordingTunnelAPI) hostnamesFor(tunnelID string) []string {
 	return a.puts[tunnelID]
 }
 
+// lastIngress returns the ingress rules last written to tunnelID.
+func (a *recordingTunnelAPI) lastIngress(t *testing.T, tunnelID string) []map[string]any {
+	t.Helper()
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	rules, ok := a.docs[tunnelID]
+	require.True(t, ok, "tunnel %s was never written", tunnelID)
+
+	return rules
+}
+
+// seed makes GET serve rules for tunnelID, as if an earlier controller had
+// written them.
+func (a *recordingTunnelAPI) seed(tunnelID string, rules []map[string]any) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.docs[tunnelID] = rules
+}
+
 func (a *recordingTunnelAPI) tunnelsWritten() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()

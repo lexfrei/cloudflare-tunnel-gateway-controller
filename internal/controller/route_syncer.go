@@ -1788,7 +1788,7 @@ func (s *RouteSyncer) syncTunnelGroup(
 			"tunnel", group.resolved.TunnelID,
 			"count", len(finalRules),
 			"max", maxIngressRules,
-			"rules_by_namespace", ingressRuleAttribution(httpBuild.RulesByNamespace, grpcBuild.RulesByNamespace),
+			"rules_by_namespace", ingressRuleAttribution(httpBuild.HostnamesByNamespace, grpcBuild.HostnamesByNamespace),
 		)
 		s.Metrics.RecordSyncError(ctx, "limit_exceeded")
 
@@ -2131,34 +2131,34 @@ func (s *RouteSyncer) evaluateHostnameOwnership(
 // cluster with hundreds of tenants cannot turn one log line into a page.
 const ruleAttributionLimit = 10
 
-// ingressRuleAttribution renders the per-namespace rule counts of one tunnel's
-// document, largest share first, for the OPERATOR log. Ties break on name so
-// the line is stable across reconciles and diffable between them.
+// ingressRuleAttribution renders, per namespace, how many of one tunnel's
+// document rules its routes need, largest share first, for the OPERATOR log.
+// Ties break on name so the line is stable across reconciles and diffable
+// between them.
 //
-// The shares count the desired rules. DiffRules matches desired and deployed
-// copies one to one, so the document holds each desired rule exactly as many
-// times as it is desired, and the shares sum to one less than the document's
-// rule count: the catch-all closing the document is the controller's own and
-// belongs to no namespace. Two routes projecting an identical rule therefore
-// each hold a slot, and each copy is counted against the namespace of the
-// route that produced it.
-func ingressRuleAttribution(counts ...map[string]int) string {
-	merged := make(map[string]int)
+// The document holds one rule per hostname, so a namespace's share is the
+// number of distinct hostnames its HTTPRoutes and GRPCRoutes serve. A hostname
+// several namespaces serve is one rule but counts toward each of them, so the
+// shares can sum to more than the document holds: each says how many rules
+// that namespace keeps in the document, not how many would go if it left.
+func ingressRuleAttribution(builds ...map[string][]string) string {
+	hostnames := make(map[string]map[string]struct{})
 
-	for _, perBuilder := range counts {
-		for namespace, count := range perBuilder {
-			// A namespace whose routes are all wildcard-hostname contributes
-			// no rules and belongs nowhere in a line about who filled the
-			// budget. Zeroes sort to the bottom and so never displace a real
-			// consumer from the list, but they would be counted into the
-			// "+N more" tail, telling an operator that N namespaces were
-			// withheld when those N contributed nothing.
-			if count == 0 {
-				continue
+	for _, perBuilder := range builds {
+		for namespace, served := range perBuilder {
+			if hostnames[namespace] == nil {
+				hostnames[namespace] = make(map[string]struct{}, len(served))
 			}
 
-			merged[namespace] += count
+			for _, hostname := range served {
+				hostnames[namespace][hostname] = struct{}{}
+			}
 		}
+	}
+
+	merged := make(map[string]int, len(hostnames))
+	for namespace, served := range hostnames {
+		merged[namespace] = len(served)
 	}
 
 	if len(merged) == 0 {
@@ -2196,16 +2196,15 @@ func errRuleBudgetExhausted(tunnelID string) error {
 	return errors.Newf(
 		"tunnel %s is at this controller's ingress-rule limit, so its configuration is frozen: "+
 			"no new hostname on this tunnel can be programmed until it is back under the limit. "+
-			"If this route declares many hostnames or path matches, reducing them frees budget; "+
+			"If this route declares many hostnames, reducing them frees budget; "+
 			"otherwise ask the operator, who can see which namespace filled it, for a dedicated "+
 			"data plane on its own tunnel",
 		tunnelID)
 }
 
 // sortIngressRules sorts ingress rules: specific hostnames alphabetically first,
-// wildcard (no hostname) last, same hostname by path length (longer first).
-// This ordering is required by Cloudflare API — rules without hostname before
-// rules with hostname trigger error 1056.
+// wildcard (no hostname) last. This ordering is required by Cloudflare API —
+// rules without hostname before rules with hostname trigger error 1056.
 func sortIngressRules(
 	rules []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress,
 ) []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress {
@@ -2222,36 +2221,45 @@ func sortIngressRules(
 			return 1
 		}
 
-		// Both have hostname or both don't — sort alphabetically, then by path length (longer first).
-		if c := cmp.Compare(left.Hostname.Value, right.Hostname.Value); c != 0 {
-			return c
-		}
-
-		return cmp.Compare(len(right.Path.Value), len(left.Path.Value))
+		return cmp.Compare(left.Hostname.Value, right.Hostname.Value)
 	})
 
 	return rules
 }
 
-// mergeAndSortRules combines HTTP and GRPC rules and adds catch-all.
-// Rules are already sorted within each builder, but we need to merge them.
+// mergeAndSortRules combines the HTTP and GRPC builders' rules into one
+// document body without the catch-all, which is added at the end anyway. A
+// hostname both builders list stays one rule, naming the smaller backend URL
+// as each builder does within its own routes.
 func mergeAndSortRules(
 	httpRules, grpcRules []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress,
 ) []zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress {
-	// Remove catch-all from httpRules if present (it's added at the end anyway)
-	httpFiltered := filterOutCatchAll(httpRules)
-	grpcFiltered := filterOutCatchAll(grpcRules)
+	combined := slices.Concat(filterOutCatchAll(httpRules), filterOutCatchAll(grpcRules))
+	merged := make([]zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress, 0, len(combined))
+	byHostname := make(map[string]int, len(combined))
 
-	// Combine all rules
-	combined := make(
-		[]zero_trust.TunnelCloudflaredConfigurationUpdateParamsConfigIngress,
-		0,
-		len(httpFiltered)+len(grpcFiltered)+1,
-	)
-	combined = append(combined, httpFiltered...)
-	combined = append(combined, grpcFiltered...)
+	for i := range combined {
+		rule := &combined[i]
+		if !rule.Hostname.Present {
+			merged = append(merged, *rule)
 
-	return sortIngressRules(combined)
+			continue
+		}
+
+		idx, seen := byHostname[rule.Hostname.Value]
+		if !seen {
+			byHostname[rule.Hostname.Value] = len(merged)
+			merged = append(merged, *rule)
+
+			continue
+		}
+
+		if rule.Service.Value < merged[idx].Service.Value {
+			merged[idx] = *rule
+		}
+	}
+
+	return sortIngressRules(merged)
 }
 
 func filterOutCatchAll(

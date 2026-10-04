@@ -126,7 +126,7 @@ func TestGRPCBuild_ServiceMethodMatch(t *testing.T) {
 	buildResult := builder.Build(context.Background(), routes)
 
 	require.Len(t, buildResult.Rules, 1)
-	assert.Equal(t, "/mypackage.MyService/GetUser", buildResult.Rules[0].Path.Value)
+	assert.False(t, buildResult.Rules[0].Path.Present, "the proxy matches methods; the document carries no path")
 }
 
 func TestGRPCBuild_ServiceOnlyMatch(t *testing.T) {
@@ -163,7 +163,7 @@ func TestGRPCBuild_ServiceOnlyMatch(t *testing.T) {
 	buildResult := builder.Build(context.Background(), routes)
 
 	require.Len(t, buildResult.Rules, 1)
-	assert.Equal(t, "/mypackage.MyService/*", buildResult.Rules[0].Path.Value)
+	assert.False(t, buildResult.Rules[0].Path.Present, "the proxy matches services; the document carries no path")
 }
 
 func TestGRPCBuild_NoMethodMatch(t *testing.T) {
@@ -286,7 +286,7 @@ func TestGRPCBuild_NoBackendRefs(t *testing.T) {
 	require.Empty(t, buildResult.Rules)
 }
 
-func TestGRPCBuild_Sorting(t *testing.T) {
+func TestGRPCBuild_RulesOfOneHostnameCollapse(t *testing.T) {
 	t.Parallel()
 
 	builder := ingress.NewGRPCBuilder("cluster.local", nil, nil, nil, nil)
@@ -334,9 +334,8 @@ func TestGRPCBuild_Sorting(t *testing.T) {
 
 	buildResult := builder.Build(context.Background(), routes)
 
-	require.Len(t, buildResult.Rules, 2)
-	assert.Contains(t, buildResult.Rules[0].Service.Value, "exact-service")
-	assert.Contains(t, buildResult.Rules[1].Service.Value, "prefix-service")
+	require.Len(t, buildResult.Rules, 1, "two rules on one hostname are one document rule")
+	assert.Contains(t, buildResult.Rules[0].Service.Value, "exact-service", "the smallest backend URL is named")
 }
 
 func TestGRPCBuild_CustomNamespace(t *testing.T) {
@@ -1036,21 +1035,11 @@ func TestGRPCBuild_NamedAndUnnamedRules_BothRoutable(t *testing.T) {
 
 	buildResult := builder.Build(context.Background(), routes)
 
-	// Both rules must keep their distinct method paths and resolved backends —
-	// the Name field on one rule must not alter the output of the other.
-	require.Len(t, buildResult.Rules, 2)
-
-	pathToService := map[string]string{}
-	for _, rule := range buildResult.Rules {
-		pathToService[rule.Path.Value] = rule.Service.Value
-	}
-
+	// The Name field on one rule must not keep either rule out of the
+	// document: both resolve, and the hostname is listed once.
+	require.Len(t, buildResult.Rules, 1)
 	assert.Equal(t,
 		"http://grpc-infra-backend-v1.gateway-conformance-infra.svc.cluster.local:8080",
-		pathToService["/gateway_api_conformance.echo_basic.grpcecho.GrpcEcho/Echo"],
-	)
-	assert.Equal(t,
-		"http://grpc-infra-backend-v2.gateway-conformance-infra.svc.cluster.local:8080",
-		pathToService["/gateway_api_conformance.echo_basic.grpcecho.GrpcEcho/EchoTwo"],
+		buildResult.Rules[0].Service.Value,
 	)
 }

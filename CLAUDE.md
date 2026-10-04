@@ -101,7 +101,7 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 
 - **internal/config/resolver.go**: Resolves GatewayClassConfig from GatewayClass parametersRef, reads credentials from Secrets, auto-detects account ID via Cloudflare API.
 
-- **internal/ingress/builder.go**: Converts HTTPRoute specs to Cloudflare tunnel ingress rules. Handles hostnames, path matching (prefix/exact), backend service resolution.
+- **internal/ingress/builder.go**: Converts HTTPRoute specs to Cloudflare tunnel ingress rules, one per distinct hostname (the proxy does all path matching). Handles backend service resolution.
 
 - **internal/dns/detect.go**: Auto-detects Kubernetes cluster domain from `/etc/resolv.conf` search domains.
 
