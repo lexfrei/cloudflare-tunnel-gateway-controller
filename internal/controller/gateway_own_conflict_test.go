@@ -148,8 +148,8 @@ func TestGatewayReconciler_OwnConflictKeepsGatewayAccepted(t *testing.T) {
 	require.NotNil(t, accepted)
 	assert.Equal(t, metav1.ConditionTrue, accepted.Status, "the distinct listener still serves")
 	assert.Equal(t, string(gatewayv1.GatewayReasonListenersNotValid), accepted.Reason)
-	assert.Contains(t, accepted.Message, "c1")
-	assert.Contains(t, accepted.Message, "c2")
+	assert.Contains(t, accepted.Message, "conflicted listeners: c1, c2")
+	assert.Contains(t, accepted.Message, "accepted listeners: ok", "the spec asks the message to name the accepted listeners too")
 
 	for _, name := range []gatewayv1.SectionName{"c1", "c2"} {
 		var status *gatewayv1.ListenerStatus
@@ -221,4 +221,17 @@ func TestGatewayReconciler_UnservedListenerLeavesHTTPUsable(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, binding.Result.Accepted, "a route binds to the HTTP listener")
 	assert.Equal(t, []gatewayv1.SectionName{"http"}, binding.Result.MatchedListeners)
+}
+
+// TestGatewayInvalidListeners_NoAcceptedListeners pins that the message names
+// no accepted listeners when none is accepted.
+func TestGatewayInvalidListeners_NoAcceptedListeners(t *testing.T) {
+	t.Parallel()
+
+	listeners := ownConflictListeners()[:2]
+
+	anyInvalid, allInvalid, message := gatewayInvalidListeners(listeners, map[gatewayv1.SectionName]bool{"c1": true, "c2": true})
+	assert.True(t, anyInvalid)
+	assert.True(t, allInvalid)
+	assert.NotContains(t, message, "accepted listeners")
 }

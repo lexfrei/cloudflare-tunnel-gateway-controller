@@ -208,7 +208,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | Type | Status | Reason | Description |
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Gateway accepted by controller |
-| `Accepted` | `True` or `False` | `ListenersNotValid` | One or more own listeners are invalid (they conflict and carry `Conflicted=True`, use an unsupported protocol, or have an `allowedRoutes.namespaces.selector` that does not parse); `False` only when no listener is valid |
+| `Accepted` | `True` or `False` | `ListenersNotValid` | One or more own listeners are invalid (they conflict and carry `Conflicted=True`, use an unsupported protocol, or have an `allowedRoutes.namespaces.selector` that does not parse); `False` only when no listener is valid. The message names the conflicted listeners and the accepted ones |
 | `Programmed` | `True` | `Programmed` | Gateway configured in Cloudflare |
 
 ### Gateway Listener Conditions
