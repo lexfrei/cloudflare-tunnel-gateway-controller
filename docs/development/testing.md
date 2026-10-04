@@ -52,6 +52,10 @@ helm unittest charts/cloudflare-tunnel-gateway-controller
 # Lint chart
 helm lint charts/cloudflare-tunnel-gateway-controller
 
+# Render with the released values.yaml files under tests/fixtures, as helm upgrade --reuse-values does.
+# After a chart release, add its values.yaml there as tests/fixtures/values-<tag>.yaml.
+./hack/chart-reuse-values.sh
+
 # Template locally (for debugging)
 helm template test charts/cloudflare-tunnel-gateway-controller \
   --values charts/cloudflare-tunnel-gateway-controller/examples/basic-values.yaml

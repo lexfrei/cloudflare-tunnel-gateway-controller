@@ -107,7 +107,8 @@ ci-go: ## Run all Go CI gates (test + lint)
 ci-helm: helm-docs ## Run all Helm CI gates (test + lint + docs)
 	git diff --exit-code $(CHART_PATH)/README.md && \
 	helm unittest $(CHART_PATH) && \
-	helm lint $(CHART_PATH)
+	helm lint $(CHART_PATH) && \
+	./hack/chart-reuse-values.sh $(CHART_PATH)
 
 ci-docs: ## Run docs CI gate
 	mkdocs build --strict
