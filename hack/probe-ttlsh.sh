@@ -13,7 +13,7 @@ set -euo pipefail
 
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT must name the step output file}"
 
-url="https://ttl.sh/v2/cf-tunnel-gateway-probe/blobs/uploads/"
+url="https://ttl.sh.invalid/v2/cf-tunnel-gateway-probe/blobs/uploads/"
 code=""
 for attempt in 1 2; do
   code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
