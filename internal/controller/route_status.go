@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
@@ -1054,6 +1055,20 @@ func holdsOwnParentStatus(parents []gatewayv1.RouteParentStatus, controllerName 
 	return slices.ContainsFunc(parents, func(parent gatewayv1.RouteParentStatus) bool {
 		return string(parent.ControllerName) == controllerName
 	})
+}
+
+// requestsHoldingOwnStatus returns a request for every route carrying a
+// status.parents entry written by controllerName.
+func requestsHoldingOwnStatus(routes []Route, controllerName string) []reconcile.Request {
+	var requests []reconcile.Request
+
+	for _, route := range routes {
+		if holdsOwnParentStatus(route.GetParentStatuses(), controllerName) {
+			requests = append(requests, reconcile.Request{Namespace: route.GetNamespace(), Name: route.GetName()})
+		}
+	}
+
+	return requests
 }
 
 // releaseOwnParentStatus removes controllerName's status.parents entries from a

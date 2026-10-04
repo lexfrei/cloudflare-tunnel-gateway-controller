@@ -72,8 +72,8 @@ func TestReportUndecidedParent_CarriesRouteKind(t *testing.T) {
 		},
 	}
 
-	_, httpDiags, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{httpRoute}, nil)
-	_, grpcDiags, _ := withEffectiveHostnamesGRPC(context.Background(), cli, "", []*gatewayv1.GRPCRoute{grpcRoute}, nil)
+	_, httpDiags, _ := withEffectiveHostnames(context.Background(), cli, "", []*gatewayv1.HTTPRoute{httpRoute}, nil, nil)
+	_, grpcDiags, _ := withEffectiveHostnamesGRPC(context.Background(), cli, "", []*gatewayv1.GRPCRoute{grpcRoute}, nil, nil)
 
 	require.Len(t, httpDiags, 1)
 	require.Len(t, grpcDiags, 1)

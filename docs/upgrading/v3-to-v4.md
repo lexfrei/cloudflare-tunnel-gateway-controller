@@ -298,7 +298,7 @@ What to do: nothing. If you alert on the Error log level, expect the retrier to 
 
 ## Behaviour change: stale route status is released
 
-When none of a route's parentRefs leads to a Gateway this controller manages any more, for example because the route now points at another controller's Gateway, its Gateway moved to another GatewayClass, its ListenerSet now points at another Gateway, or its parentRef names another group, the controller removes the `status.parents` entries it wrote for that route. It leaves other controllers' entries alone. On v3 those entries stayed. Deleting the GatewayClass itself does not trigger this yet: the routes keep their entries until the route or its Gateway changes, tracked by [#918](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/issues/918).
+When none of a route's parentRefs leads to a Gateway this controller manages any more, for example because the route now points at another controller's Gateway, its Gateway moved to another GatewayClass, its ListenerSet now points at another Gateway, or its parentRef names another group, the controller removes the `status.parents` entries it wrote for that route. It leaves other controllers' entries alone. On v3 those entries stayed. On v4.0.0, deleting the GatewayClass itself does not trigger this: the routes keep their entries until the route or its Gateway changes. Later v4 releases also remove them when the GatewayClass is deleted.
 
 ## Behaviour change: a parent that cannot be evaluated is reported Pending
 

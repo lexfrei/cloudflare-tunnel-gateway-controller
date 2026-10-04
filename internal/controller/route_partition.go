@@ -44,7 +44,8 @@ type routePartition struct {
 // partition may take the route's backend client certificate from: Gateways
 // the route is accepted on whose data plane serves the partition. The two
 // route kinds are kept apart because an HTTPRoute and a GRPCRoute may share a
-// name.
+// name. The same set decides which Gateways lend the route its hostnames on
+// that plane, so narrowing it for certificates narrows what the plane serves.
 type clientCertParents struct {
 	http map[string]map[string]bool
 	grpc map[string]map[string]bool

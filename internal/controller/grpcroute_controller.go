@@ -290,6 +290,7 @@ func (r *GRPCRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		findRoutesForEndpointSlice:   r.findRoutesForEndpointSlice,
 		findRoutesForExternalBackend: r.findRoutesForExternalBackend,
 		getAllRelevantRoutes:         r.getAllRelevantRoutes,
+		getRoutesHoldingOwnStatus:    r.routesHoldingOwnStatus,
 		watchBackendTLS:              true,
 		watchNamespaceLabels:         r.RouteSyncer.HostnameOwnership != nil,
 	})
@@ -471,4 +472,19 @@ func (r *GRPCRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconc
 
 	return FilterAcceptedRoutes(ctx, r.Client, r.bindingValidator, r.ControllerName, routes,
 		newListenerViewCache(r.Client, r.ViewStore))
+}
+
+func (r *GRPCRouteReconciler) routesHoldingOwnStatus(ctx context.Context) []reconcile.Request {
+	var routeList gatewayv1.GRPCRouteList
+
+	if !listForWatchEvent(ctx, r.Client, &routeList) {
+		return nil
+	}
+
+	routes := make([]Route, len(routeList.Items))
+	for i := range routeList.Items {
+		routes[i] = GRPCRouteWrapper{&routeList.Items[i]}
+	}
+
+	return requestsHoldingOwnStatus(routes, r.ControllerName)
 }

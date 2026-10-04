@@ -122,6 +122,9 @@ type routeControllerSetupParams struct {
 	// disabled — namespace labels then influence nothing.
 	watchNamespaceLabels bool
 	getAllRelevantRoutes RequestsFunc
+	// getRoutesHoldingOwnStatus lists the routes carrying a status.parents
+	// entry this controller wrote, accepted or not.
+	getRoutesHoldingOwnStatus RequestsFunc
 }
 
 // namespaceScopedRequests narrows getAllRelevantRoutes to the routes of the
@@ -210,8 +213,9 @@ func routeWatches(params *routeControllerSetupParams) []routeWatch {
 			// Acceptance keys on the class's controllerName, so a class of
 			// ours appearing, going away or changing parametersRef moves
 			// routes in or out without any route or Gateway event.
-			object:     &gatewayv1.GatewayClass{},
-			handler:    handler.EnqueueRequestsFromMapFunc(ownClassRoutes(params.controllerName, params.getAllRelevantRoutes)),
+			object: &gatewayv1.GatewayClass{},
+			handler: handler.EnqueueRequestsFromMapFunc(
+				ownClassRoutes(params.controllerName, params.getAllRelevantRoutes, params.getRoutesHoldingOwnStatus)),
 			predicates: generationChanged,
 		},
 		{
@@ -297,16 +301,16 @@ func managedGatewayRoutes(cli client.Client, controllerName string, getAll Reque
 // ownClassRoutes enqueues the relevant routes when a GatewayClass carrying
 // this controller's name changes; any one of them runs the full sync. A
 // deleted class is matched on its last state, but its own routes are no
-// longer relevant by then: the sync runs only if another managed class still
-// has an accepted route, and nothing is enqueued otherwise.
-func ownClassRoutes(controllerName string, getAll RequestsFunc) handler.MapFunc {
+// longer relevant by then, so the routes still carrying this controller's
+// status are enqueued too, for their entries to be released.
+func ownClassRoutes(controllerName string, getAll, getHoldingOwnStatus RequestsFunc) handler.MapFunc {
 	return func(ctx context.Context, obj client.Object) []reconcile.Request {
 		class, ok := obj.(*gatewayv1.GatewayClass)
 		if !ok || string(class.Spec.ControllerName) != controllerName {
 			return nil
 		}
 
-		return getAll(ctx)
+		return append(getAll(ctx), getHoldingOwnStatus(ctx)...)
 	}
 }
 

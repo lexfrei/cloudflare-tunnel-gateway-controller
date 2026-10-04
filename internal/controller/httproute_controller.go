@@ -208,6 +208,7 @@ func (r *HTTPRouteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		watchBackendTLS:              true,
 		watchNamespaceLabels:         r.RouteSyncer.HostnameOwnership != nil,
 		getAllRelevantRoutes:         r.getAllRelevantRoutes,
+		getRoutesHoldingOwnStatus:    r.routesHoldingOwnStatus,
 	})
 }
 
@@ -386,4 +387,19 @@ func (r *HTTPRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconc
 
 	return FilterAcceptedRoutes(ctx, r.Client, r.bindingValidator, r.ControllerName, routes,
 		newListenerViewCache(r.Client, r.ViewStore))
+}
+
+func (r *HTTPRouteReconciler) routesHoldingOwnStatus(ctx context.Context) []reconcile.Request {
+	var routeList gatewayv1.HTTPRouteList
+
+	if !listForWatchEvent(ctx, r.Client, &routeList) {
+		return nil
+	}
+
+	routes := make([]Route, len(routeList.Items))
+	for i := range routeList.Items {
+		routes[i] = HTTPRouteWrapper{&routeList.Items[i]}
+	}
+
+	return requestsHoldingOwnStatus(routes, r.ControllerName)
 }
