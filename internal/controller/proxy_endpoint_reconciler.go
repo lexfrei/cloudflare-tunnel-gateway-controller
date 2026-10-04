@@ -97,13 +97,13 @@ func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	var slice discoveryv1.EndpointSlice
 	if err := r.Client.Get(ctx, req.NamespacedName, &slice); err != nil {
-		if apierrors.IsNotFound(err) {
-			r.forgetColdSyncFailure(req.NamespacedName)
+		if !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, errors.Wrap(err, "get proxy EndpointSlice")
 		}
 
-		// Deleted or unreadable: we cannot attribute the event to one data
-		// plane, so replay every cached partition — cheap and correct.
-		return replayResult(ctx, r.ProxySyncer.ResyncAllPartitions(ctx), "resync all proxy partitions")
+		r.forgetColdSyncFailure(req.NamespacedName)
+
+		return r.replayAll(ctx), nil
 	}
 
 	coverage := r.serviceCoverage(ctx, &slice)
@@ -111,12 +111,15 @@ func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// A per-Gateway data plane's EndpointSlice carries the Gateway label
 	// (mirrored from its rendered Service); resync just that partition.
 	if labelValue := slice.Labels[render.GatewayLabel]; labelValue != "" {
-		key, ok := r.partitionKeyForLabel(ctx, slice.Namespace, labelValue)
+		key, ok, err := r.partitionKeyForLabel(ctx, slice.Namespace, labelValue)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+
 		if !ok {
-			// The label value cannot be attributed to a live Gateway (it is
-			// a truncated form of a name that no longer exists, or foreign):
-			// replay every cached partition — cheap and correct.
-			return replayResult(ctx, r.ProxySyncer.ResyncAllPartitions(ctx), "resync all proxy partitions")
+			// The label value cannot be attributed to a live Gateway: it is
+			// a truncated form of a name that no longer exists, or foreign.
+			return r.replayAll(ctx), nil
 		}
 
 		return r.replay(ctx, key, coverage, "resync per-gateway proxy partition", func() error {
@@ -127,6 +130,29 @@ func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	return r.replay(ctx, sharedPartitionKey, coverage, "resync proxy endpoints", func() error {
 		return r.ProxySyncer.resyncEndpoints(ctx, r.ProxyEndpoints, coverage)
 	})
+}
+
+// replayAll replays every cached partition, for a slice event no partition can
+// be attributed to: a deleted slice, or one labelled for a Gateway that does
+// not exist. Neither brings a pod that needs a config, so a failure is logged
+// and not retried; retrying it would re-push every healthy partition while one
+// plane stays unreachable, such as one scaled to zero. A partition's own slice
+// events and the route syncs keep pushing to it. A superseded replay still
+// requeues shortly, as replayResult does.
+func (r *ProxyEndpointReconciler) replayAll(ctx context.Context) ctrl.Result {
+	err := r.ProxySyncer.ResyncAllPartitions(ctx)
+	if err == nil {
+		return ctrl.Result{}
+	}
+
+	if onlyMarked(err, errReplaySuperseded) {
+		return ctrl.Result{RequeueAfter: lostRacePushRequeueDelay}
+	}
+
+	logging.FromContext(ctx).Warn("replay of every proxy partition did not reach every plane; not retrying",
+		"error", err.Error())
+
+	return ctrl.Result{}
 }
 
 // replay runs resync for the partition keyed by key. A partition no replica
@@ -267,10 +293,10 @@ func retryUndelivered(ctx context.Context, key string, syncResult ctrl.Result) c
 func (r *ProxyEndpointReconciler) partitionKeyForLabel(
 	ctx context.Context,
 	namespace, labelValue string,
-) (string, bool) {
+) (string, bool, error) {
 	var gateways gatewayv1.GatewayList
 	if err := r.Client.List(ctx, &gateways, client.InNamespace(namespace)); err != nil {
-		return "", false
+		return "", false, errors.Wrap(err, "list Gateways")
 	}
 
 	for i := range gateways.Items {
@@ -281,11 +307,11 @@ func (r *ProxyEndpointReconciler) partitionKeyForLabel(
 		// of already-correct config), never a cross-tenant leak, and it
 		// self-heals on the next genuine config change.
 		if render.GatewayLabelValue(gateways.Items[i].Name) == labelValue {
-			return namespace + "/" + gateways.Items[i].Name, true
+			return namespace + "/" + gateways.Items[i].Name, true, nil
 		}
 	}
 
-	return "", false
+	return "", false, nil
 }
 
 // SetupWithManager wires the reconciler into the manager with an
