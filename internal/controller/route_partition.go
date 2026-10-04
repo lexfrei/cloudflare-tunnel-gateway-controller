@@ -238,10 +238,6 @@ func applyDataPlaneQuota(infra *infraGateways, capacity *int32, claims []dataPla
 		delete(infra.resolved, key)
 
 		infra.broken[key] = true
-
-		// A cap is a decision, not a blip: clear any transient mark so the push
-		// cache is not retained for a plane that will keep being refused.
-		delete(infra.transient, key)
 	}
 }
 

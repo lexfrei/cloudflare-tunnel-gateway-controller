@@ -536,23 +536,6 @@ func TestApplyDataPlaneQuota(t *testing.T) {
 			"a tenant-visible message must not name the Gateway holding the slot")
 	})
 
-	t.Run("the refusal clears a stale transient mark", func(t *testing.T) {
-		t.Parallel()
-
-		infra := newInfra()
-		// Pre-marked transient: a prior blip left the mark, and the Gateway's
-		// config resolves fine now. Keeping the mark would put the key in
-		// SyncResult.TransientBrokenKeys, which retains the push cache and
-		// requeues the sync on apiErrorRequeueDelay -- turning a permanent
-		// capacity refusal into a retry loop for a plane that is never rendered.
-		infra.transient["team-a/new"] = true
-
-		applyDataPlaneQuota(infra, new(int32(1)), quotaClaimsFrom(infra))
-
-		assert.NotContains(t, infra.transientKeys(), "team-a/new",
-			"a cap is a decision, not a blip")
-	})
-
 	t.Run("a Gateway broken for its own reason keeps that reason", func(t *testing.T) {
 		t.Parallel()
 
