@@ -98,13 +98,16 @@ type ClientCertConfig struct {
 }
 
 // GatewayClientCertResolver returns the client certificate the route's
-// backends present on behalf of one of its parent Gateways, or nil when that
-// Gateway supplies none for this route. The route is an argument because the
-// answer depends on it: the controller answers only for a Gateway that
-// accepted the route and whose data plane the config is built for. The
+// backends present on behalf of one of its parents, or nil when that parent
+// supplies none for this route. parentKind is Gateway or ListenerSet;
+// a ListenerSet parent stands for its parent Gateway. The route is an argument
+// because the answer depends on it: the controller answers only for a Gateway
+// that accepted the route and whose data plane the config is built for. The
 // converter asks for each parent in spec order, takes the first certificate,
 // and stamps it onto every backend's BackendTLSConfig.
-type GatewayClientCertResolver func(ctx context.Context, route, gateway types.NamespacedName) *ClientCertConfig
+type GatewayClientCertResolver func(
+	ctx context.Context, route, parent types.NamespacedName, parentKind gatewayv1.Kind,
+) *ClientCertConfig
 
 // sortRoutesByPrecedence returns a copy of routes ordered by the Gateway API
 // cross-Route match precedence tiebreak (httproute_types.go:192-197 /
@@ -177,11 +180,12 @@ func ConvertHTTPRoutes(
 	})
 }
 
-// kindGateway identifies the parentRef Kind we recognise when walking
-// parents looking for a client certificate. Shared by the HTTPRoute and
-// GRPCRoute helpers in this file and grpc_converter.go. The Group is
+// The parentRef kinds that can supply a client certificate. The Group is
 // matched by parentref.InGatewayAPIGroup, the rule binding uses.
-const kindGateway = "Gateway"
+const (
+	kindGateway     gatewayv1.Kind = "Gateway"
+	kindListenerSet gatewayv1.Kind = "ListenerSet"
+)
 
 // resolveFirstParentClientCertFromRefs is the route-type-agnostic core of the
 // parent-cert lookup: it walks ParentReferences directly so HTTPRoute and
@@ -202,7 +206,12 @@ func resolveFirstParentClientCertFromRefs(
 			continue
 		}
 
-		if ref.Kind != nil && *ref.Kind != "" && *ref.Kind != kindGateway {
+		kind := kindGateway
+		if ref.Kind != nil && *ref.Kind != "" {
+			kind = *ref.Kind
+		}
+
+		if kind != kindGateway && kind != kindListenerSet {
 			continue
 		}
 
@@ -211,7 +220,7 @@ func resolveFirstParentClientCertFromRefs(
 			ns = string(*ref.Namespace)
 		}
 
-		if cert := resolver(ctx, route, types.NamespacedName{Namespace: ns, Name: string(ref.Name)}); cert != nil {
+		if cert := resolver(ctx, route, types.NamespacedName{Namespace: ns, Name: string(ref.Name)}, kind); cert != nil {
 			return cert
 		}
 	}

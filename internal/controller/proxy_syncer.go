@@ -279,9 +279,28 @@ type gatewayClientCertLoader func(ctx context.Context, gatewayNN types.Namespace
 
 // clientCertResolver narrows the lookup to the Gateways that parents lists
 // for each route; a route or Gateway missing from parents yields no
-// certificate.
+// certificate. A ListenerSet parent is looked up as its parent Gateway.
 func (s *ProxySyncer) clientCertResolver(parents map[string]map[string]bool) proxy.GatewayClientCertResolver {
-	return func(ctx context.Context, route, gateway types.NamespacedName) *proxy.ClientCertConfig {
+	return func(ctx context.Context, route, parent types.NamespacedName, parentKind gatewayv1.Kind) *proxy.ClientCertConfig {
+		gateway := parent
+
+		if parentKind == kindListenerSet {
+			var listenerSet gatewayv1.ListenerSet
+			if err := s.k8sClient.Get(ctx, parent, &listenerSet); err != nil {
+				if !apierrors.IsNotFound(err) {
+					slog.Warn("gateway client cert resolver: Get(ListenerSet) failed — presenting no client certificate for this hop",
+						"error", err,
+						"namespace", parent.Namespace,
+						"listenerSet", parent.Name,
+					)
+				}
+
+				return nil
+			}
+
+			gateway = listenerSetParentKey(&listenerSet)
+		}
+
 		if !parents[route.String()][gateway.String()] {
 			return nil
 		}
@@ -310,10 +329,10 @@ func newGatewayClientCertLoader(c client.Client, controllerName string) gatewayC
 		if err := c.Get(ctx, gatewayNN, &gateway); err != nil {
 			// NotFound is the expected outcome for routes pointing at a
 			// foreign-namespace or deleted parent — silently skip. Any other
-			// error is logged so a transient API-server hiccup that turns
-			// mTLS into plaintext has a visible cause.
+			// error is logged so a transient API-server hiccup that drops
+			// the client certificate has a visible cause.
 			if !apierrors.IsNotFound(err) {
-				slog.Warn("gateway client cert resolver: Get(Gateway) failed — falling back to plaintext for this hop",
+				slog.Warn("gateway client cert resolver: Get(Gateway) failed — presenting no client certificate for this hop",
 					"error", err,
 					"namespace", gatewayNN.Namespace,
 					"gateway", gatewayNN.Name,

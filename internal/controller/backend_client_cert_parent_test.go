@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -120,7 +121,7 @@ const (
 // by backend TLS so the certificate is attached wherever it is selected. The
 // config build does not evaluate acceptance, so each case passes its
 // certificate parents directly.
-func certParentSyncer(t *testing.T) (*ProxySyncer, map[string][]byte) {
+func certParentSyncer(t *testing.T, extra ...client.Object) (*ProxySyncer, map[string][]byte) {
 	t.Helper()
 
 	certA, keyA := generateClientKeypair(t)
@@ -130,11 +131,11 @@ func certParentSyncer(t *testing.T) (*ProxySyncer, map[string][]byte) {
 	gatewayB := gatewayWithClientCertRef("b", "gw-b", "client-cert-b", nil)
 	gatewayB.Spec.Listeners = []gatewayv1.Listener{{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType}}
 
-	cli := fake.NewClientBuilder().WithScheme(newClientCertScheme(t)).WithObjects(
+	cli := fake.NewClientBuilder().WithScheme(newClientCertScheme(t)).WithObjects(append(extra,
 		gatewayA, gatewayB,
 		clientCertSecret("b", "client-cert-a", certA, keyA),
 		clientCertSecret("b", "client-cert-b", certB, keyB),
-	).Build()
+	)...).Build()
 
 	syncer := NewProxySyncer("cluster.local", "token", "", cli, nil)
 	syncer.tlsResolver = func(context.Context, string, string, int32) *proxy.BackendTLSConfig {
@@ -292,4 +293,62 @@ func TestPushPartitionsConcurrently_HandsThePartitionItsCertParents(t *testing.T
 	require.NotNil(t, target.lastCfg, "the push must have succeeded and cached its config")
 	require.Len(t, target.lastCfg.Rules, 1)
 	assert.Equal(t, certs[certParentGatewayB], backendClientCert(t, target.lastCfg.Rules[0]))
+}
+
+// TestBackendClientCert_ListenerSetParentUsesItsGateway pins that a route
+// attached only through a ListenerSet presents the client certificate of the
+// ListenerSet's parent Gateway, under the same rule as a direct parent: that
+// Gateway must be among the partition's certificate parents.
+func TestBackendClientCert_ListenerSetParentUsesItsGateway(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		parentName gatewayv1.ObjectName
+		parents    clientCertParents
+		want       string
+	}{
+		{
+			name:    "parent Gateway accepted the route",
+			parents: clientCertParents{http: certParentSet("b/r", certParentGatewayB)},
+			want:    certParentGatewayB,
+		},
+		{
+			name:    "parent Gateway is not a certificate parent",
+			parents: clientCertParents{http: certParentSet("b/r", certParentGatewayA)},
+		},
+		{
+			name:       "ListenerSet does not exist",
+			parentName: "ls-missing",
+			parents:    clientCertParents{http: certParentSet("b/r", certParentGatewayB)},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			listenerSet := &gatewayv1.ListenerSet{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "b", Name: "ls-b"},
+				Spec:       gatewayv1.ListenerSetSpec{ParentRef: gatewayv1.ParentGatewayReference{Name: "gw-b"}},
+			}
+			syncer, certs := certParentSyncer(t, listenerSet)
+
+			parentName := tt.parentName
+			if parentName == "" {
+				parentName = "ls-b"
+			}
+
+			route := certParentHTTPRoute()
+			route.Spec.ParentRefs = []gatewayv1.ParentReference{
+				{Kind: new(gatewayv1.Kind(kindListenerSet)), Name: parentName},
+			}
+
+			cfg := syncer.buildProxyConfig(context.Background(),
+				[]*gatewayv1.HTTPRoute{route}, nil, nil, nil, tt.parents)
+
+			require.Len(t, cfg.Rules, 1)
+			assert.Equal(t, certs[tt.want], backendClientCert(t, cfg.Rules[0]))
+		})
+	}
 }
