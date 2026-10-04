@@ -245,6 +245,12 @@ jobs:
           export KUBEBUILDER_ASSETS
           go test -v -race -tags=envtest -coverprofile=coverage.out -covermode=atomic ./...
 
+      # The files under test/conformance carry the conformance build tag, so
+      # the run above skips them. Everything except the suite itself runs
+      # without a cluster.
+      - name: Run cluster-free conformance-package tests
+        run: go test -race -tags conformance -skip '^TestGatewayAPIConformance$' ./test/conformance/
+
       - name: Upload coverage
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
         with:

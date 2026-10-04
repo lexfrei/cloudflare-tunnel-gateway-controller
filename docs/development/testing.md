@@ -270,8 +270,11 @@ Tests run automatically in CI:
 - name: Run tests
   run: go test -v -race -tags=envtest -coverprofile=coverage.out -covermode=atomic ./...
 
+- name: Run cluster-free conformance-package tests
+  run: go test -race -tags conformance -skip '^TestGatewayAPIConformance$' ./test/conformance/
+
 - name: Upload coverage
-  uses: codecov/codecov-action@v6
+  uses: codecov/codecov-action@v7
   with:
     files: coverage.out
 ```
