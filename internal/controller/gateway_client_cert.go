@@ -259,7 +259,7 @@ func checkSecretReferenceGrantForGateway(
 		}
 
 		for _, to := range grants.Items[i].Spec.To {
-			if to.Group != "" || to.Kind != kindSecret {
+			if !isCoreSecret(string(to.Group), string(to.Kind)) {
 				continue
 			}
 
@@ -287,8 +287,8 @@ func grantAllowsGatewayFromNamespace(grant *gatewayv1beta1.ReferenceGrant, gatew
 	return false
 }
 
-// isCoreSecretRef reports whether the ref targets a core/v1 Secret (Group ""
-// and Kind "Secret"). nil Group/Kind are treated as the spec defaults.
+// isCoreSecretRef reports whether the ref targets a core/v1 Secret. nil
+// Group/Kind are treated as the spec defaults.
 func isCoreSecretRef(ref *gatewayv1.SecretObjectReference) bool {
 	group := ""
 	if ref.Group != nil {
@@ -300,5 +300,12 @@ func isCoreSecretRef(ref *gatewayv1.SecretObjectReference) bool {
 		kind = string(*ref.Kind)
 	}
 
+	return isCoreSecret(group, kind)
+}
+
+// isCoreSecret is the one group/kind test for a Secret reference and for the
+// ReferenceGrant entry authorising it. Unlike backendRefs (see coregroup), only
+// the canonical empty group names the core group here.
+func isCoreSecret(group, kind string) bool {
 	return group == "" && kind == kindSecret
 }

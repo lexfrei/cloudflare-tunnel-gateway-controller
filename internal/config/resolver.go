@@ -207,6 +207,14 @@ func ParametersRefProblem(ref *gatewayv1.ParametersReference) string {
 	return ""
 }
 
+// RefersToClassConfig reports whether ref names the GatewayClassConfig called
+// name, matching group and kind as well so a same-named object of another kind
+// is not mistaken for it.
+func RefersToClassConfig(ref *gatewayv1.ParametersReference, name string) bool {
+	return ref != nil && string(ref.Group) == ParametersRefGroup &&
+		string(ref.Kind) == ParametersRefKind && ref.Name == name
+}
+
 // TunnelPolicy is the part of a GatewayClassConfig the per-Gateway admission
 // rules read: which tunnel the class itself serves, whether the operator permits
 // several data planes to share one, and how many dedicated planes one namespace

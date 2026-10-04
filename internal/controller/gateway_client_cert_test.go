@@ -534,3 +534,27 @@ func TestLoadGatewayClientCertPEM_TransientGrantListError(t *testing.T) {
 	cond := buildClientCertResolvedRefsCondition(1, metav1.Now(), err)
 	assert.Nil(t, cond, "transient error must NOT flip Gateway to InvalidClientCertificateRef")
 }
+
+// TestIsCoreSecret pins that Secret references, unlike backendRefs, take only
+// the canonical empty group: the "core" spelling coregroup tolerates is refused.
+func TestIsCoreSecret(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		group, kind string
+		want        bool
+	}{
+		{group: "", kind: kindSecret, want: true},
+		{group: "core", kind: kindSecret, want: false},
+		{group: "example.com", kind: kindSecret, want: false},
+		{group: "", kind: "ConfigMap", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.group+"/"+tt.kind, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, isCoreSecret(tt.group, tt.kind))
+		})
+	}
+}

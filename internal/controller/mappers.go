@@ -196,8 +196,7 @@ func (m *ConfigMapper) isConfigForOurClass(ctx context.Context, cfg *v1alpha1.Ga
 	}
 
 	for i := range classes {
-		gc := &classes[i]
-		if gc.Spec.ParametersRef != nil && gc.Spec.ParametersRef.Name == cfg.Name {
+		if config.RefersToClassConfig(classes[i].Spec.ParametersRef, cfg.Name) {
 			return true
 		}
 	}

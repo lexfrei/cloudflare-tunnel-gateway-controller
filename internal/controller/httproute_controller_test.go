@@ -1255,8 +1255,8 @@ func TestHTTPRouteReconciler_MapperIntegration(t *testing.T) {
 		Spec: gatewayv1.GatewayClassSpec{
 			ControllerName: "test-controller",
 			ParametersRef: &gatewayv1.ParametersReference{
-				Group: "gateway.cloudflare-tunnel.io",
-				Kind:  "GatewayClassConfig",
+				Group: config.ParametersRefGroup,
+				Kind:  config.ParametersRefKind,
 				Name:  "test-config",
 			},
 		},

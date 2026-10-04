@@ -2238,3 +2238,53 @@ func findRoutesKindRoute(name, kind, group string) Route {
 		},
 	}}
 }
+
+func TestConfigMapper_IsConfigForOurClass_MatchesGroupKindAndName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		ref  *gatewayv1.ParametersReference
+		want bool
+	}{
+		{
+			name: "GatewayClassConfig of the same name",
+			ref:  &gatewayv1.ParametersReference{Group: config.ParametersRefGroup, Kind: config.ParametersRefKind, Name: "test-config"},
+			want: true,
+		},
+		{
+			name: "same name, different kind",
+			ref:  &gatewayv1.ParametersReference{Group: config.ParametersRefGroup, Kind: "GatewayConfig", Name: "test-config"},
+			want: false,
+		},
+		{
+			name: "same name, different group",
+			ref:  &gatewayv1.ParametersReference{Group: "example.com", Kind: config.ParametersRefKind, Name: "test-config"},
+			want: false,
+		},
+		{
+			name: "different name",
+			ref:  &gatewayv1.ParametersReference{Group: config.ParametersRefGroup, Kind: config.ParametersRefKind, Name: "other"},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &v1alpha1.GatewayClassConfig{ObjectMeta: metav1.ObjectMeta{Name: "test-config"}}
+			gatewayClass := &gatewayv1.GatewayClass{
+				ObjectMeta: metav1.ObjectMeta{Name: "cloudflare-tunnel"},
+				Spec:       gatewayv1.GatewayClassSpec{ControllerName: "test-controller", ParametersRef: tt.ref},
+			}
+
+			fakeClient := setupMapperFakeClient(cfg, gatewayClass)
+			mapper := &ConfigMapper{Client: fakeClient, ControllerName: "test-controller"}
+			reconciler := &GatewayClassReconciler{Client: fakeClient, ControllerName: "test-controller"}
+
+			assert.Equal(t, tt.want, mapper.isConfigForOurClass(t.Context(), cfg), "ConfigMapper")
+			assert.Equal(t, tt.want, len(reconciler.gatewayClassesForConfig(t.Context(), cfg)) == 1, "GatewayClassReconciler")
+		})
+	}
+}
