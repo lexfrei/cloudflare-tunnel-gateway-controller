@@ -176,6 +176,7 @@ All matching and filter behavior is performed by the in-process L7 proxy that th
 | `spec.rules[].backendRefs` | ✅ | Service name, namespace, port |
 | `spec.rules[].backendRefs[].namespace` | ✅ | Cross-namespace refs require ReferenceGrant |
 | `spec.rules[].backendRefs[].weight` | ✅ | True weighted traffic splitting across backends |
+| `spec.rules[].retry` | ✅ | Experimental channel; see [Retries](https://cf.k8s.lex.la/latest/gateway-api/limitations/#retries) |
 
 **GRPCRoute:** ✅ Served by the in-process L7 proxy. gRPC service/method matches map onto `/{service}/{method}` path rules. The upstream hop is cleartext h2c by default; attaching a `BackendTLSPolicy` upgrades the hop to TLS with HTTP/2 negotiated via ALPN, and the Gateway's `clientCertificateRef` is presented on the handshake for mTLS. See [GRPCRoute docs](https://cf.k8s.lex.la/latest/gateway-api/grpcroute/).
 
@@ -190,6 +191,7 @@ The L7 proxy handles routing for every tunnel request, so most Gateway API behav
 - `BackendTLSPolicy` (proxy → backend TLS) is supported at minimum-viable scope: explicit `CACertificateRefs` only, `Hostname` and `URI` SANs, backend mTLS via the Gateway's `clientCertificateRef`.
 - Backend WebSocket via `appProtocol: kubernetes.io/ws` (and `/wss` with a `BackendTLSPolicy`).
 - `timeouts.request` / `timeouts.backendRequest` are enforced as header-only deadlines, so streaming responses (SSE, chunked, gRPC server-streaming) keep flowing past the deadline.
+- `retry` (Experimental channel) retries every method at most 10 times, at least 10ms apart, and a request body over 64 KiB, or a streamed one the first attempt did not finish sending, is not resent once the proxy has started reading it.
 - Unavailable backends in a weighted rule return a status (`500`/`503`) for their share rather than dialing a dead address, so the other backends keep serving.
 - A match pattern the proxy cannot compile drops its own rule, reported on the route that carries it; other rules and other routes keep serving.
 - `RequestMirror` copies are dropped once a filter is at its in-flight dispatch cap (`proxy.mirror.maxInFlight`, counted by `cftunnel_proxy_mirror_dropped_total`), so a mirror backend that stops answering cannot grow the proxy's memory with request rate.

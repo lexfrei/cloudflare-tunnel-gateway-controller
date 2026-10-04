@@ -269,23 +269,7 @@ func convertHTTPRouteRule(
 		}
 	}
 
-	if rule.Timeouts != nil {
-		timeouts, err := convertTimeouts(rule.Timeouts)
-		if err != nil {
-			// The rule still serves, just without the unparseable timeout, so
-			// this is report-only: WholeRule=false drives PartiallyInvalid, not
-			// Accepted=False.
-			sink.add(
-				DiagnosticAccepted,
-				string(gatewayv1.RouteReasonUnsupportedValue),
-				invalidTimeoutsMessage(err),
-				false,
-			)
-			slog.Warn("dropping invalid route timeouts", "error", err)
-		} else {
-			proxyRule.Timeouts = timeouts
-		}
-	}
+	applyRuleTiming(rule, &proxyRule, sink)
 
 	warnIfWSResponseFilterStripsHandshake(&proxyRule, sink)
 
@@ -1538,4 +1522,90 @@ func convertTimeouts(timeouts *gatewayv1.HTTPRouteTimeouts) (*RouteTimeouts, err
 	}
 
 	return result, nil
+}
+
+// invalidRetryMessage builds the status message for a rule whose retry policy
+// is unusable. The rule still serves, without retries.
+func invalidRetryMessage(err error) string {
+	return fmt.Sprintf(
+		"The rule's retry policy is invalid (%v); the rule is served without retries. "+
+			"Use codes within 400-599, a non-negative attempts value and a GEP-2257 duration (e.g. \"100ms\") for the backoff.",
+		err,
+	)
+}
+
+func convertRetry(retry *gatewayv1.HTTPRouteRetry) (*RouteRetry, error) {
+	result := &RouteRetry{Attempts: DefaultRetryAttempts, Backoff: DefaultRetryBackoff}
+
+	for _, code := range retry.Codes {
+		result.Codes = append(result.Codes, int(code))
+	}
+
+	if retry.Attempts != nil {
+		result.Attempts = *retry.Attempts
+	}
+
+	if retry.Backoff != nil {
+		duration, err := time.ParseDuration(string(*retry.Backoff))
+		if err != nil {
+			return nil, fmt.Errorf("invalid retry backoff %q: %w", *retry.Backoff, err)
+		}
+
+		result.Backoff = duration
+	}
+
+	// The proxy's own check, run here so an object stored before the CRD
+	// gained its bounds drops its policy rather than the whole pushed config.
+	err := validateRetry(result)
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// applyRuleTiming copies a rule's timeouts and retry policy onto proxyRule.
+// An unparseable value is dropped with a PartiallyInvalid diagnostic: the rule
+// still serves, so WholeRule stays false.
+func applyRuleTiming(rule *gatewayv1.HTTPRouteRule, proxyRule *RouteRule, sink *diagSink) {
+	if rule.Timeouts != nil {
+		timeouts, err := convertTimeouts(rule.Timeouts)
+		if err != nil {
+			sink.add(
+				DiagnosticAccepted,
+				string(gatewayv1.RouteReasonUnsupportedValue),
+				invalidTimeoutsMessage(err),
+				false,
+			)
+			slog.Warn("dropping invalid route timeouts", "error", err)
+		} else {
+			proxyRule.Timeouts = timeouts
+		}
+	}
+
+	if rule.Retry != nil {
+		retry, err := convertRetry(rule.Retry)
+		if err != nil {
+			sink.add(
+				DiagnosticAccepted,
+				string(gatewayv1.RouteReasonUnsupportedValue),
+				invalidRetryMessage(err),
+				false,
+			)
+			slog.Warn("dropping invalid route retry", "error", err)
+		} else {
+			proxyRule.Retry = retry
+		}
+
+		if retry != nil && retry.Attempts > MaxRetryAttempts {
+			sink.add(
+				DiagnosticAccepted,
+				string(gatewayv1.RouteReasonUnsupportedValue),
+				fmt.Sprintf("The rule's retry attempts (%d) exceed the proxy's limit; the rule retries at most %d times.",
+					retry.Attempts, MaxRetryAttempts),
+				false,
+			)
+			retry.Attempts = MaxRetryAttempts
+		}
+	}
 }

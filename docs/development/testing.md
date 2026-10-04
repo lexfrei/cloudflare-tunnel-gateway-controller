@@ -373,6 +373,7 @@ What actually gets exercised against a real Cloudflare Tunnel, and by which suit
 | Filters: header modifiers, redirects (301/302/303/307/308, port/scheme/path), rewrites, mirrors (multiple, percentage) | conformance + e2e | |
 | CORS filter | conformance | `SupportHTTPRouteCORS` |
 | Timeouts (request / backendRequest) | conformance | explicit-`0s` disable semantics pinned by unit tests |
+| Retries (codes / attempts / backoff, timeout split, body replay) | conformance (`HTTPRouteRetry`, Experimental-channel CRDs only) covers codes and attempts | backoff, the timeout split, body replay and the BackendTimeout / ConnectionError siblings are unit-only (`retry_test.go`, including `TestRetry_TunnelMode`): the vendored suite has no test for them |
 | Weighted traffic splitting | conformance + e2e | e2e asserts a deliberately wide proportion bound (`test/e2e/e2e_test.go`) — weighted selection is binomial sampling, so tight bounds flake by variance alone |
 | Service types: ClusterIP, headless, ExternalName | conformance (`HTTPRouteServiceTypes`) | headless targetPort resolution covered |
 | BackendTLSPolicy (CA ConfigMap, SNI hostname, DNS + URI SANs) — HTTP path | conformance | `SupportBackendTLSPolicy` + `SANValidation` |

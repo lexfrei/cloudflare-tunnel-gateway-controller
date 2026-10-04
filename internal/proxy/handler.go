@@ -253,14 +253,15 @@ func WithTracing(instrumentationName string) HandlerOption {
 }
 
 // ruleHeaderTimeout derives the *http.Transport.ResponseHeaderTimeout to
-// apply for a route's per-rule timeouts. Both Gateway API knobs --
-// timeouts.request (total) and timeouts.backendRequest (per-attempt) --
-// collapse onto the same transport-level header-only timeout because this
-// proxy has no retry logic; a single backend attempt is the whole request.
-// When both knobs are set the stricter (min) value wins. When neither is
-// set the helper returns 0, which leaves ResponseHeaderTimeout at its
-// stdlib default (no timeout) -- callers can use the zero value as a
-// "skip this knob" signal.
+// apply for a route's per-rule timeouts. Without a retry policy both Gateway
+// API knobs -- timeouts.request (total) and timeouts.backendRequest
+// (per-attempt) -- collapse onto the same transport-level header-only
+// timeout, since a single backend attempt is the whole request, and the
+// stricter (min) value wins. With a retry policy only backendRequest stays
+// here, bounding each attempt; retryTransport enforces timeouts.request
+// across all attempts. When neither is set the helper returns 0, which
+// leaves ResponseHeaderTimeout at its stdlib default (no timeout) --
+// callers can use the zero value as a "skip this knob" signal.
 //
 // Streaming-response contract: ResponseHeaderTimeout bounds only the
 // time to receive response headers. Once headers arrive, the body
@@ -270,9 +271,14 @@ func WithTracing(instrumentationName string) HandlerOption {
 // TestHandler_StreamingResponseSurvivesRequestTimeout and
 // TestHandler_StreamingResponseSurvivesBackendTimeout pin the
 // behaviour against regression.
-func ruleHeaderTimeout(timeouts *RouteTimeouts) time.Duration {
+func ruleHeaderTimeout(rule *RouteRule) time.Duration {
+	timeouts := rule.Timeouts
 	if timeouts == nil {
 		return 0
+	}
+
+	if rule.Retry != nil {
+		return timeouts.Backend
 	}
 
 	switch {
@@ -430,7 +436,8 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 
 	// Per-rule timeouts (Request / BackendRequest) are enforced
 	// downstream by the cached transport's ResponseHeaderTimeout
-	// (set in newTransport from ruleHeaderTimeout's collapse). No
+	// (set in newTransport from ruleHeaderTimeout) and, for a rule with a
+	// retry policy, by retryTransport's request budget. No
 	// context.WithTimeout wrapping here -- that would cancel the
 	// body read and truncate streaming responses. See ruleHeaderTimeout
 	// for the full rationale.
@@ -760,14 +767,22 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 	}
 
 	// Per-rule Backend timeout flows into the transport's
-	// ResponseHeaderTimeout (alongside the Request timeout, collapsed
-	// via ruleHeaderTimeout). The header-only timing isolates the
+	// ResponseHeaderTimeout (alongside the Request timeout unless the
+	// rule retries; see ruleHeaderTimeout). The header-only timing isolates the
 	// header phase from the body phase, so streaming responses are
 	// not killed at the timeout boundary. See ServeHTTP's per-rule
 	// timeout comment for the rationale.
-	headerTimeout := ruleHeaderTimeout(result.Rule.Timeouts)
+	headerTimeout := ruleHeaderTimeout(result.Rule)
 
 	proxy := h.createReverseProxy(backendURL, backend.Protocol, backend.TLS, allFilters, headerTimeout, result.MatchedHostname)
+	if result.Rule.Retry != nil {
+		proxy.Transport = &retryTransport{
+			next:           proxy.Transport,
+			policy:         result.Rule.Retry,
+			requestTimeout: ruleRequestTimeout(result.Rule),
+		}
+	}
+
 	proxy.ServeHTTP(writer, req)
 }
 

@@ -6,6 +6,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"slices"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -15,6 +16,9 @@ import (
 var (
 	errURLRequired       = errors.New("url is required")
 	errWeightNonNegative = errors.New("weight must be non-negative")
+	errRetryAttempts     = errors.New("retry attempts must be non-negative")
+	errRetryBackoff      = errors.New("retry backoff must be non-negative")
+	errRetryCode         = errors.New("retry code must be within 400-599")
 	errUnknownPathType   = errors.New("unknown path match type")
 	errUnknownHeaderType = errors.New("unknown header match type")
 	errUnknownQueryType  = errors.New("unknown query param match type")
@@ -85,6 +89,7 @@ type RouteRule struct {
 	Filters   []RouteFilter       `json:"filters,omitempty"`
 	Backends  []BackendRef        `json:"backends"`
 	Timeouts  *RouteTimeouts      `json:"timeouts,omitempty"`
+	Retry     *RouteRetry         `json:"retry,omitempty"`
 	// UnavailableStatus, when non-zero, makes the proxy return this HTTP status
 	// for every request matching the rule, short-circuiting backend selection.
 	// The controller sets it when a rule cannot be served as written — for
@@ -425,14 +430,88 @@ func (rt *RouteTimeouts) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// DefaultRetryAttempts and DefaultRetryBackoff fill a retry stanza's
+// unspecified fields, which the Gateway API leaves implementation-specific.
+const (
+	DefaultRetryAttempts = 1
+	DefaultRetryBackoff  = 25 * time.Millisecond
+)
+
+// MaxRetryAttempts and MinRetryBackoff bound what one route can make the
+// shared proxy do to a failing backend: at most this many retries per
+// request, never closer together than this. The spec words attempts as a
+// maximum and backoff as a minimum, so retrying less and waiting longer both
+// stay within it.
+const (
+	MaxRetryAttempts = 10
+	MinRetryBackoff  = 10 * time.Millisecond
+)
+
+// RouteRetry configures backend retries for a rule. Attempts counts retries
+// after the first try, so a request reaches the backend at most Attempts+1
+// times. Codes lists the response statuses that trigger a retry; transport
+// errors always do.
+type RouteRetry struct {
+	Codes    []int         `json:"codes,omitempty"`
+	Attempts int           `json:"attempts"`
+	Backoff  time.Duration `json:"backoff,omitempty"`
+}
+
+// routeRetryJSON is the JSON wire format for RouteRetry.
+type routeRetryJSON struct {
+	Codes    []int  `json:"codes,omitempty"`
+	Attempts int    `json:"attempts"`
+	Backoff  string `json:"backoff,omitempty"`
+}
+
+// MarshalJSON serializes the backoff as a human-readable duration string.
+func (rr RouteRetry) MarshalJSON() ([]byte, error) {
+	aux := routeRetryJSON{Codes: rr.Codes, Attempts: rr.Attempts}
+
+	if rr.Backoff != 0 {
+		aux.Backoff = rr.Backoff.String()
+	}
+
+	result, err := json.Marshal(aux)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to marshal route retry")
+	}
+
+	return result, nil
+}
+
+// UnmarshalJSON deserializes the backoff from a human-readable duration string.
+func (rr *RouteRetry) UnmarshalJSON(data []byte) error {
+	var aux routeRetryJSON
+
+	err := json.Unmarshal(data, &aux)
+	if err != nil {
+		return errors.Wrap(err, "failed to unmarshal route retry")
+	}
+
+	rr.Codes = aux.Codes
+	rr.Attempts = aux.Attempts
+
+	if aux.Backoff != "" {
+		d, err := time.ParseDuration(aux.Backoff)
+		if err != nil {
+			return errors.Wrapf(err, "invalid retry backoff %q", aux.Backoff)
+		}
+
+		rr.Backoff = d
+	}
+
+	return nil
+}
+
 // Validate checks that the Config is well-formed.
 func (c *Config) Validate() error {
 	if c.Version < 0 {
 		return errors.New("version must be non-negative")
 	}
 
-	for idx, rule := range c.Rules {
-		err := rule.validate()
+	for idx := range c.Rules {
+		err := c.Rules[idx].validate()
 		if err != nil {
 			return errors.Wrapf(err, "rule[%d]", idx)
 		}
@@ -441,7 +520,27 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+func validateRetry(retry *RouteRetry) error {
+	switch {
+	case retry.Attempts < 0:
+		return errRetryAttempts
+	case retry.Backoff < 0:
+		return errRetryBackoff
+	case slices.ContainsFunc(retry.Codes, func(code int) bool { return code < 400 || code > 599 }):
+		return errRetryCode
+	default:
+		return nil
+	}
+}
+
 func (r *RouteRule) validate() error {
+	if r.Retry != nil {
+		err := validateRetry(r.Retry)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Rules with empty backends and no redirect filter are valid —
 	// per Gateway API spec, the proxy handler returns HTTP 500 for
 	// routes with unresolvable backend refs.

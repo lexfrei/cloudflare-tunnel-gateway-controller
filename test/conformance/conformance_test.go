@@ -135,6 +135,13 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportHTTPRoute308RedirectStatusCode,
 	}
 
+	channelOnly, err := channelFeatures(t.Context(), opts.Client)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	opts.SupportedFeatures = append(opts.SupportedFeatures, channelOnly...)
+
 	// --- Exempt features ---
 	// Features that don't apply to tunnel architecture — skip silently.
 	opts.ExemptFeatures = []features.FeatureName{

@@ -306,9 +306,9 @@ func (r *Router) warnGRPCRestartIfNeeded(cfg *Config) {
 // config's rules. Keys are formed by transportKey(host, protocol, tls,
 // headerTimeout) so PruneTransports can evict stale entries when any of those
 // change (e.g. on a Service appProtocol flip, a BackendTLSPolicy swap, or a
-// per-rule timeouts edit). The header timeout is derived from
-// rule.Timeouts the same way getTransport's callers derive it -- see
-// ruleHeaderTimeout for the shared rule.
+// per-rule timeouts edit). The header timeout is derived from the rule
+// the same way getTransport's callers derive it -- see ruleHeaderTimeout
+// for the shared rule.
 //
 // RequestMirror filters are walked too: NewRequestMirror calls the
 // TransportFactory with headerTimeout=0, parking a per-cert transport in
@@ -320,8 +320,9 @@ func (r *Router) warnGRPCRestartIfNeeded(cfg *Config) {
 func extractActiveTransportKeys(cfg *Config) map[string]bool {
 	keys := make(map[string]bool)
 
-	for _, rule := range cfg.Rules {
-		headerTimeout := ruleHeaderTimeout(rule.Timeouts)
+	for idx := range cfg.Rules {
+		rule := &cfg.Rules[idx]
+		headerTimeout := ruleHeaderTimeout(rule)
 
 		for _, backend := range rule.Backends {
 			parsed, err := url.Parse(backend.URL)
@@ -347,12 +348,12 @@ func extractActiveTransportKeys(cfg *Config) map[string]bool {
 // fallback is fine for tests without a Handler but a production bypass
 // hazard if SetHandler was never called.
 func configHasTLSMirror(cfg *Config) bool {
-	for _, rule := range cfg.Rules {
-		if rulesHaveTLSMirror(rule.Filters) {
+	for idx := range cfg.Rules {
+		if rulesHaveTLSMirror(cfg.Rules[idx].Filters) {
 			return true
 		}
 
-		for _, backend := range rule.Backends {
+		for _, backend := range cfg.Rules[idx].Backends {
 			if rulesHaveTLSMirror(backend.Filters) {
 				return true
 			}

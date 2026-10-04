@@ -74,6 +74,7 @@ All HTTPRoute matching and filter behavior is performed by the in-process L7 pro
 | `spec.rules[].backendRefs[].weight` | Yes | True weighted traffic splitting across backends |
 | `spec.rules[].backendRefs[].filters` | Yes | Per-backend filters applied after rule-level filters |
 | `spec.rules[].timeouts` | Yes | Per-rule request and backend timeouts |
+| `spec.rules[].retry` | Yes | Experimental channel; see [Retries](limitations.md#retries) |
 
 ### Backend Protocol (`appProtocol`)
 
