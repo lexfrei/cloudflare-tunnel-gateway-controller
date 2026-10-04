@@ -1268,10 +1268,10 @@ func listenerSetReferencesSecretsInNamespace(listenerSet *gatewayv1.ListenerSet,
 }
 
 // grantTargetsSecret returns true when the ReferenceGrant has any to-entry
-// for Kind=Secret with an empty group.
+// for a core Secret.
 func grantTargetsSecret(grant *gatewayv1beta1.ReferenceGrant) bool {
 	for _, target := range grant.Spec.To {
-		if target.Group == "" && target.Kind == kindSecret {
+		if isCoreSecret(string(target.Group), string(target.Kind)) {
 			return true
 		}
 	}

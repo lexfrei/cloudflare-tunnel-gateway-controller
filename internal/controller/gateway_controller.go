@@ -1587,7 +1587,7 @@ func (r *GatewayReconciler) referenceGrantToGateways(
 	for _, from := range grant.Spec.From {
 		if from.Group == gatewayv1.GroupName && from.Kind == kindGateway {
 			for _, to := range grant.Spec.To {
-				if to.Group == "" && to.Kind == kindSecret {
+				if isCoreSecret(string(to.Group), string(to.Kind)) {
 					allowsGatewayToSecrets = true
 
 					break
@@ -1963,7 +1963,7 @@ func (r *GatewayReconciler) validateSingleCertRef(
 	}
 
 	// Only support core/v1 Secrets
-	if refGroup != "" || refKind != kindSecret {
+	if !isCoreSecret(refGroup, refKind) {
 		return metav1.ConditionFalse,
 			string(gatewayv1.ListenerReasonInvalidCertificateRef),
 			fmt.Sprintf("Unsupported certificate ref kind: %s/%s", refGroup, refKind)
@@ -2130,7 +2130,7 @@ func (r *GatewayReconciler) checkSecretReferenceGrant(
 		// Check To: must allow Secret with matching name
 		// Per Gateway API spec, if to.Name is nil or empty, it allows ALL secrets in namespace
 		for _, to := range grant.Spec.To {
-			if to.Group == "" && to.Kind == kindSecret {
+			if isCoreSecret(string(to.Group), string(to.Kind)) {
 				// nil or empty name means "all secrets in namespace"
 				if to.Name == nil || *to.Name == "" || string(*to.Name) == string(ref.Name) {
 					return true, nil

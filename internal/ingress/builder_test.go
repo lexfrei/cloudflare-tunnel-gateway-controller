@@ -862,11 +862,11 @@ func TestBuild_MixedHostnamesWithWildcard(t *testing.T) {
 	assert.Equal(t, ingress.CatchAllService, buildResult.Rules[2].Service.Value)
 }
 
-func TestBuild_CoreGroupExplicit(t *testing.T) {
+func TestBuild_CoreGroupAlias(t *testing.T) {
 	t.Parallel()
 
 	builder := ingress.NewBuilder("cluster.local", nil, nil, nil, nil)
-	coreGroup := gatewayv1.Group("core")
+	coreGroupAlias := gatewayv1.Group("core")
 	routes := []gatewayv1.HTTPRoute{
 		{
 			ObjectMeta: metav1.ObjectMeta{
@@ -881,7 +881,7 @@ func TestBuild_CoreGroupExplicit(t *testing.T) {
 							{
 								BackendRef: gatewayv1.BackendRef{
 									BackendObjectReference: gatewayv1.BackendObjectReference{
-										Group: &coreGroup,
+										Group: &coreGroupAlias,
 										Name:  "my-service",
 										Port:  portNumPtr(8080),
 									},

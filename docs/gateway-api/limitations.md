@@ -51,9 +51,12 @@ This implementation also accepts the non-canonical `core` in several places. Tha
 | The `ReferenceGrant` `to` entry authorising that `Service` | Accepted |
 | `BackendTLSPolicy.spec.validation.caCertificateRefs` to a `ConfigMap` | Accepted |
 | `Gateway.spec.tls.backend.clientCertificateRef` to a `Secret` | **Rejected** |
-| The `ReferenceGrant` `to` entry authorising that `Secret` | **Rejected** |
+| A `Gateway` or `ListenerSet` listener `tls.certificateRefs` entry to a `Secret` | **Rejected** |
+| The `ReferenceGrant` `to` entry authorising any of those `Secret`s | **Rejected** |
 
-Both halves of the Secret case reject it, and they fail in different places, so either one alone is enough to break a working manifest. A `clientCertificateRef` spelled `core` is not recognised as a core `Secret` reference at all, so it never reaches the grant check and the Gateway reports `ResolvedRefs=False`. A grant spelled `core` — the shape you get by copying a working `Service` grant and changing `kind` — matches nothing, so a canonically spelled reference across namespaces is still refused, as `RefNotPermitted`.
+The asymmetry is deliberate. Accepting `core` on backend references is kept only so manifests that already rely on it keep working; Secret references never accepted it, so there is nothing to keep compatible there, and they follow the spec.
+
+Both halves of the Secret case reject it, and they fail in different places, so either one alone is enough to break a working manifest. A `clientCertificateRef` spelled `core` is not recognised as a core `Secret` reference at all, so it never reaches the grant check and the Gateway reports `ResolvedRefs=False`. A grant spelled `core` — the shape you get by copying a working `Service` grant and changing `kind` — matches nothing, so a canonically spelled reference across namespaces is still refused, as `RefNotPermitted`. A listener `certificateRefs` entry spelled `core` fails on the listener instead: it reports `ResolvedRefs=False` with reason `InvalidCertificateRef`.
 
 Both are fail-closed: the backend hop proceeds without a client certificate rather than with someone else's, and nothing is served that should not be. But if you arrived here because a certificate reference stopped working after you carried over a spelling that works for `backendRef`, one of those two is why.
 

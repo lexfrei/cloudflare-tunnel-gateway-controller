@@ -84,7 +84,7 @@ func validateListenerSetCertRef(
 		refGroup = string(*ref.Group)
 	}
 
-	if refGroup != "" || refKind != kindSecret {
+	if !isCoreSecret(refGroup, refKind) {
 		return listenerEntryRefsCheck{
 			Status:  metav1.ConditionFalse,
 			Reason:  string(gatewayv1.ListenerReasonInvalidCertificateRef),
@@ -205,7 +205,7 @@ func checkListenerSetSecretReferenceGrant(
 		}
 
 		for _, target := range grant.Spec.To {
-			if target.Group != "" || target.Kind != kindSecret {
+			if !isCoreSecret(string(target.Group), string(target.Kind)) {
 				continue
 			}
 
