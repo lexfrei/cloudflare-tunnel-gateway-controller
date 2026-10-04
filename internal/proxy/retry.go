@@ -81,7 +81,7 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 
 		if recorder != nil {
-			next, ok := recorder.next()
+			next, ok := recorder.next(ctx)
 			if !ok {
 				return finishAttempt(resp, err, budgetSpent, cancel, held)
 			}
@@ -247,6 +247,10 @@ type replayBody struct {
 	eof      bool
 	consumed bool
 	reading  int
+	// idle is closed when reading drops to zero, for a hand-off waiting on it.
+	idle chan struct{}
+	// probed is set for a method the HTTP/1 transport probes for a body.
+	probed bool
 }
 
 // newReplayBody prepares req's body for retries and returns the body for the
@@ -275,10 +279,22 @@ func newReplayBody(req *http.Request) (*replayBody, io.ReadCloser, error) {
 		return recorder, io.NopCloser(bytes.NewReader(buf)), nil
 	}
 
-	recorder := &replayBody{src: req.Body}
+	recorder := &replayBody{src: req.Body, probed: bodyProbed(req.Method)}
 	first := recorder.attempt()
 
 	return recorder, first, nil
+}
+
+// bodyProbed reports whether the HTTP/1 transport probes a request of this
+// method whose body length is unknown, mirroring net/http's
+// requestMethodUsuallyLacksBody.
+func bodyProbed(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodDelete, http.MethodOptions, "PROPFIND", "SEARCH":
+		return true
+	}
+
+	return false
 }
 
 // attempt hands the source to a new attempt. It writes owner without taking
@@ -295,9 +311,35 @@ func (b *replayBody) attempt() *attemptBody {
 // recording; a source nobody has read from yet is handed on as is; anything
 // else, an upload the backend stopped reading part-way included, cannot be
 // resent.
-func (b *replayBody) next() (io.ReadCloser, bool) {
+func (b *replayBody) next(ctx context.Context) (io.ReadCloser, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	// A read in progress on a source nothing has been read from may still end
+	// empty: an HTTP/1 transport probing a bodyless-method request leaves one
+	// behind when the connection fails. Its outcome decides the hand-off, so
+	// wait for it, bounded by the request. Any other request is refused at
+	// once: its backend may have answered without reading the body, and a
+	// full-duplex client may send nothing until it sees that answer.
+	for b.probed && b.reading > 0 && !b.consumed && !b.overflow {
+		if b.idle == nil {
+			b.idle = make(chan struct{})
+		}
+
+		idle := b.idle
+
+		b.mu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			b.mu.Lock()
+
+			return nil, false
+		case <-idle:
+		}
+
+		b.mu.Lock()
+	}
 
 	// The owner changes only when a body is handed on: a refused hand-off
 	// leaves the attempt that is still sending free to finish.
@@ -341,7 +383,14 @@ func (a *attemptBody) Read(buf []byte) (int, error) {
 	defer b.mu.Unlock()
 
 	b.reading--
-	b.consumed = b.consumed || n > 0
+	if b.reading == 0 && b.idle != nil {
+		close(b.idle)
+		b.idle = nil
+	}
+
+	// A failed read leaves the source in an unknown state, so it is not
+	// handed on.
+	b.consumed = b.consumed || n > 0 || (err != nil && !errors.Is(err, io.EOF))
 	b.eof = b.eof || errors.Is(err, io.EOF)
 
 	if !b.overflow && len(b.recorded)+n > maxRetryBodyBytes {

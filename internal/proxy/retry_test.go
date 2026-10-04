@@ -933,6 +933,61 @@ func TestRetry_InformationalFromAbandonedAttemptIsDropped(t *testing.T) {
 	assert.Equal(t, []string{"103 </attempt-2>"}, hints, "only the answering attempt's hints may reach the client")
 }
 
+// TestRetry_ResetAfterHeadWithOpenStreamIsRetried covers a tunnel GET whose
+// stream is still open when the backend drops the connection after reading
+// the request head. The transport returns only once its probe read of the
+// body ends, so the empty stream the edge then closes is replayed.
+func TestRetry_ResetAfterHeadWithOpenStreamIsRetried(t *testing.T) {
+	t.Parallel()
+
+	var hits atomic.Int32
+
+	firstHit := make(chan struct{})
+
+	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		if hits.Add(1) == 1 {
+			conn, _, err := http.NewResponseController(writer).Hijack()
+			if err == nil {
+				_ = conn.Close()
+			}
+
+			close(firstHit)
+
+			return
+		}
+
+		_, _ = io.WriteString(writer, "ok")
+	}))
+	t.Cleanup(backend.Close)
+
+	handler := retryHandler(t, backend.URL, &proxy.RouteRetry{Attempts: 1}, nil)
+
+	bodyReader, bodyWriter := io.Pipe()
+	t.Cleanup(func() { _ = bodyWriter.Close() })
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", bodyReader)
+	req.ContentLength = -1
+
+	fake := newFakeCloudflaredRespWriter()
+	t.Cleanup(func() {
+		_ = fake.serverSide.Close()
+		_ = fake.clientSide.Close()
+	})
+
+	go func() {
+		<-firstHit
+		time.Sleep(300 * time.Millisecond)
+
+		_ = bodyWriter.Close()
+	}()
+
+	handler.ServeHTTP(fake, req)
+
+	assert.Equal(t, http.StatusOK, fake.Status())
+	assert.Equal(t, "ok", string(fake.Body()))
+	assert.Equal(t, int32(2), hits.Load())
+}
+
 // TestRetry_AttemptsThatAreNotRetriedAreNotCounted pins that the retry counter
 // moves only when another attempt is actually made: an attempt cut short by
 // the client leaving or by timeouts.request also fails with an error, which
