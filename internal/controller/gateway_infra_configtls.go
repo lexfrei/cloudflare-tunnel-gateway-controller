@@ -83,7 +83,11 @@ func (r *GatewayInfraReconciler) ensureConfigTLSSecret(ctx context.Context, gate
 		return "", errors.Wrap(err, "issuing config API certificates")
 	}
 
-	for index := start; index < start+maxConfigTLSSlotAttempts; index++ {
+	// A slot past the parser's bound could not be read back from the
+	// Deployment, so the walk stops there instead.
+	end := min(start+maxConfigTLSSlotAttempts, render.MaxConfigTLSSlot)
+
+	for index := start; index < end; index++ {
 		key := types.NamespacedName{Name: render.ConfigTLSSecretName(gateway, index), Namespace: gateway.Namespace}
 
 		usable, err := r.configTLSSlotUsable(ctx, gateway, key, names, now)
@@ -96,7 +100,7 @@ func (r *GatewayInfraReconciler) ensureConfigTLSSecret(ctx context.Context, gate
 		}
 	}
 
-	return "", errors.Wrapf(errNoUsableConfigTLSSlot, "tried %d slots from %d", maxConfigTLSSlotAttempts, start)
+	return "", errors.Wrapf(errNoUsableConfigTLSSlot, "tried slots %d to %d", start, end-1)
 }
 
 // mountedConfigTLSSlot returns the slot the Gateway's own Deployment mounts

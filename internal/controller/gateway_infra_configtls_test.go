@@ -23,6 +23,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/configtls"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
 )
 
 const edgeServerName = "cf-proxy-edge-config.tenant-a.svc.cluster.local"
@@ -483,4 +484,37 @@ func drainedEventContains(recorder *events.FakeRecorder, reason string) bool {
 			return false
 		}
 	}
+}
+
+// TestGatewayInfraReconciler_ConfigTLSWalkStaysInsideTheParsedSlots pins that
+// the walk never issues a slot ConfigTLSSecretSlot cannot read back, since
+// past that bound the plane would lose track of its own leaf, and that
+// deleting the last slot's Secret recovers the plane.
+func TestGatewayInfraReconciler_ConfigTLSWalkStaysInsideTheParsedSlots(t *testing.T) {
+	t.Parallel()
+
+	reconciler, _ := newTLSInfraReconciler(t)
+	reconciler.Recorder = events.NewFakeRecorder(100)
+	gateway := edgeGateway(t, reconciler.Client)
+
+	last := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: edgeLeafKey(strconv.Itoa(render.MaxConfigTLSSlot - 1)).Name, Namespace: infraNamespace},
+		Type:       corev1.SecretTypeTLS,
+		Data:       map[string][]byte{corev1.TLSCertKey: []byte("not a cert"), corev1.TLSPrivateKeyKey: []byte("not a key")},
+	}
+	require.NoError(t, controllerutil.SetControllerReference(gateway, last, reconciler.Scheme))
+	require.NoError(t, reconciler.Create(context.Background(), last))
+
+	_, err := reconciler.ensureConfigTLSSecret(context.Background(), gateway)
+	require.ErrorIs(t, err, errNoUsableConfigTLSSlot)
+
+	var beyond corev1.Secret
+	assert.True(t, apierrors.IsNotFound(reconciler.Get(context.Background(),
+		edgeLeafKey(strconv.Itoa(render.MaxConfigTLSSlot)), &beyond)),
+		"the walk must not issue a slot past the parser's bound")
+
+	require.NoError(t, reconciler.Delete(context.Background(), last))
+
+	_, err = reconciler.ensureConfigTLSSecret(context.Background(), gateway)
+	require.NoError(t, err, "deleting the last slot's Secret lets the plane get a certificate again")
 }
