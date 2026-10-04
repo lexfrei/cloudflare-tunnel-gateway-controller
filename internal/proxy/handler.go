@@ -780,6 +780,8 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 			next:           proxy.Transport,
 			policy:         result.Rule.Retry,
 			requestTimeout: ruleRequestTimeout(result.Rule),
+			metrics:        h.metrics,
+			hostname:       result.MatchedHostname,
 		}
 	}
 

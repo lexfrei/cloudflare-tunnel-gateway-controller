@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -801,6 +802,119 @@ func TestRetry_MislengthBodyFailsBeforeAnyAttempt(t *testing.T) {
 
 			assert.Equal(t, http.StatusBadGateway, rec.Code)
 			assert.Zero(t, conns.Load(), "a body that does not match its length must not reach the backend")
+		})
+	}
+}
+
+func TestRetry_RetriesAreCounted(t *testing.T) {
+	t.Parallel()
+
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closed.Close()
+
+	failing, _ := failingBackend(t, 2, http.StatusInternalServerError)
+
+	tests := []struct {
+		name       string
+		backendURL string
+		reason     string
+	}{
+		{name: "listed status code", backendURL: failing.URL, reason: "status"},
+		{name: "transport error", backendURL: closed.URL, reason: "dial"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			reg := prometheus.NewRegistry()
+			router := proxy.NewRouter()
+			handler := proxy.NewHandler(router, proxy.WithMetrics(proxy.NewMetrics(reg)))
+			require.NoError(t, router.UpdateConfig(&proxy.Config{
+				Version: 1,
+				Rules: []proxy.RouteRule{{
+					Hostnames: []string{"app.example.com"},
+					Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+					Backends:  []proxy.BackendRef{{URL: tt.backendURL, Weight: 1, Protocol: proxy.BackendProtocolHTTP}},
+					Retry:     &proxy.RouteRetry{Codes: []int{500}, Attempts: 2},
+				}},
+			}))
+
+			serve(handler, http.MethodGet, "")
+
+			assert.InDelta(t, 2, gatherValue(t, reg, "cftunnel_proxy_backend_retries_total",
+				map[string]string{"hostname": "app.example.com", "reason": tt.reason}), 0)
+		})
+	}
+}
+
+// TestRetry_AttemptsThatAreNotRetriedAreNotCounted pins that the retry counter
+// moves only when another attempt is actually made: an attempt cut short by
+// the client leaving or by timeouts.request also fails with an error, which
+// the policy would otherwise retry.
+func TestRetry_AttemptsThatAreNotRetriedAreNotCounted(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		timeouts   *proxy.RouteTimeouts
+		cancel     bool
+		wantStatus int
+	}{
+		{name: "client went away", cancel: true},
+		{name: "request timeout ran out", timeouts: &proxy.RouteTimeouts{Request: 100 * time.Millisecond}, wantStatus: http.StatusGatewayTimeout},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			arrived := make(chan struct{}, 1)
+			backend := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+				arrived <- struct{}{}
+				<-req.Context().Done()
+			}))
+			t.Cleanup(backend.Close)
+
+			reg := prometheus.NewRegistry()
+			router := proxy.NewRouter()
+			handler := proxy.NewHandler(router, proxy.WithMetrics(proxy.NewMetrics(reg)))
+			require.NoError(t, router.UpdateConfig(&proxy.Config{
+				Version: 1,
+				Rules: []proxy.RouteRule{{
+					Hostnames: []string{"app.example.com"},
+					Matches:   []proxy.RouteMatch{{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/"}}},
+					Backends:  []proxy.BackendRef{{URL: backend.URL, Weight: 1, Protocol: proxy.BackendProtocolHTTP}},
+					Retry:     &proxy.RouteRetry{Attempts: 2},
+					Timeouts:  tt.timeouts,
+				}},
+			}))
+
+			ctx, cancel := context.WithCancel(t.Context())
+			t.Cleanup(cancel)
+
+			if tt.cancel {
+				go func() {
+					<-arrived
+					cancel()
+				}()
+			}
+
+			req := httptest.NewRequestWithContext(ctx, http.MethodGet, "http://app.example.com/", nil)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if tt.wantStatus != 0 {
+				assert.Equal(t, tt.wantStatus, rec.Code)
+			}
+
+			families, err := reg.Gather()
+			require.NoError(t, err)
+
+			for _, family := range families {
+				assert.NotEqual(t, "cftunnel_proxy_backend_retries_total", family.GetName(),
+					"no retry was made, so no retry series may exist")
+			}
 		})
 	}
 }

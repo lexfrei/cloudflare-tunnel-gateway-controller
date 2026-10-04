@@ -39,6 +39,9 @@ const statusClassAborted = "aborted"
 // data-plane instrument.
 const metricLabelHostname = "hostname"
 
+// metricLabelReason is the label key of the backend error and retry counters.
+const metricLabelReason = "reason"
+
 // Contained-panic site label values, a closed set: where the recover that
 // caught the panic runs.
 const (
@@ -90,6 +93,8 @@ type Metrics struct {
 	requestsTotal *prometheus.CounterVec
 	// backendErrors counts backend dial/connect failures by closed-set reason.
 	backendErrors *prometheus.CounterVec
+	// backendRetries counts attempts a retry policy abandoned for another.
+	backendRetries *prometheus.CounterVec
 	// responseBytes accumulates response body bytes as counted by the
 	// response writer wrapper. Post-hijack WebSocket bytes bypass the wrapper
 	// and are NOT counted.
@@ -137,7 +142,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		backendErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "cftunnel_proxy_backend_errors_total",
 			Help: "Backend dial/connect failures by reason (dial, timeout, tls, canceled, ws_dial, ws_handshake, other).",
-		}, []string{metricLabelHostname, "reason"}),
+		}, []string{metricLabelHostname, metricLabelReason}),
+		backendRetries: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "cftunnel_proxy_backend_retries_total",
+			Help: "Backend attempts retried under a route retry policy, by reason (status = a listed status code, otherwise the backend error reason).",
+		}, []string{metricLabelHostname, metricLabelReason}),
 		responseBytes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "cftunnel_proxy_response_bytes_total",
 			Help: "Response body bytes written to clients (post-hijack WebSocket bytes excluded).",
@@ -162,19 +171,24 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		metrics.requestDuration,
 		metrics.requestsTotal,
 		metrics.backendErrors,
+		metrics.backendRetries,
 		metrics.responseBytes,
 		metrics.requestBytes,
 		metrics.handlerPanics,
 		metrics.mirrorDrops,
 	)
 
-	// Create every site's series at 0. A series born at 1 on the first panic
-	// reads as no increase, so that panic would never trip an alert.
-	for _, site := range []string{panicSiteRequest, panicSiteWebSocketCopy, panicSiteMirror} {
-		metrics.handlerPanics.WithLabelValues(site)
-	}
+	metrics.initPanicSites()
 
 	return metrics
+}
+
+// initPanicSites creates every site's series at 0. A series born at 1 on the
+// first panic reads as no increase, so that panic would never trip an alert.
+func (m *Metrics) initPanicSites() {
+	for _, site := range []string{panicSiteRequest, panicSiteWebSocketCopy, panicSiteMirror} {
+		m.handlerPanics.WithLabelValues(site)
+	}
 }
 
 // containedPanic counts a recovered panic. Nil-safe, like the rest of the
@@ -185,6 +199,15 @@ func (m *Metrics) containedPanic(site string) {
 	}
 
 	m.handlerPanics.WithLabelValues(site).Inc()
+}
+
+// backendRetried counts an attempt abandoned for a retry. Nil-safe.
+func (m *Metrics) backendRetried(hostname, reason string) {
+	if m == nil {
+		return
+	}
+
+	m.backendRetries.WithLabelValues(hostname, reason).Inc()
 }
 
 // mirrorDropped counts a mirror copy refused at the dispatch limit. Nil-safe.

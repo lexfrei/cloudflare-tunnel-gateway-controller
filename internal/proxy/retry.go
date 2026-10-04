@@ -37,6 +37,8 @@ type retryTransport struct {
 	next           http.RoundTripper
 	policy         *RouteRetry
 	requestTimeout time.Duration
+	metrics        *Metrics
+	hostname       string
 }
 
 func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -75,12 +77,16 @@ func (rt *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			body = next
 		}
 
+		reason := retryReason(err)
+
 		discardResponse(resp)
 
 		err = sleepCtx(ctx, max(rt.policy.Backoff, MinRetryBackoff))
 		if err != nil {
 			return finishAttempt(nil, err, budgetSpent, cancel)
 		}
+
+		rt.metrics.backendRetried(rt.hostname, reason)
 	}
 }
 
@@ -115,6 +121,16 @@ func (rt *retryTransport) shouldRetry(resp *http.Response, err error) bool {
 	}
 
 	return slices.Contains(rt.policy.Codes, resp.StatusCode)
+}
+
+// retryReason labels a retried attempt: "status" for a listed status code,
+// otherwise the backend error reason.
+func retryReason(err error) string {
+	if err == nil {
+		return "status"
+	}
+
+	return classifyBackendError(err)
 }
 
 // replayBody records a request body as an attempt sends it, so a retry can
