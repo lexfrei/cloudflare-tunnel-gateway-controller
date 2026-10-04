@@ -407,9 +407,7 @@ func (r *GatewayClassReconciler) gatewayClassesForConfig(ctx context.Context, ob
 	var requests []reconcile.Request
 
 	for i := range classes {
-		ref := classes[i].Spec.ParametersRef
-		if ref != nil && string(ref.Group) == config.ParametersRefGroup &&
-			string(ref.Kind) == config.ParametersRefKind && ref.Name == obj.GetName() {
+		if config.RefersToClassConfig(classes[i].Spec.ParametersRef, obj.GetName()) {
 			requests = append(requests, reconcile.Request{Name: classes[i].Name})
 		}
 	}
