@@ -145,6 +145,20 @@ For multi-level subdomains, you need:
 - [Advanced Certificate Manager](https://developers.cloudflare.com/ssl/edge-certificates/advanced-certificate-manager/) (paid add-on — see Cloudflare pricing)
 - Business or Enterprise plan
 
+## Client certificate validation (`spec.tls.frontend`) is refused
+
+Clients complete TLS with the Cloudflare edge, and the tunnel does not carry their certificate to the proxy, so this controller cannot validate client certificates. A Gateway that sets `spec.tls.frontend`, with any content (default or per-port validation, any `caCertificateRefs` and `mode`, or an empty block), is refused:
+
+- The Gateway reports `Accepted=False` and `Programmed=False` with `Reason=Invalid`, and its listeners report `Programmed=False`. A Gateway on the shared plane clears `status.addresses`; a dedicated Gateway keeps its address ([see below](#a-dedicated-gateway-keeps-its-statusaddresses-through-a-configuration-error)).
+- Routes attached to it, directly or through a ListenerSet, report `Accepted=False` with `Reason=NoMatchingParent` for that parent and are not served through it.
+- Its ListenerSets report `Accepted=False` with `Reason=ParentNotAccepted`.
+
+The refusal covers the whole Gateway, not only its `HTTPS` listeners: the edge accepts HTTPS for every hostname whatever the listener protocol, so no listener on the Gateway could honour the setting. Removing `spec.tls.frontend` restores the Gateway and its routes.
+
+To require client certificates, enforce them at the Cloudflare edge before requests reach the tunnel, for example with Cloudflare's client-certificate (mTLS) or Access policies; check which of them your Cloudflare plan includes.
+
+The upstream conformance tests for this feature (`GatewayFrontendClientCertificateValidation`, `GatewayFrontendClientCertificateValidationInsecureFallback`, `GatewayFrontendInvalidDefaultClientCertificateValidation`, `GatewayInvalidFrontendClientCertificateValidation`) are skipped: they test validation this controller does not claim to support.
+
 ## Gateway Listener Configuration
 
 Gateway listeners follow Gateway API specification. Some fields are ignored because Cloudflare Tunnel manages them at the edge:

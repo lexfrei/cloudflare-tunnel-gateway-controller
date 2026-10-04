@@ -39,6 +39,7 @@ The Gateway resource is fully processed. Listeners are used for route binding, s
 | `spec.listeners[].tls` | Yes | CertificateRefs validated with ReferenceGrant support |
 | `spec.listeners[].allowedRoutes` | Yes | Namespace (Same/All/Selector) and kind filtering |
 | `spec.tls.backend.clientCertificateRef` | Yes | `kubernetes.io/tls` Secret only; same-namespace or via ReferenceGrant; presented during backend TLS handshake **only** when the target Service has a BackendTLSPolicy (no client cert is sent over plaintext) |
+| `spec.tls.frontend` | No | Refused: a Gateway that sets it is `Accepted=False, Reason=Invalid` and none of its routes is served, because clients complete TLS with the Cloudflare edge ([client certificate validation](limitations.md#client-certificate-validation-spectlsfrontend-is-refused)) |
 | `spec.addresses` | No | Ignored; tunnel CNAME set automatically in status |
 | `spec.infrastructure` | No | Not implemented |
 

@@ -56,7 +56,7 @@
 | GW-60 | ListenerTLSConfig.CertificateRefs | CTRL | MET | gateway_controller.go:909-913 ListenerReasonRefNotPermitted | Disallowed ref -> listener ResolvedRefs=False/RefNotPermitted. |
 | GW-61 | ListenerTLSConfig.Options | N/A | NA | edge terminates TLS; no listener TLS options consumed | MAY future common keys; not actionable. |
 | GW-62 | ListenerTLSConfig.Options | CRD | NA | vendor gateway_types.go TLS.Options domain-prefixed key validation | Domain-prefixed-name constraint enforced by CRD on the map key. |
-| GW-63 | FrontendTLSValidation.CACertificateRefs | N/A | NA | conformance_test.go:143 SupportGatewayFrontendClientCertificateValidation Exempt | Frontend client-cert validation not supported (edge terminates TLS). |
+| GW-63 | FrontendTLSValidation.CACertificateRefs | N/A | NA | conformance_test.go:143 SupportGatewayFrontendClientCertificateValidation Exempt; `routebinding.RequestsFrontendValidation` | Frontend client-cert validation not supported (edge terminates TLS); a Gateway setting `spec.tls.frontend` is refused `Accepted=False, Reason=Invalid` and admits no route. |
 | GW-64 | FrontendTLSValidation.CACertificateRefs | N/A | NA | conformance_test.go:143 frontend-cert-validation exempt | Frontend validation N/A. |
 | GW-65 | FrontendTLSValidation.CACertificateRefs | N/A | NA | conformance_test.go:143 frontend-cert-validation exempt | Frontend validation N/A. |
 | GW-66 | FrontendTLSValidation.CACertificateRefs | N/A | NA | conformance_test.go:143 frontend-cert-validation exempt | Frontend validation N/A. |
