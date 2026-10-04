@@ -1708,13 +1708,11 @@ func (s *ProxySyncer) recordResync(
 const dnsLookupTimeout = 5 * time.Second
 
 // missedBy returns the wanted addresses no resolved endpoint's host matches.
-// It returns none when no resolved host is in the slice at all: the endpoint
-// name then does not resolve to pod addresses (a ClusterIP Service, for
-// example), and no replay could ever match the slice. A stale answer during a
-// rollout still shares the old pods with the slice, terminating ones included,
-// so it is still checked. A Service split over several slices can leave a new
-// pod in a slice holding no pod the stale answer names; that slice is skipped
-// the same way, and the pod waits until a later replay or sync reaches it.
+// It returns none when no resolved host is in the Service's slices at all:
+// the endpoint name then does not resolve to pod addresses (a ClusterIP
+// Service, for example), and no replay could ever match them. A stale answer
+// during a rollout still shares the old pods with the slices, terminating ones
+// included, so it is still checked.
 func (c *sliceCoverage) missedBy(resolved []pushEndpoint) []string {
 	if c == nil {
 		return nil
@@ -1744,10 +1742,10 @@ func (c *sliceCoverage) missedBy(resolved []pushEndpoint) []string {
 }
 
 // dropAbsentPlane leaves out an endpoint whose name does not exist when it
-// names the slice's own Service and the slice lists no pod to reach: a plane
-// scaled to zero has no pods and no DNS records, and there is nothing to push.
-// Any other lookup failure, one for a slice that lists pods, or one for another
-// Service, stays a push error.
+// names the slice's own Service and no slice of that Service lists a pod to
+// reach: a plane scaled to zero has no pods and no DNS records, and there is
+// nothing to push. Any other lookup failure, one while the Service's slices list
+// pods, or one for another Service, stays a push error.
 func (c *sliceCoverage) dropAbsentPlane(resolved []pushEndpoint) []pushEndpoint {
 	if c == nil || len(c.want) > 0 {
 		return resolved

@@ -62,8 +62,8 @@ type ProxyEndpointReconciler struct {
 	ProxyEndpoints []string
 
 	// TriggerRouteSync runs a full route sync, the one that builds and pushes
-	// every partition's config. It is used when a slice lists pods but the
-	// partition has no config cached to replay. nil disables it.
+	// every partition's config. It is used when the Service's slices list pods
+	// but the partition has no config cached to replay. nil disables it.
 	TriggerRouteSync func(context.Context) (ctrl.Result, error)
 
 	// targets is parsed from ProxyEndpoints at SetupWithManager time and
@@ -83,9 +83,10 @@ type ProxyEndpointReconciler struct {
 // Reconcile implements reconcile.Reconciler. It is invoked whenever an
 // EndpointSlice for one of the proxy headless Services changes, and hands the
 // full endpoint URL list off to ProxySyncer, which re-resolves DNS and pushes
-// the cached config to every replica it finds. The slice's own addresses are
-// checked against what the replay reached: DNS can lag the slice, and a pod
-// the replay missed would otherwise wait for the next full sync.
+// the cached config to every replica it finds. The addresses of every slice of
+// the slice's Service are checked against what the replay reached: DNS can lag
+// the slices, and a pod the replay missed would otherwise wait for the next
+// full sync.
 func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := logging.Component(ctx, "proxy-endpoint-reconciler")
 	logger.Info("replaying cached proxy config for EndpointSlice",
@@ -105,7 +106,7 @@ func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return replayResult(ctx, r.ProxySyncer.ResyncAllPartitions(ctx), "resync all proxy partitions")
 	}
 
-	coverage := replayCoverage(&slice)
+	coverage := r.serviceCoverage(ctx, &slice)
 
 	// A per-Gateway data plane's EndpointSlice carries the Gateway label
 	// (mirrored from its rendered Service); resync just that partition.
@@ -129,9 +130,9 @@ func (r *ProxyEndpointReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 }
 
 // replay runs resync for the partition keyed by key. A partition no replica
-// has accepted a config from, while the slice lists pods, goes through
-// configureColdPartition first: its earlier sync reached no pod, and nothing
-// else would configure the one that joined.
+// has accepted a config from, while its Service's slices list pods, goes
+// through configureColdPartition first: its earlier sync reached no pod, and
+// nothing else would configure the one that joined.
 func (r *ProxyEndpointReconciler) replay(
 	ctx context.Context, key string, coverage *sliceCoverage, action string, resync func() error,
 ) (ctrl.Result, error) {
@@ -179,7 +180,7 @@ func (r *ProxyEndpointReconciler) configureColdPartition(
 // retrier owns the retry of that one global sync. The reconcile still
 // comes back after replayRetryDelay, which costs no Cloudflare call, and pushes
 // the config as soon as another sync has built it. A new version of the slice
-// runs the sync again.
+// runs the sync again; each slice of the plane's Service keeps its own record.
 func (r *ProxyEndpointReconciler) syncColdPartition(
 	ctx context.Context, key string, coverage *sliceCoverage,
 ) (ctrl.Result, bool) {
@@ -512,10 +513,10 @@ func replayResult(ctx context.Context, err error, action string) (ctrl.Result, e
 
 // sliceCoverage is what a replay triggered by an EndpointSlice must reach.
 type sliceCoverage struct {
-	// want holds the slice's addresses of pods that are neither terminating
-	// nor marked not ready.
+	// want holds the addresses, across every slice of the Service, of pods
+	// that are neither terminating nor marked not ready.
 	want []string
-	// known holds every address the slice lists.
+	// known holds every address the Service's slices list.
 	known []string
 	// slice and sliceVersion identify the slice and its resourceVersion.
 	slice        types.NamespacedName
@@ -548,9 +549,48 @@ func replayCoverage(slice *discoveryv1.EndpointSlice) *sliceCoverage {
 		coverage.hasService = true
 	}
 
+	coverage.add(slice)
+
+	return coverage
+}
+
+// serviceCoverage is replayCoverage over every EndpointSlice of the slice's
+// Service and address type. A Service split over several slices can put a new
+// pod in a slice that holds no pod of a stale DNS answer, and only the pods of
+// the other slices show that the answer is stale. The other address family is
+// left out: a resolver that returns only A records would otherwise miss every
+// IPv6 pod of a dual-stack Service forever. A failed List leaves the coverage
+// to the triggering slice alone.
+func (r *ProxyEndpointReconciler) serviceCoverage(ctx context.Context, slice *discoveryv1.EndpointSlice) *sliceCoverage {
+	coverage := replayCoverage(slice)
+	if !coverage.hasService {
+		return coverage
+	}
+
+	var siblings discoveryv1.EndpointSliceList
+
+	err := r.Client.List(ctx, &siblings, client.InNamespace(slice.Namespace),
+		client.MatchingLabels{discoveryv1.LabelServiceName: coverage.service.name})
+	if err != nil {
+		logging.FromContext(ctx).Warn("cannot list the other EndpointSlices of the proxy Service; checking this slice only",
+			"service", coverage.service.name, "error", err.Error())
+
+		return coverage
+	}
+
+	for i := range siblings.Items {
+		if siblings.Items[i].Name != slice.Name && siblings.Items[i].AddressType == slice.AddressType {
+			coverage.add(&siblings.Items[i])
+		}
+	}
+
+	return coverage
+}
+
+func (c *sliceCoverage) add(slice *discoveryv1.EndpointSlice) {
 	for i := range slice.Endpoints {
 		endpoint := &slice.Endpoints[i]
-		coverage.known = append(coverage.known, endpoint.Addresses...)
+		c.known = append(c.known, endpoint.Addresses...)
 
 		if endpoint.Conditions.Terminating != nil && *endpoint.Conditions.Terminating {
 			continue
@@ -560,10 +600,8 @@ func replayCoverage(slice *discoveryv1.EndpointSlice) *sliceCoverage {
 			continue
 		}
 
-		coverage.want = append(coverage.want, endpoint.Addresses...)
+		c.want = append(c.want, endpoint.Addresses...)
 	}
-
-	return coverage
 }
 
 // onlyMarked reports whether err is sentinel, or a joined error whose every

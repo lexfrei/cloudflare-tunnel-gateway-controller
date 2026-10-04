@@ -719,3 +719,43 @@ func TestProxyEndpointReconcile_ColdSyncLeavesItsRequeueToTheRetrier(t *testing.
 	assert.Zero(t, result.RequeueAfter, "the plane took the config")
 	assert.True(t, retrier.owed(), "the sync's own requeue is not dropped")
 }
+
+// TestProxyEndpointReconcile_ColdStartCountsEverySliceOfTheService covers an
+// event from a slice with no pods while another slice of the same Service
+// lists the pod that joined: the plane has pods to configure, so it is
+// configured rather than skipped as having nothing to replay.
+func TestProxyEndpointReconcile_ColdStartCountsEverySliceOfTheService(t *testing.T) {
+	t.Parallel()
+
+	replica := newRaceReplica(t)
+	endpoint := serviceEndpoint(t, replica.endpoint())
+
+	var puts atomic.Int32
+
+	replica.setOnPut(func() { puts.Add(1) })
+
+	other := proxySlice("system", serviceLabel("proxy-config"), sliceEndpoint("127.0.0.1", false))
+	other.Name = "es-other"
+
+	syncer, testClient, dns := coldStart(t, proxySlice("system", serviceLabel("proxy-config")), other)
+	dns.set(staleDNSLookup)
+
+	var syncs atomic.Int32
+
+	reconciler := &ProxyEndpointReconciler{
+		Client: testClient, ProxySyncer: syncer, ProxyEndpoints: []string{endpoint},
+		TriggerRouteSync: func(ctx context.Context) (ctrl.Result, error) {
+			syncs.Add(1)
+
+			_, err := syncer.SyncRoutes(ctx, 0, []string{endpoint},
+				[]*gatewayv1.HTTPRoute{pushFallbackRoute("r-a", "a.example.com")}, nil, nil, nil)
+
+			return ctrl.Result{}, err
+		},
+	}
+
+	_, err := reconcileSlice(t, reconciler, "system")
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), syncs.Load(), "the plane with no config gets a route sync")
+	assert.Positive(t, puts.Load(), "the pod in the other slice receives the config")
+}
