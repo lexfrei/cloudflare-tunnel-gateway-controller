@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -22,7 +23,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
@@ -1114,6 +1117,72 @@ func TestRouteParentBinding_UnevaluatedSiblingListenerSetIsIncomplete(t *testing
 			require.NoError(t, err)
 			assert.True(t, binding.Result.Accepted)
 			assert.Equal(t, tt.fail, binding.Result.Incomplete)
+		})
+	}
+}
+
+// TestRouteMappers_ListFailureIsLogged pins that a route watch mapper whose
+// route List fails logs the failure instead of dropping the enqueue silently.
+func TestRouteMappers_ListFailureIsLogged(t *testing.T) {
+	t.Parallel()
+
+	base := setupGatewayFakeClient()
+	cli := interceptor.NewClient(base, interceptor.Funcs{
+		List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+			return errSimulatedCacheMiss
+		},
+	})
+
+	httpRoutes := &HTTPRouteReconciler{Client: cli}
+	grpcRoutes := &GRPCRouteReconciler{Client: cli}
+	listenerSet := &gatewayv1.ListenerSet{ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "default"}}
+	gateway := &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "default"}}
+
+	mappers := map[string]func(context.Context) []reconcile.Request{
+		"HTTPRoute ListenerSet": func(ctx context.Context) []reconcile.Request {
+			return httpRoutes.findRoutesForListenerSet(ctx, listenerSet)
+		},
+		"HTTPRoute Gateway": func(ctx context.Context) []reconcile.Request { return httpRoutes.findRoutesForGateway(ctx, gateway) },
+		"HTTPRoute Service": func(ctx context.Context) []reconcile.Request {
+			return httpRoutes.findRoutesForService(ctx, &corev1.Service{})
+		},
+		"HTTPRoute external backend": func(ctx context.Context) []reconcile.Request {
+			return httpRoutes.findRoutesForExternalBackend(ctx, &corev1.Service{})
+		},
+		"HTTPRoute EndpointSlice": func(ctx context.Context) []reconcile.Request {
+			return httpRoutes.findRoutesForEndpointSlice(ctx, &discoveryv1.EndpointSlice{})
+		},
+		"HTTPRoute ReferenceGrant": func(ctx context.Context) []reconcile.Request {
+			return httpRoutes.findRoutesForReferenceGrant(ctx, &gatewayv1beta1.ReferenceGrant{})
+		},
+		"HTTPRoute all": httpRoutes.getAllRelevantRoutes,
+		"GRPCRoute ListenerSet": func(ctx context.Context) []reconcile.Request {
+			return grpcRoutes.findRoutesForListenerSet(ctx, listenerSet)
+		},
+		"GRPCRoute Gateway": func(ctx context.Context) []reconcile.Request { return grpcRoutes.findRoutesForGateway(ctx, gateway) },
+		"GRPCRoute Service": func(ctx context.Context) []reconcile.Request {
+			return grpcRoutes.findRoutesForService(ctx, &corev1.Service{})
+		},
+		"GRPCRoute external backend": func(ctx context.Context) []reconcile.Request {
+			return grpcRoutes.findRoutesForExternalBackend(ctx, &corev1.Service{})
+		},
+		"GRPCRoute EndpointSlice": func(ctx context.Context) []reconcile.Request {
+			return grpcRoutes.findRoutesForEndpointSlice(ctx, &discoveryv1.EndpointSlice{})
+		},
+		"GRPCRoute ReferenceGrant": func(ctx context.Context) []reconcile.Request {
+			return grpcRoutes.findRoutesForReferenceGrant(ctx, &gatewayv1beta1.ReferenceGrant{})
+		},
+		"GRPCRoute all": grpcRoutes.getAllRelevantRoutes,
+	}
+
+	for name, mapper := range mappers {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			logger, logs := logging.TestLogger(t)
+
+			assert.Empty(t, mapper(logging.WithLogger(context.Background(), logger)))
+			assert.Contains(t, logs.String(), errSimulatedCacheMiss.Error())
 		})
 	}
 }

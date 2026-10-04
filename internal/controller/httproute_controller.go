@@ -230,7 +230,7 @@ func (r *HTTPRouteReconciler) findRoutesForListenerSet(
 	}
 
 	var routeList gatewayv1.HTTPRouteList
-	if err := r.List(ctx, &routeList); err != nil {
+	if !listForWatchEvent(ctx, r.Client, &routeList) {
 		return nil
 	}
 
@@ -263,7 +263,7 @@ func (r *HTTPRouteReconciler) findRoutesForGateway(
 	obj client.Object,
 ) []reconcile.Request {
 	var routeList gatewayv1.HTTPRouteList
-	if err := r.List(ctx, &routeList); err != nil {
+	if !listForWatchEvent(ctx, r.Client, &routeList) {
 		return nil
 	}
 
@@ -285,7 +285,7 @@ func (r *HTTPRouteReconciler) findRoutesForService(
 	obj client.Object,
 ) []reconcile.Request {
 	var routeList gatewayv1.HTTPRouteList
-	if err := r.List(ctx, &routeList); err != nil {
+	if !listForWatchEvent(ctx, r.Client, &routeList) {
 		return nil
 	}
 
@@ -309,7 +309,7 @@ func (r *HTTPRouteReconciler) findRoutesForExternalBackend(
 	obj client.Object,
 ) []reconcile.Request {
 	var routeList gatewayv1.HTTPRouteList
-	if err := r.List(ctx, &routeList); err != nil {
+	if !listForWatchEvent(ctx, r.Client, &routeList) {
 		return nil
 	}
 
@@ -333,7 +333,7 @@ func (r *HTTPRouteReconciler) findRoutesForEndpointSlice(
 	obj client.Object,
 ) []reconcile.Request {
 	var routeList gatewayv1.HTTPRouteList
-	if err := r.List(ctx, &routeList); err != nil {
+	if !listForWatchEvent(ctx, r.Client, &routeList) {
 		return nil
 	}
 
@@ -355,8 +355,7 @@ func (r *HTTPRouteReconciler) findRoutesForReferenceGrant(
 ) []reconcile.Request {
 	var routeList gatewayv1.HTTPRouteList
 
-	err := r.List(ctx, &routeList)
-	if err != nil {
+	if !listForWatchEvent(ctx, r.Client, &routeList) {
 		return nil
 	}
 
@@ -376,8 +375,7 @@ func (r *HTTPRouteReconciler) findRoutesForReferenceGrant(
 func (r *HTTPRouteReconciler) getAllRelevantRoutes(ctx context.Context) []reconcile.Request {
 	var routeList gatewayv1.HTTPRouteList
 
-	err := r.List(ctx, &routeList)
-	if err != nil {
+	if !listForWatchEvent(ctx, r.Client, &routeList) {
 		return nil
 	}
 

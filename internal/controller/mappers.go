@@ -977,3 +977,17 @@ func withRefFilters(template *routebinding.RouteInfo, ref gatewayv1.ParentRefere
 
 	return &clone
 }
+
+// listForWatchEvent lists into list for a watch mapper. A mapper cannot return
+// an error, so a failed List drops the enqueue, and the log is the only trace
+// of the dropped event.
+func listForWatchEvent(ctx context.Context, cli client.Client, list client.ObjectList) bool {
+	if err := cli.List(ctx, list); err != nil {
+		logging.FromContext(ctx).Warn("watch event dropped: list failed",
+			"list", fmt.Sprintf("%T", list), "error", err)
+
+		return false
+	}
+
+	return true
+}
