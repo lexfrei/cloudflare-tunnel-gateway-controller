@@ -46,6 +46,7 @@ func TestNoopCollector(t *testing.T) {
 		collector.RecordSyncError(ctx, "timeout")
 		collector.RecordAPICall(ctx, "get", "tunnel_config", "success", time.Second)
 		collector.RecordAPIError(ctx, "get", "auth")
+		collector.RecordAPICallSkipped(ctx, "get", "tunnel_config")
 		collector.RecordIngressBuildDuration(ctx, "http", time.Millisecond*100)
 		collector.RecordBackendRefValidation(ctx, "http", "accepted", "")
 	})
@@ -66,6 +67,7 @@ func TestMetricsRegistration(t *testing.T) {
 	collector.RecordSyncError(ctx, "test")
 	collector.RecordAPICall(ctx, "get", "tunnel_config", "success", time.Second)
 	collector.RecordAPIError(ctx, "get", "test")
+	collector.RecordAPICallSkipped(ctx, "get", "tunnel_config")
 	collector.RecordIngressBuildDuration(ctx, "http", time.Millisecond)
 	collector.RecordBackendRefValidation(ctx, "http", "accepted", "")
 
@@ -82,6 +84,7 @@ func TestMetricsRegistration(t *testing.T) {
 		"cftunnel_cloudflare_api_duration_seconds",
 		"cftunnel_cloudflare_api_calls_total",
 		"cftunnel_cloudflare_api_errors_total",
+		"cftunnel_cloudflare_api_calls_skipped_total",
 		"cftunnel_ingress_build_duration_seconds",
 		"cftunnel_backend_ref_validation_total",
 	}
@@ -201,6 +204,19 @@ func TestRecordAPICall(t *testing.T) {
 
 	assert.Equal(t, 1, durationCount)
 	assert.Equal(t, float64(1), callsCount)
+}
+
+func TestRecordAPICallSkipped(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	collector := NewCollector(reg).(*prometheusCollector)
+
+	collector.RecordAPICallSkipped(context.Background(), "get", "tunnel_config")
+
+	assert.Equal(t, float64(1), testutil.ToFloat64(collector.apiCallsSkippedTotal.WithLabelValues("get", "tunnel_config")))
+	assert.Zero(t, testutil.CollectAndCount(collector.apiCallsTotal), "a skipped call is not an API call")
+	assert.Zero(t, testutil.CollectAndCount(collector.apiDuration), "a skipped call has no API duration")
 }
 
 func TestRecordAPIError(t *testing.T) {

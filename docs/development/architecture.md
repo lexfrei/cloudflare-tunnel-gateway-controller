@@ -124,7 +124,7 @@ Watches HTTPRoute resources and synchronizes them to Cloudflare:
 
 1. **Filtering**: Only processes routes referencing managed Gateways
 2. **Full Sync**: On any change, rebuilds the entire desired tunnel configuration
-3. **API Update**: Diffs against the deployed configuration and writes to the Cloudflare API only when the document changed (the configurations endpoint is whole-document; steady-state syncs skip the write)
+3. **API Update**: Skips the Cloudflare API entirely while the desired document matches the copy the controller read or wrote for that tunnel less than 5 minutes ago; otherwise diffs against the deployed configuration and writes only when the document changed (the configurations endpoint is whole-document; steady-state syncs skip the write)
 4. **Status Update**: Sets route acceptance conditions
 
 ```mermaid
@@ -140,13 +140,17 @@ sequenceDiagram
     HR->>Builder: Build ingress rules
     Builder->>Builder: Sort by priority
     Builder-->>HR: Cloudflare ingress config
-    HR->>CF: Get current tunnel configuration
-    CF-->>HR: Deployed ingress document
-    alt document changed
-        HR->>CF: Update tunnel configuration
-        CF-->>HR: Success
-    else unchanged
-        HR->>HR: Skip write
+    alt matches the cached document (under 5 minutes old)
+        HR->>HR: Skip read and write
+    else
+        HR->>CF: Get current tunnel configuration
+        CF-->>HR: Deployed ingress document
+        alt document changed
+            HR->>CF: Update tunnel configuration
+            CF-->>HR: Success
+        else unchanged
+            HR->>HR: Skip write
+        end
     end
     HR->>K8s: Update HTTPRoute status
 ```

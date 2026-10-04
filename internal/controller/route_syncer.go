@@ -98,6 +98,15 @@ type RouteSyncer struct {
 	// ponytail: in memory only, so a tunnel abandoned while the controller is
 	// down keeps its last document; persisting the set would close that.
 	claimedTunnels map[string]claimedTunnel
+
+	// documents is the last ingress document each tunnel was read or written
+	// with, keyed by tunnel ID, so a sync whose desired document matches it
+	// skips the API. Guarded by syncMu.
+	documents map[string]tunnelDocument
+
+	// now overrides the clock for the document cache (tests). Nil is
+	// time.Now.
+	now func() time.Time
 }
 
 // claimedTunnel is one entry of RouteSyncer.claimedTunnels.
@@ -1335,6 +1344,8 @@ func (s *RouteSyncer) emptyAbandonedTunnels(
 
 		result := s.syncTunnelGroup(ctx, logger, &tunnelGroup{resolved: &tunnel.resolved})
 		if result.err == nil {
+			delete(s.documents, tunnelID)
+
 			if result.written {
 				outcome.anyWritten = true
 
@@ -1760,8 +1771,8 @@ func groupRoutes(group *tunnelGroup) ([]gatewayv1.HTTPRoute, []gatewayv1.GRPCRou
 }
 
 // syncTunnelGroup builds the desired rules from EXACTLY the group's routes
-// and reconciles the group's tunnel ingress document: get → diff → sort →
-// catch-all → unchanged skip → whole-document update.
+// and reconciles the group's tunnel ingress document: cached skip → get →
+// diff → sort → catch-all → unchanged skip → whole-document update.
 //
 //nolint:funlen // sequential build → diff → write pipeline, mirrors the historic single-tunnel body
 func (s *RouteSyncer) syncTunnelGroup(
@@ -1790,10 +1801,15 @@ func (s *RouteSyncer) syncTunnelGroup(
 		return result
 	}
 
-	// One GET per tunnel per sync (the PUT is skipped when unchanged, the GET
-	// is not). Cloudflare API rate limits scale with tunnel count; fine for
-	// tens of tenants, revisit with a per-tunnel config cache if a deployment
-	// ever runs hundreds of dedicated planes.
+	cacheKey := documentKey(group.resolved, accountID)
+	if desiredDocument := ingress.EnsureCatchAll(desiredRules); s.documentDeployed(cacheKey, desiredDocument) {
+		s.Metrics.RecordAPICallSkipped(ctx, "get", "tunnel_config")
+
+		result.ruleCount = len(desiredDocument)
+
+		return result
+	}
+
 	getStart := time.Now()
 
 	currentConfig, err := cfClient.ZeroTrust.Tunnels.Cloudflared.Configurations.Get(
@@ -1806,6 +1822,7 @@ func (s *RouteSyncer) syncTunnelGroup(
 	if err != nil {
 		s.Metrics.RecordAPICall(ctx, "get", "tunnel_config", "error", time.Since(getStart))
 		s.Metrics.RecordAPIError(ctx, "get", cfmetrics.ClassifyCloudflareError(err))
+		delete(s.documents, group.resolved.TunnelID)
 
 		result.err = err
 
@@ -1831,6 +1848,7 @@ func (s *RouteSyncer) syncTunnelGroup(
 	if ingress.RulesUnchanged(currentConfig.Config.Ingress, finalRules) {
 		logger.Debug("tunnel configuration unchanged; skipping update",
 			"tunnel", group.resolved.TunnelID, "rules", len(finalRules))
+		s.storeDocument(cacheKey, finalRules)
 
 		return result
 	}
@@ -1847,6 +1865,7 @@ func (s *RouteSyncer) syncTunnelGroup(
 	if err != nil {
 		s.Metrics.RecordAPICall(ctx, "update", "tunnel_config", "error", time.Since(updateStart))
 		s.Metrics.RecordAPIError(ctx, "update", cfmetrics.ClassifyCloudflareError(err))
+		delete(s.documents, group.resolved.TunnelID)
 
 		result.err = err
 
@@ -1858,6 +1877,8 @@ func (s *RouteSyncer) syncTunnelGroup(
 		"tunnel", group.resolved.TunnelID, "rules", len(finalRules))
 
 	result.written = true
+
+	s.storeDocument(cacheKey, finalRules)
 
 	return result
 }

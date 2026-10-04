@@ -15,7 +15,7 @@ import (
 // requeue when it leaves work that no event brings back. The caller that
 // triggered it cannot own that retry, since its own state may already be
 // settled, and many callers retrying one global sync would multiply its
-// Cloudflare reads. So a sync that fails or asks for a requeue leaves one
+// Cloudflare calls. So a sync that fails or asks for a requeue leaves one
 // retry owed here, however many callers it came from, and the retrier runs it
 // until a sync comes back clean.
 type routeSyncRetrier struct {

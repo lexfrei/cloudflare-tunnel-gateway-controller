@@ -52,8 +52,10 @@ type recordingTunnelAPI struct {
 	mu           sync.Mutex
 	puts         map[string][]string         // tunnelID -> hostnames in the written document
 	docs         map[string][]map[string]any // tunnelID -> ingress rules last written
+	gets         map[string]int              // tunnelID -> GETs answered successfully
 	failTunnelID string                      // PUTs to this tunnel ID fail
 	failStatus   int                         // the failing PUT's status; 0 means 500
+	failGetID    string                      // GETs of this tunnel ID fail
 }
 
 // failTunnel makes every PUT to tunnelID return a 5xx, simulating one tunnel's
@@ -75,7 +77,9 @@ func (a *recordingTunnelAPI) shouldFail(tunnelID string) bool {
 func newRecordingTunnelAPI(t *testing.T) *recordingTunnelAPI {
 	t.Helper()
 
-	api := &recordingTunnelAPI{puts: make(map[string][]string), docs: make(map[string][]map[string]any)}
+	api := &recordingTunnelAPI{
+		puts: make(map[string][]string), docs: make(map[string][]map[string]any), gets: make(map[string]int),
+	}
 
 	api.server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -88,7 +92,22 @@ func newRecordingTunnelAPI(t *testing.T) *recordingTunnelAPI {
 		case http.MethodGet:
 			api.mu.Lock()
 			rules, ok := api.docs[tunnelID]
+			failGet := api.failGetID == tunnelID
+
+			if !failGet {
+				api.gets[tunnelID]++
+			}
 			api.mu.Unlock()
+
+			if failGet {
+				writer.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(writer).Encode(map[string]any{
+					"success": false,
+					"errors":  []any{map[string]any{"code": 1000, "message": "simulated tunnel read failure"}},
+				})
+
+				return
+			}
 
 			if !ok {
 				rules = []map[string]any{{"service": "http_status:404"}}

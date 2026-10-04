@@ -30,6 +30,9 @@ type Collector interface {
 	// Cloudflare API metrics
 	RecordAPICall(ctx context.Context, method, resource, status string, duration time.Duration)
 	RecordAPIError(ctx context.Context, method, errorType string)
+	// RecordAPICallSkipped counts a call the controller did not make because
+	// its cached result was still current.
+	RecordAPICallSkipped(ctx context.Context, method, resource string)
 
 	// Ingress builder metrics
 	RecordIngressBuildDuration(ctx context.Context, routeType string, duration time.Duration)
@@ -46,9 +49,10 @@ type prometheusCollector struct {
 	syncErrorsTotal   *prometheus.CounterVec
 
 	// Cloudflare API metrics
-	apiDuration    *prometheus.HistogramVec
-	apiCallsTotal  *prometheus.CounterVec
-	apiErrorsTotal *prometheus.CounterVec
+	apiDuration          *prometheus.HistogramVec
+	apiCallsTotal        *prometheus.CounterVec
+	apiErrorsTotal       *prometheus.CounterVec
+	apiCallsSkippedTotal *prometheus.CounterVec
 
 	// Ingress builder metrics
 	ingressBuildDuration *prometheus.HistogramVec
@@ -104,6 +108,11 @@ func (c *prometheusCollector) RecordAPICall(
 // RecordAPIError records a Cloudflare API error.
 func (c *prometheusCollector) RecordAPIError(_ context.Context, method, errorType string) {
 	c.apiErrorsTotal.WithLabelValues(method, errorType).Inc()
+}
+
+// RecordAPICallSkipped records a Cloudflare API call answered from the cache.
+func (c *prometheusCollector) RecordAPICallSkipped(_ context.Context, method, resource string) {
+	c.apiCallsSkippedTotal.WithLabelValues(method, resource).Inc()
 }
 
 // RecordIngressBuildDuration records the duration of ingress rule building.
@@ -181,6 +190,13 @@ func (c *prometheusCollector) initAPIMetrics() {
 		},
 		[]string{labelMethod, labelErrorType},
 	)
+	c.apiCallsSkippedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cftunnel_cloudflare_api_calls_skipped_total",
+			Help: "Cloudflare API calls skipped because the cached result was still current",
+		},
+		[]string{labelMethod, labelResource},
+	)
 }
 
 func (c *prometheusCollector) initIngressMetrics() {
@@ -211,6 +227,7 @@ func (c *prometheusCollector) register(reg prometheus.Registerer) {
 		c.apiDuration,
 		c.apiCallsTotal,
 		c.apiErrorsTotal,
+		c.apiCallsSkippedTotal,
 		c.ingressBuildDuration,
 		c.backendRefValidation,
 	)
@@ -244,6 +261,9 @@ func (c *NoopCollector) RecordAPICall(_ context.Context, _, _, _ string, _ time.
 
 // RecordAPIError is a no-op.
 func (c *NoopCollector) RecordAPIError(_ context.Context, _, _ string) {}
+
+// RecordAPICallSkipped is a no-op.
+func (c *NoopCollector) RecordAPICallSkipped(_ context.Context, _, _ string) {}
 
 // RecordIngressBuildDuration is a no-op.
 func (c *NoopCollector) RecordIngressBuildDuration(_ context.Context, _ string, _ time.Duration) {}
