@@ -118,7 +118,7 @@ jobs:
           fi
 
       # When ttl.sh refused uploads the run still succeeds, but merge-manifests
-      # is skipped and leaves no image references behind.
+      # uploads no image references.
       - name: Check whether the run published
         id: published
         if: steps.match.outputs.current == 'true'
