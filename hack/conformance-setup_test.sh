@@ -398,6 +398,16 @@ else
   flunk "a plain manifest gets the script's own diagnosis (got: ${plain_err##*$'\n'})"
 fi
 
+# A registry error page in place of the index makes jq fail inside the
+# assignment, and set -e would end the script there with no message of its own.
+printf '<html>502 Bad Gateway</html>' > "${tmp}/index-html.json"
+html_err="$(pull_err "${tmp}/index-html.json" amd64)"
+if grep --quiet "is not valid JSON" <<< "${html_err}"; then
+  pass "a non-JSON index is reported as such"
+else
+  flunk "a non-JSON index is reported as such (got: ${html_err##*$'\n'})"
+fi
+
 # --- verify-manifest-children.sh -------------------------------------------
 #
 # The merge job reads its manifest-list digest back from a run-scoped tag on
