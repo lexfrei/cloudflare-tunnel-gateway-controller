@@ -26,8 +26,11 @@ import (
 //
 //   - Gateway.status.attachedListenerSets reflects the new attachment,
 //   - ListenerSet aggregate Accepted/Programmed conditions are True,
-//   - the route is reachable through the real Cloudflare tunnel and lands on
-//     the expected backend (echo-v1).
+//   - the route is reachable through the real Cloudflare tunnel on the
+//     entry's port and lands on the expected backend (echo-v1),
+//   - the same request on 443, which only the Gateway's own listener has,
+//     gets a 404: the edge keeps the port in Host and the proxy matches the
+//     listener by it.
 //
 // The test temporarily patches the e2e Gateway to opt into allowedListeners
 // (which the shared setupGateway intentionally does not set so other tests
@@ -63,13 +66,19 @@ func TestListenerSetEndToEnd(t *testing.T) {
 		_ = k8sClient.Delete(context.Background(), route)
 	})
 
-	waitForBackend(t, httpClient, cfg.TunnelHostname, "/ls-e2e", "echo-v1-", 90*time.Second)
+	entryHost := fmt.Sprintf("%s:%d", cfg.TunnelHostname, listenerSetEntryPort)
 
-	echo, resp, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/ls-e2e", nil)
+	waitForBackend(t, httpClient, entryHost, "/ls-e2e", "echo-v1-", 90*time.Second)
+
+	echo, resp, err := makeRequest(context.Background(), t, httpClient, entryHost, http.MethodGet, "/ls-e2e", nil)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, "/ls-e2e", echo.Path)
 	assert.True(t, strings.HasPrefix(echo.Pod, "echo-v1-"), "pod should be echo-v1, got: %s", echo.Pod)
+
+	_, resp, err = makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/ls-e2e", nil)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "the route is attached only through the entry's port")
 }
 
 func setupBackendsForListenerSet(t *testing.T, k8sClient client.Client, cfg testConfig) {
@@ -114,6 +123,11 @@ func allowListenerSetAttachment(t *testing.T, k8sClient client.Client, cfg testC
 	}
 }
 
+// listenerSetEntryPort is an HTTPS port the Cloudflare edge proxies besides
+// 443. The e2e zone redirects plain HTTP, so an entry on a port of its own
+// has to be HTTPS.
+const listenerSetEntryPort = 8443
+
 func buildListenerSet(name string, cfg testConfig) *gatewayv1.ListenerSet {
 	hostname := gatewayv1.Hostname(cfg.TunnelHostname)
 	gatewayNS := gatewayv1.Namespace(cfg.Namespace)
@@ -130,9 +144,9 @@ func buildListenerSet(name string, cfg testConfig) *gatewayv1.ListenerSet {
 			},
 			Listeners: []gatewayv1.ListenerEntry{
 				{
-					Name:     "ls-http",
-					Port:     80,
-					Protocol: gatewayv1.HTTPProtocolType,
+					Name:     "ls-https",
+					Port:     listenerSetEntryPort,
+					Protocol: gatewayv1.HTTPSProtocolType,
 					Hostname: &hostname,
 					AllowedRoutes: &gatewayv1.AllowedRoutes{
 						Namespaces: &gatewayv1.RouteNamespaces{
