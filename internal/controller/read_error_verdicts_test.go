@@ -242,3 +242,42 @@ func TestResolveListenerEntryRefs_UnlistableGrantIsReturned(t *testing.T) {
 	require.ErrorIs(t, err, errSimulatedCacheMiss)
 }
 
+// TestFindRoutesForReferenceGrant_MirrorBackend pins that a grant event
+// re-evaluates a route whose only cross-namespace reference is a
+// RequestMirror target, on a rule or on a backendRef, so revoking the grant
+// stops the mirror. A change to the mirror Service re-evaluates it as well.
+func TestFindRoutesForReferenceGrant_MirrorBackend(t *testing.T) {
+	t.Parallel()
+
+	mirrorNS := gatewayv1.Namespace("mirror")
+	mirror := gatewayv1.HTTPRouteFilter{
+		Type:          gatewayv1.HTTPRouteFilterRequestMirror,
+		RequestMirror: &gatewayv1.HTTPRequestMirrorFilter{BackendRef: gatewayv1.BackendObjectReference{Name: "shadow", Namespace: &mirrorNS}},
+	}
+	backend := gatewayv1.HTTPBackendRef{BackendRef: gatewayv1.BackendRef{BackendObjectReference: gatewayv1.BackendObjectReference{Name: "app"}}}
+	backendWithMirror := backend
+	backendWithMirror.Filters = []gatewayv1.HTTPRouteFilter{mirror}
+
+	tests := map[string]gatewayv1.HTTPRouteRule{
+		"rule filter":       {Filters: []gatewayv1.HTTPRouteFilter{mirror}, BackendRefs: []gatewayv1.HTTPBackendRef{backend}},
+		"backendRef filter": {BackendRefs: []gatewayv1.HTTPBackendRef{backendWithMirror}},
+	}
+
+	for name, rule := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			route := &gatewayv1.HTTPRoute{
+				ObjectMeta: metav1.ObjectMeta{Name: "r", Namespace: "app"},
+				Spec:       gatewayv1.HTTPRouteSpec{Rules: []gatewayv1.HTTPRouteRule{rule}},
+			}
+			grant := &gatewayv1beta1.ReferenceGrant{ObjectMeta: metav1.ObjectMeta{Name: "g", Namespace: "mirror"}}
+
+			routes := []Route{HTTPRouteWrapper{route}}
+			require.Len(t, FindRoutesForReferenceGrant(grant, routes), 1)
+
+			shadow := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "shadow", Namespace: "mirror"}}
+			assert.Len(t, FindRoutesForService(shadow, routes), 1, "a mirror Service change re-evaluates the route too")
+		})
+	}
+}
