@@ -921,7 +921,7 @@ func TestProxySyncer_SyncRoutes_BackendTLSPolicyMissingCA_FailsClosed(t *testing
 		},
 	}
 
-	_, syncErr := syncer.SyncRoutes(context.Background(), 0, []string{configServer.URL + "/config"}, routes, nil, nil, nil)
+	diagnostics, syncErr := syncer.SyncRoutes(context.Background(), 0, []string{configServer.URL + "/config"}, routes, nil, nil, nil)
 
 	require.NoError(t, syncErr)
 
@@ -934,6 +934,11 @@ func TestProxySyncer_SyncRoutes_BackendTLSPolicyMissingCA_FailsClosed(t *testing
 			"a (poisoned) TLS block so traffic fails closed, NOT nil which would downgrade to plaintext")
 	assert.Empty(t, backend.TLS.CABundlePEM,
 		"poisoned config has empty CA bundle → handshake fails closed at the proxy")
+
+	require.Len(t, diagnostics, 1, "the unenforceable policy invalidates the backendRef")
+	assert.Equal(t, proxy.DiagnosticResolvedRefs, diagnostics[0].Target)
+	assert.Equal(t, proxy.ReasonInvalidBackendTLSPolicy, diagnostics[0].Reason)
+	assert.Equal(t, "secure-route", diagnostics[0].Name)
 }
 
 // TestProxySyncer_SyncRoutes_BackendTLSPolicy_URISubjectAltName_PushesURIList

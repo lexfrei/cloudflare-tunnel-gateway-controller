@@ -436,11 +436,14 @@ func gatewayClientCertGrantChecker(c client.Client) secretRefGrantChecker {
 //   - List error or no policy targets the service: returns nil → the proxy
 //     dials the backend in plaintext (no policy applies, so there's no
 //     operator intent to enforce).
-//   - A policy targets the service BUT the CA cannot be resolved (missing
-//     ConfigMap, unsupported Group/Kind, empty ca.crt, malformed PEM):
-//     returns a *poisoned* config — an empty CA pool with the policy's
-//     Hostname. This causes the proxy's TLS handshake to fail and the
-//     request returns 502, NOT a silent plaintext downgrade.
+//   - A policy targets the service BUT cannot be enforced (missing
+//     ConfigMap, unsupported Group/Kind, empty ca.crt, malformed PEM,
+//     wellKnownCACertificates alone, an unsupported SAN type): returns a
+//     *poisoned* config — an empty CA pool with the policy's Hostname, plus
+//     an Unenforceable cause. The converter then gives the backendRef the
+//     invalid-backendRef 500 without a dial and sets the route's
+//     ResolvedRefs=False; a mirror leg fails its handshake. Never a silent
+//     plaintext downgrade.
 //   - Hostname and URI SubjectAltNames are both honoured. URI SANs are
 //     forwarded to the proxy as plain strings and matched via exact equality
 //     against the leaf cert's URIs (SPIFFE convention used by the Gateway
@@ -469,9 +472,13 @@ func newBackendTLSResolver(c client.Client) proxy.BackendTLSResolver {
 			return nil
 		}
 
+		if len(policy.Spec.Validation.CACertificateRefs) == 0 {
+			return poisonedBackendTLS(policy, serviceName, "it relies on wellKnownCACertificates, which this controller does not support")
+		}
+
 		caBundle, ok := resolveCABundlePEM(ctx, c, policy)
 		if !ok {
-			return poisonedBackendTLS(policy)
+			return poisonedBackendTLS(policy, serviceName, "its CA certificates cannot be resolved")
 		}
 
 		dnsSANs, uriSANs, hasUnknown := splitSANsByType(policy)
@@ -486,7 +493,7 @@ func newBackendTLSResolver(c client.Client) proxy.BackendTLSResolver {
 				"name", policy.Name,
 			)
 
-			return poisonedBackendTLS(policy)
+			return poisonedBackendTLS(policy, serviceName, "it carries a SubjectAltName type this controller does not support")
 		}
 
 		return &proxy.BackendTLSConfig{
@@ -530,11 +537,15 @@ func splitSANsByType(policy *gatewayv1.BackendTLSPolicy) ([]string, []string, bo
 // poisonedBackendTLS returns a TLS config that is guaranteed to fail handshake
 // (empty CA pool, no SAN list), used to short-circuit a request when a
 // BackendTLSPolicy targets the Service but cannot be enforced — strictly
-// preferred over silently downgrading to plaintext.
-func poisonedBackendTLS(policy *gatewayv1.BackendTLSPolicy) *proxy.BackendTLSConfig {
+// preferred over silently downgrading to plaintext. cause completes "cannot
+// be enforced because ...".
+func poisonedBackendTLS(policy *gatewayv1.BackendTLSPolicy, serviceName, cause string) *proxy.BackendTLSConfig {
 	return &proxy.BackendTLSConfig{
 		CABundlePEM: "",
 		ServerName:  string(policy.Spec.Validation.Hostname),
+		Unenforceable: fmt.Sprintf(
+			"BackendTLSPolicy %s/%s for Service %q cannot be enforced because %s.",
+			policy.Namespace, policy.Name, serviceName, cause),
 	}
 }
 

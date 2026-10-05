@@ -324,7 +324,16 @@ type BackendTLSConfig struct {
 	// ClientKeyPEM is the PEM-encoded private key matching ClientCertPEM.
 	// Must be set together with ClientCertPEM; either both or neither.
 	ClientKeyPEM []byte `json:"clientKeyPem,omitempty"`
+	// Unenforceable, when set, says why the policy targeting this backend
+	// cannot be met. The config then fails every handshake; the converter
+	// reports the message on the route's ResolvedRefs condition. Never pushed.
+	Unenforceable string `json:"-"`
 }
+
+// ReasonInvalidBackendTLSPolicy is the ResolvedRefs reason for a backendRef
+// whose BackendTLSPolicy cannot be met. The spec makes such a backendRef
+// invalid without naming a reason (HTTPBackendRef godoc).
+const ReasonInvalidBackendTLSPolicy = "InvalidBackendTLSPolicy"
 
 // HasSANConstraints reports whether the policy requires SAN-list verification
 // (any of DNS or URI). When true, the proxy disables stdlib hostname
