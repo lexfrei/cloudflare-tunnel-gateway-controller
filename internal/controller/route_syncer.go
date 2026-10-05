@@ -951,8 +951,23 @@ var errClassConfigConflict = errors.New("conflicting GatewayClass configuration"
 // credentials for another class's routes would send traffic to the wrong
 // tunnel.
 func classConfigConflict(classes []gatewayv1.GatewayClass, controllerName string) error {
-	if len(classes) < 2 || !hasConflictingParametersRef(classes) {
+	message := classConflictMessage(classes, controllerName)
+	if message == "" {
 		return nil
+	}
+
+	// Classified rather than wrapped: wrapping ErrInvalidParameters would
+	// append its text, which names a Gateway's infrastructure ref, to a
+	// conflict between GatewayClasses.
+	//nolint:wrapcheck // MarkInvalidParameters classifies; wrapping would add the text this avoids
+	return config.MarkInvalidParameters(errors.Mark(errors.New(message), errClassConfigConflict))
+}
+
+// classConflictMessage names the classes in conflict, or returns "" when they
+// agree on parametersRef.
+func classConflictMessage(classes []gatewayv1.GatewayClass, controllerName string) string {
+	if len(classes) < 2 || !hasConflictingParametersRef(classes) {
+		return ""
 	}
 
 	names := make([]string, len(classes))
@@ -962,14 +977,8 @@ func classConfigConflict(classes []gatewayv1.GatewayClass, controllerName string
 
 	slices.Sort(names)
 
-	// Classified rather than wrapped: wrapping ErrInvalidParameters would
-	// append its text, which names a Gateway's infrastructure ref, to a
-	// conflict between GatewayClasses.
-	//nolint:wrapcheck // MarkInvalidParameters classifies; wrapping would add the text this avoids
-	return config.MarkInvalidParameters(errors.Mark(errors.Newf(
-		"conflicting parametersRef across GatewayClasses %v for controller %s: "+
-			"one controller instance supports only one GatewayClassConfig",
-		names, controllerName), errClassConfigConflict))
+	return fmt.Sprintf("conflicting parametersRef across GatewayClasses %v for controller %s: "+
+		"one controller instance supports only one GatewayClassConfig", names, controllerName)
 }
 
 // hasConflictingParametersRef returns true if the given GatewayClasses

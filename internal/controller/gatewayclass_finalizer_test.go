@@ -45,23 +45,6 @@ func reconcileGatewayClassOnce(t *testing.T, r *GatewayClassReconciler, name str
 	require.NoError(t, err)
 }
 
-func TestGatewayClassForGateway_MapsToClassName(t *testing.T) {
-	t.Parallel()
-
-	requests := gatewayClassForGateway(context.Background(), finalizerGateway("gw-1", "cloudflare-tunnel"))
-
-	require.Len(t, requests, 1)
-	assert.Equal(t, "cloudflare-tunnel", requests[0].Name)
-}
-
-func TestGatewayClassForGateway_NonGatewayObjectIgnored(t *testing.T) {
-	t.Parallel()
-
-	requests := gatewayClassForGateway(context.Background(), &gatewayv1.GatewayClass{})
-
-	assert.Empty(t, requests)
-}
-
 func TestGatewayClassReconciler_Finalizer_AddedWhenGatewayUsesClass(t *testing.T) {
 	t.Parallel()
 

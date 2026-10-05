@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -201,6 +202,10 @@ func (r *GatewayClassReconciler) setAcceptedConditions(ctx context.Context, gate
 	}
 
 	problem, err := r.parametersRefProblem(ctx, gatewayClass.Spec.ParametersRef)
+	if err == nil && problem == "" {
+		problem, err = r.classConflictProblem(ctx, gatewayClass)
+	}
+
 	if err != nil {
 		// Transient read error: leave Accepted as it stands rather than blame
 		// the spec, and requeue.
@@ -227,6 +232,38 @@ func (r *GatewayClassReconciler) setAcceptedConditions(ctx context.Context, gate
 	meta.SetStatusCondition(&gatewayClass.Status.Conditions, condition)
 
 	return nil
+}
+
+// classConflictProblem says why a Gateway on this class would be refused for
+// a GatewayClass conflict, or returns "". It runs route sync's conflict check
+// over the managed classes in use plus this one, which is the set a new
+// Gateway here would make. Unlike classesInUse it never falls back to every
+// class when none is in use: a Gateway here would make this class the only
+// one in use.
+func (r *GatewayClassReconciler) classConflictProblem(
+	ctx context.Context,
+	gatewayClass *gatewayv1.GatewayClass,
+) (string, error) {
+	classes, err := listGatewayClassesForController(ctx, r.Client, r.ControllerName)
+	if err != nil {
+		return "", err
+	}
+
+	var gateways gatewayv1.GatewayList
+	if err := r.List(ctx, &gateways); err != nil {
+		return "", errors.Wrap(err, "listing Gateways to find the GatewayClasses in use")
+	}
+
+	named := map[string]bool{gatewayClass.Name: true}
+	for i := range gateways.Items {
+		named[string(gateways.Items[i].Spec.GatewayClassName)] = true
+	}
+
+	classes = slices.DeleteFunc(classes, func(class gatewayv1.GatewayClass) bool {
+		return !named[class.Name]
+	})
+
+	return classConflictMessage(classes, r.ControllerName), nil
 }
 
 // parametersRefProblem says why a GatewayClass parametersRef cannot be served,
@@ -403,12 +440,15 @@ func (r *GatewayClassReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	//nolint:wrapcheck // controller-runtime builder pattern
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gatewayv1.GatewayClass{}).
+		Watches(&gatewayv1.GatewayClass{},
+			handler.EnqueueRequestsFromMapFunc(r.managedGatewayClasses),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		// GenerationChangedPredicate keeps Gateway status writes (every
-		// GatewayReconciler pass) from re-reconciling the class; finalizer
-		// accounting only needs create/delete and spec changes (which include
-		// gatewayClassName moves -- the map func sees both old and new).
+		// GatewayReconciler pass) from re-reconciling the classes; finalizer
+		// accounting and the class conflict only need create/delete and spec
+		// changes, which include gatewayClassName moves.
 		Watches(&gatewayv1.Gateway{},
-			handler.EnqueueRequestsFromMapFunc(gatewayClassForGateway),
+			handler.EnqueueRequestsFromMapFunc(r.managedGatewayClasses),
 			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		// Only a config's existence feeds Accepted, so create and delete are
 		// what matter; the predicate drops status-only updates.
@@ -440,16 +480,21 @@ func (r *GatewayClassReconciler) gatewayClassesForConfig(ctx context.Context, ob
 	return requests
 }
 
-// gatewayClassForGateway maps a Gateway event to a reconcile request for the
-// GatewayClass it references. The Reconcile controllerName check filters out
-// foreign classes, so no filtering is needed here.
-func gatewayClassForGateway(_ context.Context, obj client.Object) []reconcile.Request {
-	gateway, ok := obj.(*gatewayv1.Gateway)
-	if !ok {
+// managedGatewayClasses maps a GatewayClass or Gateway event to every managed
+// GatewayClass: one class's parametersRef, or the class a Gateway names,
+// decides whether the others conflict.
+func (r *GatewayClassReconciler) managedGatewayClasses(ctx context.Context, _ client.Object) []reconcile.Request {
+	classes, err := listGatewayClassesForController(ctx, r.Client, r.ControllerName)
+	if err != nil {
+		log.FromContext(ctx).Error(err, "failed to list GatewayClasses to re-evaluate a class conflict")
+
 		return nil
 	}
 
-	return []reconcile.Request{
-		{Name: string(gateway.Spec.GatewayClassName)},
+	requests := make([]reconcile.Request, len(classes))
+	for i := range classes {
+		requests[i] = reconcile.Request{Name: classes[i].Name}
 	}
+
+	return requests
 }
