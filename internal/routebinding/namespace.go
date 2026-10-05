@@ -70,15 +70,25 @@ func (v *Validator) IsNamespaceAllowed(
 }
 
 // NamespaceSelectorInvalid reports whether allowedRoutes admits routes by a
-// namespace label selector that does not parse. Such a listener admits no
-// route. A selector is read only when From is Selector, so one set beside any
-// other From does not count.
+// namespace label selector that is missing or does not parse. Such a listener
+// admits no route. A selector is read only when From is Selector, so one set
+// beside any other From does not count.
 func NamespaceSelectorInvalid(allowedRoutes *gatewayv1.AllowedRoutes) bool {
-	if getNamespaceFrom(allowedRoutes) != gatewayv1.NamespacesFromSelector || allowedRoutes.Namespaces.Selector == nil {
+	if getNamespaceFrom(allowedRoutes) != gatewayv1.NamespacesFromSelector {
 		return false
 	}
 
-	_, err := metav1.LabelSelectorAsSelector(allowedRoutes.Namespaces.Selector)
+	return selectorInvalid(allowedRoutes.Namespaces.Selector)
+}
+
+// selectorInvalid reports whether a selector that From: Selector requires is
+// missing or does not parse. The CRD does not enforce its presence.
+func selectorInvalid(selector *metav1.LabelSelector) bool {
+	if selector == nil {
+		return true
+	}
+
+	_, err := metav1.LabelSelectorAsSelector(selector)
 
 	return err != nil
 }
