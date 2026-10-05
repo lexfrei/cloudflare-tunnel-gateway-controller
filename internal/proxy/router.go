@@ -432,7 +432,7 @@ func indexRuleByHostname(
 
 func (c *compiledRule) entries() []matchEntry {
 	if len(c.matches) == 0 {
-		return []matchEntry{{compiled: c}}
+		return []matchEntry{{compiled: c, rank: rankMatch(&RouteMatch{})}}
 	}
 
 	entries := make([]matchEntry, len(c.matches))

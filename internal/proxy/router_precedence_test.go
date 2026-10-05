@@ -254,6 +254,14 @@ func TestRouter_HTTPRouteMatchPrecedence(t *testing.T) {
 			},
 			path: "/api", want: "a-r1",
 		},
+		{
+			name: "a rule without matches ties PathPrefix /: the oldest route wins",
+			routes: []precedenceRoute[match]{
+				{namespace: "ns", name: "a", age: time.Hour, rules: [][]match{{prefix("/")}}},
+				{namespace: "ns", name: "z", rules: [][]match{{}}},
+			},
+			path: "/", want: "z-r0",
+		},
 	}
 
 	for _, tt := range tests {
