@@ -92,9 +92,10 @@ rules:
   - apiGroups: ["multicluster.x-k8s.io"]
     resources: ["serviceimports"]
     verbs: ["get", "list", "watch"]
-  # CustomResourceDefinitions - Get of the gatewayclasses CRD to read the
-  # bundle-version annotation for the SupportedVersion condition, and of the
-  # controller's own CRDs at startup to report fields their schema lacks
+  # CustomResourceDefinitions - Get of every Gateway API CRD the controller
+  # serves to read the bundle-version annotation for the SupportedVersion
+  # condition, and of the controller's own CRDs at startup to report fields
+  # their schema lacks
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     verbs: ["get"]
