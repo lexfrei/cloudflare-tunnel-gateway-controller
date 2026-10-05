@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/cockroachdb/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
@@ -33,17 +32,17 @@ const invalidAllowedListenersMessage = "The parent Gateway's allowedListeners se
 // is allowed to attach. The default (unset) is From=None, i.e. attachment is
 // rejected unless the Gateway opts in. A selector that does not parse admits
 // no ListenerSet. The error reports a namespace that could not be read, which
-// leaves the acceptance undecided. A Gateway that RequestsFrontendValidation
-// admits no ListenerSet.
+// leaves the acceptance undecided. A Gateway that RequestsFrontendValidation, or
+// requests an UnsupportedAddressType, admits no ListenerSet.
 func (v *Validator) EvaluateListenerSetAcceptance(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 	listenerSet *gatewayv1.ListenerSet,
 ) (ListenerSetAcceptance, error) {
-	if RequestsFrontendValidation(gateway) {
+	if message, refused := GatewayRefused(gateway); refused {
 		return ListenerSetAcceptance{
 			Reason:  gatewayv1.ListenerSetReasonParentNotAccepted,
-			Message: ParentRequestsFrontendValidationMessage,
+			Message: message,
 		}, nil
 	}
 
@@ -103,16 +102,15 @@ func rejectedListenerSet() ListenerSetAcceptance {
 }
 
 // ListenerNamespaceSelectorInvalid reports whether allowedListeners admits
-// ListenerSets by a namespace label selector that does not parse, which
-// refuses every ListenerSet. A selector is read only when From is Selector.
+// ListenerSets by a namespace label selector that is missing or does not
+// parse, which refuses every ListenerSet. A selector is read only when From is
+// Selector.
 func ListenerNamespaceSelectorInvalid(allowed *gatewayv1.AllowedListeners) bool {
-	if getListenerNamespaceFrom(allowed) != gatewayv1.NamespacesFromSelector || allowed.Namespaces.Selector == nil {
+	if getListenerNamespaceFrom(allowed) != gatewayv1.NamespacesFromSelector {
 		return false
 	}
 
-	_, err := metav1.LabelSelectorAsSelector(allowed.Namespaces.Selector)
-
-	return err != nil
+	return selectorInvalid(allowed.Namespaces.Selector)
 }
 
 // getListenerNamespaceFrom extracts the From field from allowedListeners,

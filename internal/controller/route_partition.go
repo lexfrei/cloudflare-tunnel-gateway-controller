@@ -12,6 +12,7 @@ import (
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelownership"
 )
 
@@ -106,6 +107,10 @@ type infraGateways struct {
 	// broken they contribute no partition; unlike broken their config
 	// resolved fine — they just claimed a tunnel that is not theirs.
 	rejected map[string]tunnelownership.Rejection
+	// refused holds the Gateways refused as a whole (spec.tls.frontend, an
+	// unsupported address type). They contribute no partition, and unlike
+	// broken their plane is removed, not kept.
+	refused map[string]bool
 	// overQuota holds the Gateways refused because their namespace is at the
 	// operator's dedicated data-plane cap, mapped to that cap so the route
 	// status can quote it. Like rejected they contribute no partition.
@@ -128,6 +133,12 @@ func (g *infraGateways) isBroken(key string) bool {
 	return g != nil && g.broken[key]
 }
 
+// isRefused reports whether the Gateway key opted in and is refused as a
+// whole. Nil-safe.
+func (g *infraGateways) isRefused(key string) bool {
+	return g != nil && g.refused[key]
+}
+
 // keepsLastPlane reports whether the Gateway key opted in and failed to
 // resolve for a reason other than a refusal. The infra reconciler leaves such a
 // Gateway's last-good plane running, where a refused one has its plane removed.
@@ -135,7 +146,7 @@ func (g *infraGateways) keepsLastPlane(key string) bool {
 	_, rejected := g.tunnelRejection(key)
 	_, overQuota := g.quotaRefusal(key)
 
-	return g.isBroken(key) && !rejected && !overQuota
+	return g.isBroken(key) && !rejected && !overQuota && !g.isRefused(key)
 }
 
 // applyTunnelOwnership drops every Gateway whose token claims a tunnel it does
@@ -504,8 +515,8 @@ func partitionRoutes(
 }
 
 // partitionGatewaysFor maps a route's accepted Gateways onto partition keys:
-// every RESOLVED infra Gateway contributes its own key; a BROKEN infra
-// Gateway contributes nothing at all (fail closed — falling back to shared
+// every RESOLVED infra Gateway contributes its own key; a BROKEN or REFUSED
+// infra Gateway contributes nothing at all (fail closed — falling back to shared
 // would leak the tenant's hostnames into another data plane); any accepted
 // non-infra Gateway contributes the shared key (once). Each key maps to the
 // Gateways that contributed it, which are the ones that partition serves.
@@ -516,8 +527,8 @@ func partitionGatewaysFor(binding routeBindingInfo, infra *infraGateways) map[st
 		switch {
 		case infra.isResolved(gatewayKey):
 			byPartition[gatewayKey] = append(byPartition[gatewayKey], gatewayKey)
-		case infra.isBroken(gatewayKey):
-			// Opted in but unresolvable: serve nowhere.
+		case infra.isBroken(gatewayKey), infra.isRefused(gatewayKey):
+			// Opted in but unresolvable or refused: serve nowhere.
 		default:
 			byPartition[sharedPartitionKey] = append(byPartition[sharedPartitionKey], gatewayKey)
 		}
@@ -619,4 +630,28 @@ func partitionDisplay(partitions []routePartition) string {
 	}
 
 	return strings.Join(keys, ",")
+}
+
+// applyGatewayRefusals drops every opted-in Gateway refused as a whole
+// (routebinding.GatewayRefused) and records it in refused. Such a Gateway
+// admits no route and the infra reconciler removes its plane, so it gets no
+// partition. Recorded rather than only dropped: a route still bound to it,
+// when the refusal lands between route binding and this listing, must be
+// served nowhere instead of falling back to the shared plane.
+func applyGatewayRefusals(infra *infraGateways) {
+	for _, gateway := range infra.listed {
+		if _, refused := routebinding.GatewayRefused(gateway); !refused {
+			continue
+		}
+
+		key := gateway.Namespace + "/" + gateway.Name
+
+		if infra.refused == nil {
+			infra.refused = make(map[string]bool)
+		}
+
+		infra.refused[key] = true
+		delete(infra.resolved, key)
+		delete(infra.transient, key)
+	}
 }

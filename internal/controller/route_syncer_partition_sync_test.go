@@ -863,3 +863,47 @@ func TestSyncAllRoutes_PersistentWriteFailureLogsErrorOnce(t *testing.T) {
 
 	assert.Equal(t, 1, errorLines)
 }
+
+// TestSyncAllRoutes_RefusedGatewayGetsNoPartition pins that a Gateway refused
+// as a whole, whose plane the infra reconciler removes, gets no partition:
+// a push to it would target a config Service that no longer exists.
+func TestSyncAllRoutes_RefusedGatewayGetsNoPartition(t *testing.T) {
+	t.Parallel()
+
+	const classTunnel = "99999999-9999-4999-8999-999999999999"
+
+	for _, tt := range []struct {
+		name   string
+		refuse func(*gatewayv1.Gateway)
+	}{
+		{name: "spec.tls.frontend", refuse: func(gateway *gatewayv1.Gateway) {
+			gateway.Spec.TLS = &gatewayv1.GatewayTLSConfig{Frontend: &gatewayv1.FrontendTLSConfig{}}
+		}},
+		{name: "unsupported address type", refuse: func(gateway *gatewayv1.Gateway) {
+			gateway.Spec.Addresses = []gatewayv1.GatewaySpecAddress{{Value: "192.0.2.1"}}
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			objects := partitionSyncObjects(t, classTunnel, false)
+			for _, obj := range objects {
+				if gateway, ok := obj.(*gatewayv1.Gateway); ok && gateway.Name == "infra-gw" {
+					tt.refuse(gateway)
+				}
+			}
+
+			api := newRecordingTunnelAPI(t)
+
+			_, result, err := partitionSyncSyncerFor(t, api, objects).SyncAllRoutes(context.Background())
+			require.NoError(t, err)
+			require.NotNil(t, result)
+
+			for i := range result.Partitions {
+				assert.NotEqual(t, "default/infra-gw", result.Partitions[i].Key)
+			}
+
+			assert.NotContains(t, api.hostnamesFor(tenantTunnelUUID), "tenant.example.com")
+		})
+	}
+}

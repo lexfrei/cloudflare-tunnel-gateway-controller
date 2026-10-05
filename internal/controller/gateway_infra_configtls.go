@@ -197,6 +197,9 @@ func (r *GatewayInfraReconciler) createConfigTLSLeaf(
 	}
 
 	secret := tlsSecret(key, certPEM, keyPEM)
+	secret.Labels = render.ResourceLabels(gateway)
+	secret.Annotations = render.ResourceAnnotations(gateway)
+
 	if err := controllerutil.SetControllerReference(gateway, secret, r.Scheme); err != nil {
 		return false, errors.Wrap(err, "setting owner on config API certificate")
 	}

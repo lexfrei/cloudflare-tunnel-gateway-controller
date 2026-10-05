@@ -45,23 +45,6 @@ func reconcileGatewayClassOnce(t *testing.T, r *GatewayClassReconciler, name str
 	require.NoError(t, err)
 }
 
-func TestGatewayClassForGateway_MapsToClassName(t *testing.T) {
-	t.Parallel()
-
-	requests := gatewayClassForGateway(context.Background(), finalizerGateway("gw-1", "cloudflare-tunnel"))
-
-	require.Len(t, requests, 1)
-	assert.Equal(t, "cloudflare-tunnel", requests[0].Name)
-}
-
-func TestGatewayClassForGateway_NonGatewayObjectIgnored(t *testing.T) {
-	t.Parallel()
-
-	requests := gatewayClassForGateway(context.Background(), &gatewayv1.GatewayClass{})
-
-	assert.Empty(t, requests)
-}
-
 func TestGatewayClassReconciler_Finalizer_AddedWhenGatewayUsesClass(t *testing.T) {
 	t.Parallel()
 
@@ -74,7 +57,7 @@ func TestGatewayClassReconciler_Finalizer_AddedWhenGatewayUsesClass(t *testing.T
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClass, finalizerGateway("gw-1", "cloudflare-tunnel"), gatewayClassCRDObject(consts.BundleVersion)).
+		WithObjects(gatewayAPICRDObjects(consts.BundleVersion, gatewayClass, finalizerGateway("gw-1", "cloudflare-tunnel"))...).
 		WithStatusSubresource(gatewayClass).
 		Build()
 
@@ -111,7 +94,7 @@ func TestGatewayClassReconciler_Finalizer_RemovedWhenNoGatewayUsesClass(t *testi
 	// the finalizer alive.
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClass, finalizerGateway("gw-other", "some-other-class"), gatewayClassCRDObject(consts.BundleVersion)).
+		WithObjects(gatewayAPICRDObjects(consts.BundleVersion, gatewayClass, finalizerGateway("gw-other", "some-other-class"))...).
 		WithStatusSubresource(gatewayClass).
 		Build()
 
@@ -142,7 +125,7 @@ func TestGatewayClassReconciler_Finalizer_ForeignClassUntouched(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(foreignClass, finalizerGateway("gw-1", "foreign"), gatewayClassCRDObject(consts.BundleVersion)).
+		WithObjects(gatewayAPICRDObjects(consts.BundleVersion, foreignClass, finalizerGateway("gw-1", "foreign"))...).
 		WithStatusSubresource(foreignClass).
 		Build()
 
@@ -179,7 +162,7 @@ func TestGatewayClassReconciler_Finalizer_PreservesForeignFinalizers(t *testing.
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClass, gatewayClassCRDObject(consts.BundleVersion)).
+		WithObjects(gatewayAPICRDObjects(consts.BundleVersion, gatewayClass)...).
 		WithStatusSubresource(gatewayClass).
 		Build()
 
@@ -221,7 +204,7 @@ func TestGatewayClassReconciler_Finalizer_DeletionUnblocksCleanly(t *testing.T) 
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClass, gatewayClassCRDObject(consts.BundleVersion)).
+		WithObjects(gatewayAPICRDObjects(consts.BundleVersion, gatewayClass)...).
 		WithStatusSubresource(gatewayClass).
 		Build()
 
@@ -274,7 +257,7 @@ func TestGatewayClassReconciler_Finalizer_NotAddedToDeletingClass(t *testing.T) 
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClass, finalizerGateway("gw-1", "cloudflare-tunnel"), gatewayClassCRDObject(consts.BundleVersion)).
+		WithObjects(gatewayAPICRDObjects(consts.BundleVersion, gatewayClass, finalizerGateway("gw-1", "cloudflare-tunnel"))...).
 		WithStatusSubresource(gatewayClass).
 		Build()
 

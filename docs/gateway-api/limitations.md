@@ -154,6 +154,7 @@ Clients complete TLS with the Cloudflare edge, and the tunnel does not carry the
 - The Gateway reports `Accepted=False` and `Programmed=False` with `Reason=Invalid`, and its listeners report `Programmed=False`. A Gateway on the shared plane clears `status.addresses`; a dedicated Gateway keeps its address ([see below](#a-dedicated-gateway-keeps-its-statusaddresses-through-a-configuration-error)).
 - Routes attached to it, directly or through a ListenerSet, report `Accepted=False` with `Reason=NoMatchingParent` for that parent and are not served through it.
 - Its ListenerSets report `Accepted=False` with `Reason=ParentNotAccepted`.
+- A dedicated data plane (`spec.infrastructure.parametersRef`) is removed, so no connector of it stays registered on the tunnel.
 
 The refusal covers the whole Gateway, not only its `HTTPS` listeners: the edge accepts HTTPS for every hostname whatever the listener protocol, so no listener on the Gateway could honour the setting. Removing `spec.tls.frontend` restores the Gateway and its routes.
 
@@ -183,9 +184,15 @@ Listener ports are not compared. The tunnel does not tell the proxy which port o
 
 Isolation is per Gateway. A route attached to several Gateways on the same data plane answers a host when any of them gives the host to a listener the route is attached through.
 
-### `spec.addresses` is not honoured
+### `spec.addresses` accepts only the tunnel hostname
 
-The controller does not read `spec.addresses` on a Gateway. The only reachable address for a Cloudflare Tunnel is the tunnel CNAME, which the controller assigns automatically and reports in `status.addresses`; a user cannot request a specific address. This is the same constraint as the Gateway API `GatewayStaticAddresses` feature, which this implementation does not claim. A value placed in `spec.addresses` is neither honoured nor flagged as invalid.
+The only reachable address for a Cloudflare Tunnel is the tunnel CNAME (`<tunnel-id>.cfargotunnel.com`), which the controller assigns and reports in `status.addresses`. A Gateway cannot request any other address, the same constraint as the Gateway API `GatewayStaticAddresses` feature, which this implementation does not claim. The controller reports what it cannot serve:
+
+- A `Hostname` address equal to the tunnel CNAME, or with no value, is served as usual.
+- A `Hostname` address with any other value leaves the Gateway `Accepted=True` and serving at the tunnel CNAME, but `Programmed=False` with reason `AddressNotUsable` and a message naming both hostnames.
+- Any other address type (`IPAddress`, which is also the type an entry without one gets, `NamedAddress` or a custom type) makes the Gateway `Accepted=False` with reason `UnsupportedAddress`. Like any refused Gateway it serves no route: its routes report `Accepted=False` with reason `NoMatchingParent`, its ListenerSets report `ParentNotAccepted`, a Gateway on the shared plane clears `status.addresses`, and a dedicated data plane is removed.
+
+Remove `spec.addresses`, or leave a single `Hostname` entry without a value, to let the controller assign the address.
 
 ### `status.addresses` is not dialable in-cluster
 
@@ -483,7 +490,7 @@ The Gateway API spec (`gatewayclass_types.go:43`) recommends snapshotting Gatewa
 
 ### `SupportedVersion` condition is verified against the installed CRD bundle
 
-The GatewayClass `SupportedVersion` condition is an Experimental-channel surface (`gatewayclass_types.go:244`, marked `// <gateway:experimental>`); this controller pins and runs the Standard channel (Gateway API v1.6.2), where `SupportedVersion` is not a required condition. The controller populates it anyway as a best-effort operator signal: on each GatewayClass reconcile it reads the `gateway.networking.k8s.io/bundle-version` annotation on the installed `gatewayclasses` CRD and compares its `major.minor` to the Gateway API version the controller is built against (`consts.BundleVersion`). A matching `major.minor` sets `SupportedVersion=True` (patch releases are treated as compatible); an older or newer minor, a missing annotation, or an unreadable CRD sets `SupportedVersion=False` with reason `UnsupportedVersion` and a message naming the mismatch, so a CRD/controller version skew surfaces on status rather than as silent field-drift at runtime.
+The GatewayClass `SupportedVersion` condition is an Experimental-channel surface (`gatewayclass_types.go:244`, marked `// <gateway:experimental>`); this controller pins and runs the Standard channel (Gateway API v1.6.2), where `SupportedVersion` is not a required condition. The controller populates it anyway as a best-effort operator signal: on each GatewayClass reconcile it reads the `gateway.networking.k8s.io/bundle-version` annotation on every Gateway API CRD the controller serves (GatewayClass, Gateway, HTTPRoute, GRPCRoute, ReferenceGrant, ListenerSet and BackendTLSPolicy) and compares each one's `major.minor` to the Gateway API version the controller is built against (`consts.BundleVersion`). A matching `major.minor` sets `SupportedVersion=True` (patch releases are treated as compatible); an older or newer minor on any of them, a missing annotation, or a missing CRD sets `SupportedVersion=False` with reason `UnsupportedVersion` and a message naming the CRD and the mismatch, so a CRD/controller version skew surfaces on status rather than as silent field-drift at runtime.
 
 ### The gateway-exists finalizer is managed
 

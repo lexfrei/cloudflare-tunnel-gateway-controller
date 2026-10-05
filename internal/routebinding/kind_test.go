@@ -152,7 +152,16 @@ func TestIsRouteKindAllowed(t *testing.T) {
 			expected:  true,
 		},
 		{
-			name: "empty group defaults to gateway API group",
+			name: "omitted group defaults to gateway API group",
+			allowedRoutes: &gatewayv1.AllowedRoutes{
+				Kinds: []gatewayv1.RouteGroupKind{{Kind: "HTTPRoute"}},
+			},
+			protocol:  gatewayv1.HTTPProtocolType,
+			routeKind: "HTTPRoute",
+			expected:  true,
+		},
+		{
+			name: "explicit empty group is the core group and rejects route",
 			allowedRoutes: &gatewayv1.AllowedRoutes{
 				Kinds: []gatewayv1.RouteGroupKind{
 					{
@@ -163,7 +172,7 @@ func TestIsRouteKindAllowed(t *testing.T) {
 			},
 			protocol:  gatewayv1.HTTPProtocolType,
 			routeKind: "HTTPRoute",
-			expected:  true,
+			expected:  false,
 		},
 		{
 			name: "different group rejects route",
@@ -272,6 +281,16 @@ func TestFilterSupportedKinds(t *testing.T) {
 			expectedKinds:     nil,
 			expectedHasAny:    false,
 			expectedHasInvald: false, // Default kinds don't count as invalid
+		},
+		{
+			name: "explicit empty group is the core group, so HTTPRoute is invalid",
+			allowedRoutes: &gatewayv1.AllowedRoutes{
+				Kinds: []gatewayv1.RouteGroupKind{{Group: groupPtr(""), Kind: "HTTPRoute"}},
+			},
+			protocol:          gatewayv1.HTTPProtocolType,
+			expectedKinds:     nil,
+			expectedHasAny:    false,
+			expectedHasInvald: true,
 		},
 		{
 			name: "explicit HTTPRoute only",

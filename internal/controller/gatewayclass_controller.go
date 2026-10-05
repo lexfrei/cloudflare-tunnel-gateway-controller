@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -29,11 +30,20 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 )
 
-// gatewayClassCRDName is the Gateway API CRD probed for the bundle-version
-// annotation. All Gateway API CRDs from one install share the same bundle
-// version, so probing the GatewayClass CRD (which this reconciler manages) is
-// representative.
-const gatewayClassCRDName = "gatewayclasses.gateway.networking.k8s.io"
+// gatewayAPICRDNames are the Gateway API CRDs the controller serves, each
+// probed for the bundle-version annotation: a partial upgrade can leave them
+// from different bundles.
+func gatewayAPICRDNames() []string {
+	return []string{
+		"gatewayclasses.gateway.networking.k8s.io",
+		"gateways.gateway.networking.k8s.io",
+		"httproutes.gateway.networking.k8s.io",
+		"grpcroutes.gateway.networking.k8s.io",
+		"referencegrants.gateway.networking.k8s.io",
+		"listenersets.gateway.networking.k8s.io",
+		"backendtlspolicies.gateway.networking.k8s.io",
+	}
+}
 
 // GatewayClassReconciler reconciles GatewayClass resources.
 // It updates the status with Accepted condition when the GatewayClass
@@ -192,6 +202,10 @@ func (r *GatewayClassReconciler) setAcceptedConditions(ctx context.Context, gate
 	}
 
 	problem, err := r.parametersRefProblem(ctx, gatewayClass.Spec.ParametersRef)
+	if err == nil && problem == "" {
+		problem, err = r.classConflictProblem(ctx, gatewayClass)
+	}
+
 	if err != nil {
 		// Transient read error: leave Accepted as it stands rather than blame
 		// the spec, and requeue.
@@ -218,6 +232,38 @@ func (r *GatewayClassReconciler) setAcceptedConditions(ctx context.Context, gate
 	meta.SetStatusCondition(&gatewayClass.Status.Conditions, condition)
 
 	return nil
+}
+
+// classConflictProblem says why a Gateway on this class would be refused for
+// a GatewayClass conflict, or returns "". It runs route sync's conflict check
+// over the managed classes in use plus this one, which is the set a new
+// Gateway here would make. Unlike classesInUse it never falls back to every
+// class when none is in use: a Gateway here would make this class the only
+// one in use.
+func (r *GatewayClassReconciler) classConflictProblem(
+	ctx context.Context,
+	gatewayClass *gatewayv1.GatewayClass,
+) (string, error) {
+	classes, err := listGatewayClassesForController(ctx, r.Client, r.ControllerName)
+	if err != nil {
+		return "", err
+	}
+
+	var gateways gatewayv1.GatewayList
+	if err := r.List(ctx, &gateways); err != nil {
+		return "", errors.Wrap(err, "listing Gateways to find the GatewayClasses in use")
+	}
+
+	named := map[string]bool{gatewayClass.Name: true}
+	for i := range gateways.Items {
+		named[string(gateways.Items[i].Spec.GatewayClassName)] = true
+	}
+
+	classes = slices.DeleteFunc(classes, func(class gatewayv1.GatewayClass) bool {
+		return !named[class.Name]
+	})
+
+	return classConflictMessage(classes, r.ControllerName), nil
 }
 
 // parametersRefProblem says why a GatewayClass parametersRef cannot be served,
@@ -282,8 +328,8 @@ func (r *GatewayClassReconciler) bundleVersionCondition(
 	return condition, nil
 }
 
-// bundleVersionSupported reads the gatewayclasses CRD bundle-version annotation
-// and compares its major.minor to the version the controller is built against.
+// bundleVersionSupported reads the bundle-version annotation of every served
+// Gateway API CRD and compares each major.minor to the version the controller is built against.
 // The bool/string pair is the deterministic verdict and a human-readable
 // message for the status condition. A non-nil error signals a transient read
 // failure (anything other than NotFound): the bundle is unverified, not
@@ -300,41 +346,57 @@ func (r *GatewayClassReconciler) bundleVersionSupported(ctx context.Context) (bo
 		return false, "Gateway API CRD bundle version could not be verified: no reader configured", nil
 	}
 
-	var crd apiextensionsv1.CustomResourceDefinition
-	if err := r.BundleVersionReader.Get(ctx, types.NamespacedName{Name: gatewayClassCRDName}, &crd); err != nil {
-		if apierrors.IsNotFound(err) {
-			// The CRD genuinely does not exist: a stable, deterministic state.
-			return false, fmt.Sprintf("Gateway API CRD %q is not installed", gatewayClassCRDName), nil
+	var installed string
+
+	for _, name := range gatewayAPICRDNames() {
+		version, message, err := r.crdBundleVersion(ctx, name)
+		if err != nil || message != "" {
+			return false, message, err
 		}
-		// Any other read error (apiserver timeout, RBAC not yet propagated) is
-		// transient; surface it so the caller requeues rather than recording a
-		// misleading UnsupportedVersion.
-		return false, "", errors.Wrapf(err, "failed to read Gateway API CRD %q for bundle version", gatewayClassCRDName)
-	}
 
-	installed, found := crd.Annotations[consts.BundleVersionAnnotation]
-	if !found || installed == "" {
-		return false, fmt.Sprintf(
-			"Gateway API CRD %q is missing the %q annotation",
-			gatewayClassCRDName, consts.BundleVersionAnnotation,
-		), nil
-	}
+		installedMajor, installedMinor, ok := parseMajorMinor(version)
+		if !ok {
+			return false, fmt.Sprintf(
+				"Gateway API CRD %q bundle version %q is not a valid version", name, version,
+			), nil
+		}
 
-	installedMajor, installedMinor, ok := parseMajorMinor(installed)
-	if !ok {
-		return false, fmt.Sprintf(
-			"Gateway API CRD bundle version %q is not a valid version", installed,
-		), nil
-	}
+		if installedMajor != expectedMajor || installedMinor != expectedMinor {
+			return false, fmt.Sprintf(
+				"Gateway API CRD %q bundle version %s is not supported; controller requires %d.%d.x",
+				name, version, expectedMajor, expectedMinor,
+			), nil
+		}
 
-	if installedMajor != expectedMajor || installedMinor != expectedMinor {
-		return false, fmt.Sprintf(
-			"Gateway API CRD bundle version %s is not supported; controller requires %d.%d.x",
-			installed, expectedMajor, expectedMinor,
-		), nil
+		if installed == "" {
+			installed = version
+		}
 	}
 
 	return true, fmt.Sprintf("Gateway API CRD bundle version %s is supported", installed), nil
+}
+
+// crdBundleVersion returns the bundle-version annotation of one Gateway API
+// CRD. A non-empty message is a deterministic verdict that the CRD is missing
+// or unannotated; an error is a transient read failure.
+func (r *GatewayClassReconciler) crdBundleVersion(ctx context.Context, name string) (string, string, error) {
+	var crd apiextensionsv1.CustomResourceDefinition
+	if err := r.BundleVersionReader.Get(ctx, types.NamespacedName{Name: name}, &crd); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", fmt.Sprintf("Gateway API CRD %q is not installed", name), nil
+		}
+
+		return "", "", errors.Wrapf(err, "failed to read Gateway API CRD %q for bundle version", name)
+	}
+
+	version := crd.Annotations[consts.BundleVersionAnnotation]
+	if version == "" {
+		return "", fmt.Sprintf(
+			"Gateway API CRD %q is missing the %q annotation", name, consts.BundleVersionAnnotation,
+		), nil
+	}
+
+	return version, "", nil
 }
 
 // parseMajorMinor extracts the major and minor components from a Gateway API
@@ -378,12 +440,15 @@ func (r *GatewayClassReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	//nolint:wrapcheck // controller-runtime builder pattern
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gatewayv1.GatewayClass{}).
+		Watches(&gatewayv1.GatewayClass{},
+			handler.EnqueueRequestsFromMapFunc(r.managedGatewayClasses),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		// GenerationChangedPredicate keeps Gateway status writes (every
-		// GatewayReconciler pass) from re-reconciling the class; finalizer
-		// accounting only needs create/delete and spec changes (which include
-		// gatewayClassName moves -- the map func sees both old and new).
+		// GatewayReconciler pass) from re-reconciling the classes; finalizer
+		// accounting and the class conflict only need create/delete and spec
+		// changes, which include gatewayClassName moves.
 		Watches(&gatewayv1.Gateway{},
-			handler.EnqueueRequestsFromMapFunc(gatewayClassForGateway),
+			handler.EnqueueRequestsFromMapFunc(r.managedGatewayClasses),
 			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		// Only a config's existence feeds Accepted, so create and delete are
 		// what matter; the predicate drops status-only updates.
@@ -415,16 +480,21 @@ func (r *GatewayClassReconciler) gatewayClassesForConfig(ctx context.Context, ob
 	return requests
 }
 
-// gatewayClassForGateway maps a Gateway event to a reconcile request for the
-// GatewayClass it references. The Reconcile controllerName check filters out
-// foreign classes, so no filtering is needed here.
-func gatewayClassForGateway(_ context.Context, obj client.Object) []reconcile.Request {
-	gateway, ok := obj.(*gatewayv1.Gateway)
-	if !ok {
+// managedGatewayClasses maps a GatewayClass or Gateway event to every managed
+// GatewayClass: one class's parametersRef, or the class a Gateway names,
+// decides whether the others conflict.
+func (r *GatewayClassReconciler) managedGatewayClasses(ctx context.Context, _ client.Object) []reconcile.Request {
+	classes, err := listGatewayClassesForController(ctx, r.Client, r.ControllerName)
+	if err != nil {
+		log.FromContext(ctx).Error(err, "failed to list GatewayClasses to re-evaluate a class conflict")
+
 		return nil
 	}
 
-	return []reconcile.Request{
-		{Name: string(gateway.Spec.GatewayClassName)},
+	requests := make([]reconcile.Request, len(classes))
+	for i := range classes {
+		requests[i] = reconcile.Request{Name: classes[i].Name}
 	}
+
+	return requests
 }

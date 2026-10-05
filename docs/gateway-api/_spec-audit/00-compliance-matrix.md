@@ -16,11 +16,11 @@ Counts are the current `rows-*.md` verdicts (`cat rows-*.md | grep -E '^\| [A-Z]
 
 | Status | Count |
 | --- | --- |
-| MET | 258 |
-| PARTIAL | 27 |
+| MET | 264 |
+| PARTIAL | 23 |
 | GAP | 2 |
 | REFUTED | 1 |
-| DOWNGRADE-NA | 3 |
+| DOWNGRADE-NA | 1 |
 | DOWNGRADE-MET | 2 |
 | DOWNGRADE-CONDITIONAL | 1 |
 | DOWNGRADE-DOCUMENTED | 1 |
@@ -44,7 +44,7 @@ The v1.6.0 baseline bump was audited against the verified upstream tag diff; v1.
 | HTTPRoute Standard schema: NO changes | kubernetes-sigs/gateway-api#4639 (CORS repeated-filter CEL was already in v1.5.1), #4907 (retry validation is experimental-only; the Standard HTTPRoute CRD has no `retry` field in v1.6.0) | HR verdicts stand, including the HR-26..HR-39 retry block (then N/A, re-audited since, when the proxy gained Experimental-channel retry support). | `rows-HR.md` header note. |
 | GRPCRoute / GatewayClass: doc-only changes | (tag diff) | No normative delta; verdicts stand. | No row change. |
 | `HTTPRequestRedirectFilter.statusCode` support retiered: 301 and 302 Core, the other enum values Extended | (v1.6.2 tag diff) | Support-level reclassification only. The added godoc carries no RFC-2119 keyword and the `Enum=301;302;303;307;308` validation is unchanged, so no clause enters or leaves the inventory. No row cites redirect `statusCode` — every `statusCode` row in `01-clause-inventory.md`, `rows-HR.md` and `shouldmay-HR.md` is `HTTPRouteRetryStatusCode` in the retry block, so those files were checked against v1.6.2 and left at the version they were audited at; the retry rows have since been re-audited against v1.6.2. | No row change. |
-| Well-known labels for generated resources (GEP-1762) | kubernetes-sigs/gateway-api#4705 | Informational — `apis/v1/well_known_labels.go` adds `gateway.networking.k8s.io/gateway-name` / `gateway-class-name` constants with lowercase must/should godoc (non-normative per the RFC-8174 caveat). Implemented: the per-Gateway rendered plane stamps both well-known keys on every rendered resource's metadata (`internal/render/render.go` `resourceLabels`) in addition to its own selector label (`cf.k8s.lex.la/gateway`); the Deployment selector itself stays controller-specific. | `02-gep-notes.md` GEP-16. |
+| Well-known labels for generated resources (GEP-1762) | kubernetes-sigs/gateway-api#4705 | Informational — `apis/v1/well_known_labels.go` adds `gateway.networking.k8s.io/gateway-name` / `gateway-class-name` constants with lowercase must/should godoc (non-normative per the RFC-8174 caveat). Implemented: the per-Gateway rendered plane stamps both well-known keys on every rendered resource's metadata and on the Secrets generated for the plane (`internal/render/render.go` `ResourceLabels`) in addition to its own selector label (`cf.k8s.lex.la/gateway`); the Deployment selector itself stays controller-specific. | `02-gep-notes.md` GEP-16. |
 
 ## Adversarial verification: 25 first-pass GAPs → final verdicts
 
@@ -56,7 +56,7 @@ The v1.6.0 baseline bump was audited against the verified upstream tag diff; v1.
 | HR-04 (and GR-16) | GAP | **CONFIRMED (MUST), minor** | Rule-name uniqueness CEL is experimental-channel only (httproute_types.go:125); shipped Standard CRD strips it; no controller-side uniqueness check. |
 | GC-05 | GAP | RESOLVED (was: CONFIRMED but **SHOULD**) | The GatewayClass reconciler now reports an unusable parametersRef (missing, unsupported group or kind, namespaced, or naming a GatewayClassConfig that does not exist) as Accepted=False/InvalidParameters, and re-evaluates the class when its config is created or deleted. |
 | GC-02 | GAP | RESOLVED (was: CONFIRMED but **SHOULD**) | `gateway-exists-finalizer` is now managed by the GatewayClass reconciler (added while any Gateway uses the class, removed when none do). |
-| GW-31, GW-87 | GAP | DOWNGRADE-NA | spec.addresses is never user-selectable for a tunnel; same territory as the exempt SupportGatewayStaticAddresses. Doc note only. |
+| GW-31, GW-87 | GAP | RESOLVED (was: DOWNGRADE-NA) | spec.addresses is never user-selectable for a tunnel, but a requested address it cannot serve is now reported: a non-Hostname type → Accepted=False/UnsupportedAddress, another hostname → Programmed=False/AddressNotUsable with a prescriptive message. |
 | GW-75, GW-86 | GAP | DOWNGRADE-MET | Precondition is "if empty value NOT supported"; the controller supports empty (claims SupportGatewayAddressEmpty, always auto-assigns the tunnel CNAME), so the obligation is vacuously satisfied. |
 | GC-09 | GAP | RESOLVED (was: DOWNGRADE-DEFENSIBLE) | Accepted is set False when the class cannot be served because its parametersRef is unusable (see GC-05). |
 | GC-22 | GAP | DOWNGRADE-CONDITIONAL | Publishing `status.supportedFeatures` is optional; the "MUST be sorted" clause governs order only if published. Not published → vacuously satisfied. |
@@ -76,7 +76,7 @@ The v1.6.0 baseline bump was audited against the verified upstream tag diff; v1.
 
 ### Documentation additions (justified deviations, recorded in limitations.md by this change)
 
-- spec.addresses is not honoured/validated (tunnel address is not user-selectable; same basis as the exempt static-addresses feature) — recorded under Gateway Listener Configuration.
+- spec.addresses accepts only the tunnel hostname (the tunnel address is not user-selectable; same basis as the exempt static-addresses feature); anything else is reported with UnsupportedAddress or AddressNotUsable — recorded in limitations.md "`spec.addresses` accepts only the tunnel hostname".
 - ExternalName Service support now cites CVE-2021-25740 in its existing trust-boundary rationale.
 - Case-variant duplicate header match names (`Foo` vs `foo`) bypass the case-sensitive CRD listMapKey and are ANDed rather than first-wins — negligible header-only edge (query-param names are exact-match, so unaffected); recorded under Route Conflict Resolution.
 - A route bound only to a Gateway that cannot serve it reports `Accepted=False` with `Reason=Pending`, where the spec lists `Pending` under `Accepted=Unknown` for a route not yet reconciled (SH-78). The polarity is deliberate for the permanent causes — a refused tunnel claim, or a dedicated data plane whose resolve failed deterministically — since the condition stands until the Gateway is fixed and `Unknown` would read as "not looked at yet". The retryable cause, a transient resolve failure, carries the same reason without that justification, which is what keeps the row a GAP.
@@ -90,7 +90,7 @@ The SHOULD and MAY tiers were re-verified in a second pass after the MUST audit 
 - HONOURED-TESTED (~22) and N/A for the tunnel architecture (~20) account for the bulk.
 - HONOURED-TESTED since the audit (was HONOURED-UNTESTED, 7): HR-21, HR-24, HR-63, BTLS-06, SH-31, SH-32, LS-05 — each now pinned by a regression test (explicit-zero timeouts, redirect Location port, BackendTLS HTTP/gRPC equivalence, reason-vocabulary AST guard, ListenerSet status leak guard).
 - HONOURED-TESTED since the audit (was N/A, 3): HR-26 (except a request body that cannot be resent), HR-32, HR-34 — the proxy gained Experimental-channel retry support.
-- DEVIATED-DOCUMENTED (3): GW-74, BTLS-04, OR-03 — permitted deviations with a written rationale in limitations.md. SH-43, a fourth at the audit, is HONOURED-TESTED since the controller removes its own status entries from routes that no longer lead to a managed Gateway. GC-05, another at the audit, is HONOURED-TESTED since the GatewayClass reconciler began reporting an unusable parametersRef as Accepted=False/InvalidParameters; GC-10 moved from N/A to HONOURED-TESTED with it.
+- DEVIATED-DOCUMENTED (2): BTLS-04, OR-03 — permitted deviations with a written rationale in limitations.md. GW-74, a third before, is HONOURED-TESTED since the controller reports a spec.addresses type it cannot assign as UnsupportedAddress, and GW-82, GW-83, GW-84 and GW-87 moved to HONOURED-TESTED with the spec.addresses reporting and the labels on generated Secrets. SH-43, a fourth at the audit, is HONOURED-TESTED since the controller removes its own status entries from routes that no longer lead to a managed Gateway. GC-05, another at the audit, is HONOURED-TESTED since the GatewayClass reconciler began reporting an unusable parametersRef as Accepted=False/InvalidParameters; GC-10 moved from N/A to HONOURED-TESTED with it.
 - DEVIATED-SILENT (originally 3 distinct gaps across 4 clause IDs) — all resolved since the audit: GC-02 and its v1beta1 alias OTHER-45 are HONOURED (the reconciler now manages the gateway-exists-finalizer); GEP-08 (discoverability condition on the policy ancestor status, not the affected Gateway/Service) and HR-61 (no redirect-port fallback to the listener port — unreachable through the Standard CRD scheme enum http/https) are DEVIATED-DOCUMENTED with rationales in limitations.md. Also resolved earlier: GR-44 / GR-45 (gRPC silently dialing cleartext when a Service declared a TLS appProtocol without a BackendTLSPolicy) now fails the backend closed, matching the HTTP path — #438.
 
 ### MAY (34 clauses)

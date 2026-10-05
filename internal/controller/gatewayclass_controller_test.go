@@ -32,7 +32,7 @@ var errTransientRead = errors.New("simulated transient apiserver failure")
 
 // transientErrorReader is a client.Reader whose Get always fails with a
 // non-NotFound error, simulating an apiserver hiccup or not-yet-propagated RBAC
-// when the SupportedVersion check reads the gatewayclasses CRD.
+// when the SupportedVersion check reads the Gateway API CRDs.
 type transientErrorReader struct{}
 
 func (transientErrorReader) Get(
@@ -47,7 +47,7 @@ func (transientErrorReader) List(
 	return errTransientRead
 }
 
-// gatewayClassSchemeWithCRD returns a scheme registered for both Gateway API
+// and apiextensions types so the fake client can serve the Gateway API CRDs
 // and apiextensions types so the fake client can serve the gatewayclasses CRD
 // used by the SupportedVersion check.
 func gatewayClassSchemeWithCRD(t *testing.T) *runtime.Scheme {
@@ -60,14 +60,12 @@ func gatewayClassSchemeWithCRD(t *testing.T) *runtime.Scheme {
 	return scheme
 }
 
-// gatewayClassCRDObject builds a gatewayclasses CRD carrying the given
+// gatewayAPICRDObject builds a Gateway API CRD carrying the given
 // bundle-version annotation. An empty bundleVersion produces a CRD with no
 // annotation, exercising the missing-annotation path.
-func gatewayClassCRDObject(bundleVersion string) *apiextensionsv1.CustomResourceDefinition {
+func gatewayAPICRDObject(name, bundleVersion string) *apiextensionsv1.CustomResourceDefinition {
 	crd := &apiextensionsv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: gatewayClassCRDName,
-		},
+		ObjectMeta: metav1.ObjectMeta{Name: name},
 	}
 
 	if bundleVersion != "" {
@@ -77,6 +75,16 @@ func gatewayClassCRDObject(bundleVersion string) *apiextensionsv1.CustomResource
 	}
 
 	return crd
+}
+
+// gatewayAPICRDObjects returns objs plus every Gateway API CRD the
+// SupportedVersion check reads, each annotated with bundleVersion.
+func gatewayAPICRDObjects(bundleVersion string, objs ...client.Object) []client.Object {
+	for _, name := range gatewayAPICRDNames() {
+		objs = append(objs, gatewayAPICRDObject(name, bundleVersion))
+	}
+
+	return objs
 }
 
 // bundleVersionOffset returns a bundle version relative to the vendored
@@ -212,7 +220,7 @@ func TestGatewayClassReconciler_Reconcile_MatchingController(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClass, classConfigObject("test-config"), gatewayClassCRDObject(consts.BundleVersion)).
+		WithObjects(gatewayAPICRDObjects(consts.BundleVersion, gatewayClass, classConfigObject("test-config"))...).
 		WithStatusSubresource(gatewayClass).
 		Build()
 
@@ -264,7 +272,7 @@ func TestGatewayClassReconciler_SetAcceptedConditions(t *testing.T) {
 	scheme := gatewayClassSchemeWithConfig(t)
 	reader := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(classConfigObject("test-config"), gatewayClassCRDObject(consts.BundleVersion)).
+		WithObjects(gatewayAPICRDObjects(consts.BundleVersion, classConfigObject("test-config"))...).
 		Build()
 
 	r := &GatewayClassReconciler{
@@ -310,7 +318,7 @@ func TestGatewayClassReconciler_SetAcceptedConditions_ParametersRefNamespaceReje
 	scheme := gatewayClassSchemeWithCRD(t)
 	reader := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClassCRDObject(consts.BundleVersion)).
+		WithObjects(gatewayAPICRDObjects(consts.BundleVersion)...).
 		Build()
 
 	r := &GatewayClassReconciler{
@@ -399,7 +407,7 @@ func TestGatewayClassReconciler_SetAcceptedConditions_InvalidParametersRef(t *te
 			scheme := gatewayClassSchemeWithConfig(t)
 			reader := fake.NewClientBuilder().
 				WithScheme(scheme).
-				WithObjects(classConfigObject("test-config"), gatewayClassCRDObject(consts.BundleVersion)).
+				WithObjects(gatewayAPICRDObjects(consts.BundleVersion, classConfigObject("test-config"))...).
 				Build()
 
 			r := &GatewayClassReconciler{
@@ -442,7 +450,7 @@ func TestGatewayClassReconciler_SetAcceptedConditions_ConfigReadErrorRequeues(t 
 	scheme := gatewayClassSchemeWithConfig(t)
 	reader := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(classConfigObject("test-config"), gatewayClassCRDObject(consts.BundleVersion)).
+		WithObjects(gatewayAPICRDObjects(consts.BundleVersion, classConfigObject("test-config"))...).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 				if _, ok := obj.(*v1alpha1.GatewayClassConfig); ok {
@@ -493,7 +501,7 @@ func TestGatewayClassReconciler_Reconcile_ConfigReadErrorKeepsAccepted(t *testin
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(class, classConfigObject("test-config"), gatewayClassCRDObject(consts.BundleVersion)).
+		WithObjects(gatewayAPICRDObjects(consts.BundleVersion, class, classConfigObject("test-config"))...).
 		WithStatusSubresource(class).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
@@ -556,7 +564,7 @@ func TestGatewayClassReconciler_ConfigCreatedLater_AcceptsClass(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(waiting, otherConfig, foreign, gatewayClassCRDObject(consts.BundleVersion)).
+		WithObjects(gatewayAPICRDObjects(consts.BundleVersion, waiting, otherConfig, foreign)...).
 		WithStatusSubresource(waiting).
 		Build()
 
@@ -615,7 +623,7 @@ func TestGatewayClassReconciler_ConfigDeleted_RefusesClass(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(class, cfg, gatewayClassCRDObject(consts.BundleVersion)).
+		WithObjects(gatewayAPICRDObjects(consts.BundleVersion, class, cfg)...).
 		WithStatusSubresource(class).
 		Build()
 
@@ -691,7 +699,7 @@ func TestGatewayClassReconciler_SupportedVersion_SupportedBundle(t *testing.T) {
 	scheme := gatewayClassSchemeWithCRD(t)
 	reader := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClassCRDObject(consts.BundleVersion)).
+		WithObjects(gatewayAPICRDObjects(consts.BundleVersion)...).
 		Build()
 
 	condition := runSupportedVersionCheck(t, reader)
@@ -711,7 +719,7 @@ func TestGatewayClassReconciler_SupportedVersion_PatchVersionAccepted(t *testing
 	scheme := gatewayClassSchemeWithCRD(t)
 	reader := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClassCRDObject(otherPatch)).
+		WithObjects(gatewayAPICRDObjects(otherPatch)...).
 		Build()
 
 	condition := runSupportedVersionCheck(t, reader)
@@ -731,7 +739,7 @@ func TestGatewayClassReconciler_SupportedVersion_UnsupportedBundle(t *testing.T)
 	scheme := gatewayClassSchemeWithCRD(t)
 	reader := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClassCRDObject(olderMinor)).
+		WithObjects(gatewayAPICRDObjects(olderMinor)...).
 		Build()
 
 	condition := runSupportedVersionCheck(t, reader)
@@ -752,7 +760,7 @@ func TestGatewayClassReconciler_SupportedVersion_NewerMinorRejected(t *testing.T
 	scheme := gatewayClassSchemeWithCRD(t)
 	reader := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClassCRDObject(newerMinor)).
+		WithObjects(gatewayAPICRDObjects(newerMinor)...).
 		Build()
 
 	condition := runSupportedVersionCheck(t, reader)
@@ -768,7 +776,7 @@ func TestGatewayClassReconciler_SupportedVersion_MissingAnnotation(t *testing.T)
 	scheme := gatewayClassSchemeWithCRD(t)
 	reader := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClassCRDObject("")).
+		WithObjects(gatewayAPICRDObjects("")...).
 		Build()
 
 	condition := runSupportedVersionCheck(t, reader)
@@ -786,7 +794,7 @@ func TestGatewayClassReconciler_SupportedVersion_MalformedAnnotation(t *testing.
 	scheme := gatewayClassSchemeWithCRD(t)
 	reader := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(gatewayClassCRDObject("garbage")).
+		WithObjects(gatewayAPICRDObjects("garbage")...).
 		Build()
 
 	condition := runSupportedVersionCheck(t, reader)
@@ -794,6 +802,68 @@ func TestGatewayClassReconciler_SupportedVersion_MalformedAnnotation(t *testing.
 	assert.Equal(t, metav1.ConditionFalse, condition.Status)
 	assert.Equal(t, string(gatewayv1.GatewayClassReasonUnsupportedVersion), condition.Reason)
 	assert.Contains(t, condition.Message, "garbage")
+}
+
+// TestGatewayClassReconciler_SupportedVersion_EveryServedCRD pins that the
+// check covers every Gateway API CRD the controller serves, not only
+// gatewayclasses: one CRD from another bundle, or one missing, makes the
+// whole installation unsupported, and the message names it.
+func TestGatewayClassReconciler_SupportedVersion_EveryServedCRD(t *testing.T) {
+	t.Parallel()
+
+	olderMinor := bundleVersionOffset(t, -1, 0)
+
+	for _, name := range []string{
+		"gatewayclasses.gateway.networking.k8s.io",
+		"gateways.gateway.networking.k8s.io",
+		"httproutes.gateway.networking.k8s.io",
+		"grpcroutes.gateway.networking.k8s.io",
+		"referencegrants.gateway.networking.k8s.io",
+		"listenersets.gateway.networking.k8s.io",
+		"backendtlspolicies.gateway.networking.k8s.io",
+	} {
+		t.Run(name+" from another bundle", func(t *testing.T) {
+			t.Parallel()
+
+			all := gatewayAPICRDObjects(consts.BundleVersion)
+			objs := make([]client.Object, 0, len(all))
+
+			for _, obj := range all {
+				if obj.GetName() == name {
+					obj = gatewayAPICRDObject(name, olderMinor)
+				}
+
+				objs = append(objs, obj)
+			}
+
+			reader := fake.NewClientBuilder().WithScheme(gatewayClassSchemeWithCRD(t)).WithObjects(objs...).Build()
+			condition := runSupportedVersionCheck(t, reader)
+
+			assert.Equal(t, metav1.ConditionFalse, condition.Status)
+			assert.Equal(t, string(gatewayv1.GatewayClassReasonUnsupportedVersion), condition.Reason)
+			assert.Contains(t, condition.Message, olderMinor)
+		})
+
+		t.Run(name+" missing", func(t *testing.T) {
+			t.Parallel()
+
+			all := gatewayAPICRDObjects(consts.BundleVersion)
+			objs := make([]client.Object, 0, len(all))
+
+			for _, obj := range all {
+				if obj.GetName() != name {
+					objs = append(objs, obj)
+				}
+			}
+
+			reader := fake.NewClientBuilder().WithScheme(gatewayClassSchemeWithCRD(t)).WithObjects(objs...).Build()
+			condition := runSupportedVersionCheck(t, reader)
+
+			assert.Equal(t, metav1.ConditionFalse, condition.Status)
+			assert.Equal(t, string(gatewayv1.GatewayClassReasonUnsupportedVersion), condition.Reason)
+			assert.Contains(t, condition.Message, name)
+		})
+	}
 }
 
 func TestGatewayClassReconciler_SupportedVersion_CRDNotFound(t *testing.T) {

@@ -37,12 +37,12 @@ The Gateway resource is fully processed. Listeners are used for route binding, s
 | `spec.listeners[].protocol` | Yes | Used for route kind filtering (HTTP/HTTPS allow HTTPRoute/GRPCRoute) |
 | `spec.listeners[].hostname` | Yes | Routes must have intersecting hostnames; a host is served only by routes on the most specific listener that matches it ([listener isolation](limitations.md#listener-isolation)) |
 | `spec.listeners[].tls` | Yes | CertificateRefs validated with ReferenceGrant support |
-| `spec.listeners[].allowedRoutes` | Yes | Namespace (Same/All/Selector) and kind filtering |
+| `spec.listeners[].allowedRoutes` | Yes | Namespace (Same/All/Selector) and kind filtering. A kind's `group` defaults to `gateway.networking.k8s.io` only when omitted; an explicit `""` is the core group, which serves no route kinds, so that entry is reported as `InvalidRouteKinds` and admits nothing |
 | `spec.tls.backend.clientCertificateRef` | Yes | `kubernetes.io/tls` Secret only; same-namespace or via ReferenceGrant; presented during backend TLS handshake **only** when the target Service has a BackendTLSPolicy (no client cert is sent over plaintext) |
 | `spec.tls.frontend` | No | Refused: a Gateway that sets it is `Accepted=False, Reason=Invalid` and none of its routes is served, because clients complete TLS with the Cloudflare edge ([client certificate validation](limitations.md#client-certificate-validation-spectlsfrontend-is-refused)) |
-| `spec.addresses` | No | Ignored; tunnel CNAME set automatically in status |
+| `spec.addresses` | Partial | Only the tunnel CNAME; other hostnames report `AddressNotUsable`, other types `UnsupportedAddress` |
 | `spec.infrastructure.parametersRef` | Yes | Opts the Gateway into a dedicated data plane (`GatewayConfig`, group `cf.k8s.lex.la`): its own proxy and tunnel |
-| `spec.infrastructure.labels` / `.annotations` | Yes | Propagated to the rendered per-Gateway resources and pod template |
+| `spec.infrastructure.labels` / `.annotations` | Yes | Propagated to the rendered per-Gateway resources, generated Secrets and pod template |
 
 !!! info "TLS Termination"
 
@@ -210,7 +210,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | Type | Status | Reason | Description |
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Gateway accepted by controller |
-| `Accepted` | `True` or `False` | `ListenersNotValid` | One or more own listeners are invalid (they conflict and carry `Conflicted=True`, use an unsupported protocol, or have an `allowedRoutes.namespaces.selector` that does not parse); `False` only when no listener is valid. The message names the conflicted listeners and the accepted ones |
+| `Accepted` | `True` or `False` | `ListenersNotValid` | One or more own listeners are invalid (they conflict and carry `Conflicted=True`, use an unsupported protocol, or have an `allowedRoutes.namespaces.selector` that is missing or does not parse); `False` only when no listener is valid. The message names the conflicted listeners and the accepted ones |
 | `Programmed` | `True` | `Programmed` | Gateway configured in Cloudflare |
 
 ### Gateway Listener Conditions
@@ -219,7 +219,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Listener accepted |
 | `Accepted` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with another listener of the Gateway on the same port. Every listener of a conflicting set is refused; none wins. A listener whose protocol is not served (`TCP`, `TLS`, `UDP`) is refused as `UnsupportedProtocol` instead and conflicts with no other listener |
-| `Accepted` | `False` | `UnsupportedValue` | `allowedRoutes.namespaces.from` is `Selector` and the selector does not parse, so the listener admits no route. The message says the selector is invalid without quoting it |
+| `Accepted` | `False` | `UnsupportedValue` | `allowedRoutes.namespaces.from` is `Selector` and the selector is missing or does not parse, so the listener admits no route. The message says the selector is invalid without quoting it |
 | `Programmed` | `True` | `Programmed` | Listener programmed |
 | `Programmed` | `False` | `Invalid` | Listener has unresolved references, or is not `Accepted` |
 | `Programmed` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with another listener of the Gateway |
@@ -238,7 +238,7 @@ A listener's `attachedRoutes` counts each Route attached to it that is `Accepted
 | Type | Status | Reason | Description |
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Route accepted and synced |
-| `Accepted` | `False` | `NoMatchingParent` | No listener or ListenerSet entry matches the parentRef's `sectionName` or `port`; every listener or entry it matches is conflicted; or the parent Gateway's `allowedListeners` refuses the parent ListenerSet, including when that selector does not parse |
+| `Accepted` | `False` | `NoMatchingParent` | No listener or ListenerSet entry matches the parentRef's `sectionName` or `port`; every listener or entry it matches is conflicted; or the parent Gateway's `allowedListeners` refuses the parent ListenerSet, including when that selector is missing or does not parse |
 | `Accepted` | `False` | `NoMatchingListenerHostname` | Route hostnames don't intersect with the selected listeners, pinned or not |
 | `Accepted` | `False` | `NotAllowedByListeners` | Route namespace or kind not allowed by the selected listeners, pinned or not. A listener whose `allowedRoutes.namespaces.selector` does not parse is treated as not allowing the route and the other listeners are still evaluated; when none of them admits the route, the rejection message, whatever its reason, names that listener, and the parse error goes to the controller log |
 | `Accepted` | `False` | `Conflicted` | Route lost a cross-route-type conflict (HTTPRoute vs GRPCRoute on a shared Gateway with intersecting hostnames); the oldest Route by `creationTimestamp` is accepted |

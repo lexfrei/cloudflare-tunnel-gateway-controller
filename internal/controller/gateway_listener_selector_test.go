@@ -153,6 +153,31 @@ func TestGatewayListenerStatus_InvalidAllowedRoutesSelector(t *testing.T) {
 	assert.NotContains(t, gatewayAccepted.Message, "BogusOperator")
 }
 
+// TestGatewayListenerStatus_MissingAllowedRoutesSelector pins that From:
+// Selector without a selector, which the Gateway API requires and the CRD does
+// not enforce, is reported like an unparsable one instead of silently
+// admitting nothing.
+func TestGatewayListenerStatus_MissingAllowedRoutesSelector(t *testing.T) {
+	t.Parallel()
+
+	fromSelector := gatewayv1.NamespacesFromSelector
+
+	updated := reconcileSelectorGateway(t, []gatewayv1.Listener{
+		{
+			Name: "missing", Port: 80, Protocol: gatewayv1.HTTPProtocolType,
+			AllowedRoutes: &gatewayv1.AllowedRoutes{
+				Namespaces: &gatewayv1.RouteNamespaces{From: &fromSelector},
+			},
+		},
+	})
+
+	accepted := findCondition(listenerStatusNamed(t, &updated, "missing").Conditions,
+		string(gatewayv1.ListenerConditionAccepted))
+	require.NotNil(t, accepted)
+	assert.Equal(t, metav1.ConditionFalse, accepted.Status)
+	assert.Equal(t, string(gatewayv1.ListenerReasonUnsupportedValue), accepted.Reason)
+}
+
 // TestGatewayListenerStatus_UnusedSelectorIsIgnored pins that a selector only
 // counts when allowedRoutes.namespaces.from is Selector, the one mode that
 // reads it.
@@ -195,6 +220,7 @@ func TestGatewayEvents_InvalidAllowedListenersSelector(t *testing.T) {
 		want     int
 	}{
 		{name: "selector does not parse", from: fromSelector, selector: bogusNamespaceSelector(), want: 1},
+		{name: "selector missing", from: fromSelector, selector: nil, want: 1},
 		{name: "selector parses", from: fromSelector, selector: &metav1.LabelSelector{MatchLabels: map[string]string{"team": "a"}}, want: 0},
 		{name: "unparseable selector beside From All is not read", from: fromAll, selector: bogusNamespaceSelector(), want: 0},
 	} {
