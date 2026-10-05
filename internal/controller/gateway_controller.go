@@ -840,12 +840,25 @@ func (r *GatewayReconciler) applyTopLevelGatewayConditions(
 			requested, tunnelHostname))
 	}
 
+	// Accepted judges only the Gateway's own listeners, while an attached
+	// ListenerSet's entries are served as listeners of this Gateway; the
+	// count was written earlier in the same status pass.
+	if accepted.Status == metav1.ConditionFalse && !hasAttachedListenerSets(gateway) {
+		programmed.Status = metav1.ConditionFalse
+		programmed.Reason = string(gatewayv1.GatewayReasonInvalid)
+		programmed.Message = accepted.Message
+	}
+
 	applyGatewayConditions(&gateway.Status.Conditions, []metav1.Condition{
 		accepted,
 		programmed,
 	}, buildClientCertResolvedRefsCondition(gateway.Generation, now, clientCertErr))
 
 	return transientClientCertError(clientCertErr)
+}
+
+func hasAttachedListenerSets(gateway *gatewayv1.Gateway) bool {
+	return gateway.Status.AttachedListenerSets != nil && *gateway.Status.AttachedListenerSets > 0
 }
 
 // unusableHostnameAddress returns the first Hostname value in spec.addresses

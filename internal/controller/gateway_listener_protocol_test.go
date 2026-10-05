@@ -10,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
@@ -126,8 +127,24 @@ func TestGatewayReconciler_UnsupportedListenerProtocol_AcceptedFalse(t *testing.
 func reconcileGatewayAccepted(t *testing.T, listeners []gatewayv1.Listener) *metav1.Condition {
 	t.Helper()
 
+	return findCondition(reconcileListenersGateway(t, listeners, nil).Status.Conditions,
+		string(gatewayv1.GatewayConditionAccepted))
+}
+
+func reconcileListenersGateway(
+	t *testing.T,
+	listeners []gatewayv1.Listener,
+	addresses []gatewayv1.GatewaySpecAddress,
+	extra ...client.Object,
+) gatewayv1.Gateway {
+	t.Helper()
+
 	gateway, secret, gcc, gc := gatewayWithListenersFixture(listeners)
-	fakeClient := setupGatewayFakeClient(gateway, secret, gcc, gc)
+	gateway.Spec.Addresses = addresses
+	gateway.Spec.AllowedListeners = &gatewayv1.AllowedListeners{
+		Namespaces: &gatewayv1.ListenerNamespaces{From: new(gatewayv1.NamespacesFromSame)},
+	}
+	fakeClient := setupGatewayFakeClient(append([]client.Object{gateway, secret, gcc, gc}, extra...)...)
 	reconciler := &GatewayReconciler{
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
@@ -144,7 +161,85 @@ func reconcileGatewayAccepted(t *testing.T, listeners []gatewayv1.Listener) *met
 	require.NoError(t, fakeClient.Get(context.Background(),
 		types.NamespacedName{Name: "test-gateway", Namespace: "default"}, &updated))
 
-	return findCondition(updated.Status.Conditions, string(gatewayv1.GatewayConditionAccepted))
+	return updated
+}
+
+// A Gateway the controller does not accept serves nothing, so it cannot
+// claim Programmed=True; a partly valid Gateway is still programmed.
+func TestGatewayReconciler_SharedPlane_ProgrammedFollowsAccepted(t *testing.T) {
+	t.Parallel()
+
+	const invalid = gatewayv1.ProtocolType("INVALID")
+
+	attachedListenerSet := &gatewayv1.ListenerSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "ls", Namespace: "default"},
+		Spec: gatewayv1.ListenerSetSpec{
+			ParentRef: gatewayv1.ParentGatewayReference{Name: "test-gateway"},
+			Listeners: []gatewayv1.ListenerEntry{{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType}},
+		},
+	}
+
+	cases := []struct {
+		name       string
+		listeners  []gatewayv1.Listener
+		addresses  []gatewayv1.GatewaySpecAddress
+		extra      []client.Object
+		wantStatus metav1.ConditionStatus
+		wantReason gatewayv1.GatewayConditionReason
+	}{
+		{
+			// The parent of a ListenerSet carries the merged listener list,
+			// so the ListenerSet's entry is served.
+			name:       "no valid own listener, valid ListenerSet attached",
+			listeners:  []gatewayv1.Listener{{Name: "invalid", Port: 1111, Protocol: invalid}},
+			extra:      []client.Object{attachedListenerSet},
+			wantStatus: metav1.ConditionTrue,
+			wantReason: gatewayv1.GatewayReasonProgrammed,
+		},
+		{
+			name:       "no valid listener",
+			listeners:  []gatewayv1.Listener{{Name: "invalid", Port: 1111, Protocol: invalid}},
+			wantStatus: metav1.ConditionFalse,
+			wantReason: gatewayv1.GatewayReasonInvalid,
+		},
+		{
+			name:      "no valid listener outranks an unusable address",
+			listeners: []gatewayv1.Listener{{Name: "invalid", Port: 1111, Protocol: invalid}},
+			addresses: []gatewayv1.GatewaySpecAddress{
+				{Type: new(gatewayv1.HostnameAddressType), Value: "other.example.com"},
+			},
+			wantStatus: metav1.ConditionFalse,
+			wantReason: gatewayv1.GatewayReasonInvalid,
+		},
+		{
+			name: "some valid listener",
+			listeners: []gatewayv1.Listener{
+				{Name: "http", Port: 80, Protocol: gatewayv1.HTTPProtocolType},
+				{Name: "invalid", Port: 1111, Protocol: invalid},
+			},
+			wantStatus: metav1.ConditionTrue,
+			wantReason: gatewayv1.GatewayReasonProgrammed,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			updated := reconcileListenersGateway(t, tc.listeners, tc.addresses, tc.extra...)
+			accepted := findCondition(updated.Status.Conditions, string(gatewayv1.GatewayConditionAccepted))
+			programmed := findCondition(updated.Status.Conditions, string(gatewayv1.GatewayConditionProgrammed))
+			require.NotNil(t, accepted)
+			require.NotNil(t, programmed)
+			assert.Equal(t, tc.wantStatus, programmed.Status)
+			assert.Equal(t, string(tc.wantReason), programmed.Reason)
+
+			if tc.wantStatus == metav1.ConditionFalse {
+				assert.Equal(t, accepted.Message, programmed.Message,
+					"Programmed must say why the Gateway was not accepted")
+			}
+		})
+	}
 }
 
 // TestGatewayReconciler_UnsupportedProtocol_GatewayAcceptedReflectsListeners pins

@@ -167,6 +167,32 @@ func TestGatewayReconciler_PerGateway_ProgrammedTrueWhenReady(t *testing.T) {
 	assert.Equal(t, metav1.ConditionTrue, programmed.Status)
 }
 
+// Ready replicas do not make a Gateway with no valid listener programmed.
+func TestGatewayReconciler_PerGateway_ProgrammedFalseWhenNotAccepted(t *testing.T) {
+	t.Parallel()
+
+	objects := perGatewayStatusFixtures(t)
+	gateway, ok := objects[0].(*gatewayv1.Gateway)
+	require.True(t, ok)
+	gateway.Spec.Listeners = []gatewayv1.Listener{{Name: "invalid", Port: 1111, Protocol: "INVALID"}}
+	objects = append(objects, &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "cf-proxy-pg-gateway", Namespace: "default"},
+		Status:     appsv1.DeploymentStatus{ReadyReplicas: 2},
+	})
+
+	fakeClient := setupGatewayFakeClient(objects...)
+	updated := reconcilePGGateway(t, fakeClient)
+
+	accepted := findCondition(updated.Status.Conditions, string(gatewayv1.GatewayConditionAccepted))
+	require.NotNil(t, accepted)
+	require.Equal(t, metav1.ConditionFalse, accepted.Status)
+
+	programmed := findCondition(updated.Status.Conditions, string(gatewayv1.GatewayConditionProgrammed))
+	require.NotNil(t, programmed)
+	assert.Equal(t, metav1.ConditionFalse, programmed.Status)
+	assert.Equal(t, string(gatewayv1.GatewayReasonInvalid), programmed.Reason)
+}
+
 // TestGatewayReconciler_PerGateway_ProgrammedTransientDeploymentReadKeepsPending
 // pins the CURRENT behaviour of the transient Deployment-read branch: unlike
 // the other transient paths (which propagate the error for controller-runtime
