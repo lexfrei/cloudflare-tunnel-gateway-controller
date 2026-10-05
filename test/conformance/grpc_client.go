@@ -63,8 +63,9 @@ type TunnelGRPCClient struct {
 // test relies on it); when the suite pins a specific :authority (the
 // hostname-scoped tests) it is carried to the proxy via x-original-host, since
 // the wire :authority must stay the edge hostname for Cloudflare to route.
-func buildOutgoingMetadata(reqMeta *grpcconf.RequestMetadata) metadata.MD {
-	outgoing := metadata.MD{}
+func buildOutgoingMetadata(address string, reqMeta *grpcconf.RequestMetadata) metadata.MD {
+	// The suite dials gRPC in plaintext.
+	outgoing := metadata.Pairs(originalProtoHeader, "http", originalPortHeader, suitePort(address, "http"))
 	if reqMeta == nil {
 		return outgoing
 	}
@@ -111,7 +112,7 @@ func (c *TunnelGRPCClient) SendRPC(
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	ctx = metadata.NewOutgoingContext(ctx, buildOutgoingMetadata(expected.RequestMetadata))
+	ctx = metadata.NewOutgoingContext(ctx, buildOutgoingMetadata(address, expected.RequestMetadata))
 
 	stub := pb.NewGrpcEchoClient(conn)
 
