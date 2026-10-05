@@ -307,10 +307,10 @@ func selectorLabels(gateway *gatewayv1.Gateway) map[string]string {
 	}
 }
 
-// resourceLabels is the full label set for rendered resource metadata:
+// ResourceLabels is the full label set for rendered resource metadata:
 // infrastructure.labels first (Gateway API SHOULD), controller-owned keys on
 // top so a tenant cannot spoof the selector or management markers.
-func resourceLabels(gateway *gatewayv1.Gateway) map[string]string {
+func ResourceLabels(gateway *gatewayv1.Gateway) map[string]string {
 	labels := make(map[string]string)
 
 	if gateway.Spec.Infrastructure != nil {
@@ -336,8 +336,8 @@ func resourceLabels(gateway *gatewayv1.Gateway) map[string]string {
 	return labels
 }
 
-// resourceAnnotations propagates infrastructure.annotations.
-func resourceAnnotations(gateway *gatewayv1.Gateway) map[string]string {
+// ResourceAnnotations propagates infrastructure.annotations.
+func ResourceAnnotations(gateway *gatewayv1.Gateway) map[string]string {
 	if gateway.Spec.Infrastructure == nil || len(gateway.Spec.Infrastructure.Annotations) == 0 {
 		return nil
 	}
@@ -354,7 +354,7 @@ func resourceAnnotations(gateway *gatewayv1.Gateway) map[string]string {
 // pointer: it is at the gocritic hugeParam budget, and both rotation tokens
 // live in it.
 func ProxyDeployment(input *Input) *appsv1.Deployment {
-	podAnnotations := resourceAnnotations(input.Gateway)
+	podAnnotations := ResourceAnnotations(input.Gateway)
 	if podAnnotations == nil {
 		podAnnotations = make(map[string]string, 2)
 	}
@@ -370,12 +370,12 @@ func ProxyDeployment(input *Input) *appsv1.Deployment {
 	return &appsv1.Deployment{
 		Name:      DeploymentName(input.Gateway),
 		Namespace: input.Gateway.Namespace,
-		Labels:    resourceLabels(input.Gateway),
-		// A fresh resourceAnnotations call (not podAnnotations): the
+		Labels:    ResourceLabels(input.Gateway),
+		// A fresh ResourceAnnotations call (not podAnnotations): the
 		// Deployment object's OWN annotations must NOT carry the pod
-		// template's rotation-hash entries, and resourceAnnotations returns
+		// template's rotation-hash entries, and ResourceAnnotations returns
 		// an independent map so this cannot alias the mutated podAnnotations.
-		Annotations: resourceAnnotations(input.Gateway),
+		Annotations: ResourceAnnotations(input.Gateway),
 		Spec: appsv1.DeploymentSpec{
 			Replicas: replicaCount(input.Config),
 			Selector: &metav1.LabelSelector{MatchLabels: selectorLabels(input.Gateway)},
@@ -395,7 +395,7 @@ func ProxyDeployment(input *Input) *appsv1.Deployment {
 			ProgressDeadlineSeconds: new(progressDeadlineSeconds),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels:      resourceLabels(input.Gateway),
+					Labels:      ResourceLabels(input.Gateway),
 					Annotations: podAnnotations,
 				},
 				Spec: corev1.PodSpec{
@@ -651,8 +651,8 @@ func ConfigService(input *Input) *corev1.Service {
 	return &corev1.Service{
 		Name:        ConfigServiceName(input.Gateway),
 		Namespace:   input.Gateway.Namespace,
-		Labels:      resourceLabels(input.Gateway),
-		Annotations: resourceAnnotations(input.Gateway),
+		Labels:      ResourceLabels(input.Gateway),
+		Annotations: ResourceAnnotations(input.Gateway),
 		Spec: corev1.ServiceSpec{
 			Type:                     corev1.ServiceTypeClusterIP,
 			ClusterIP:                corev1.ClusterIPNone,
@@ -702,8 +702,8 @@ func ProxyNetworkPolicy(input NetworkPolicyInput) *networkingv1.NetworkPolicy {
 	return &networkingv1.NetworkPolicy{
 		Name:        NetworkPolicyName(input.Gateway),
 		Namespace:   input.Gateway.Namespace,
-		Labels:      resourceLabels(input.Gateway),
-		Annotations: resourceAnnotations(input.Gateway),
+		Labels:      ResourceLabels(input.Gateway),
+		Annotations: ResourceAnnotations(input.Gateway),
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{MatchLabels: selectorLabels(input.Gateway)},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},

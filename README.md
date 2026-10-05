@@ -156,7 +156,7 @@ Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute or GRP
 | `spec.tls.frontend` | ❌ | Refused: the Gateway is `Accepted=False` and its routes are not served; validate client certificates at the Cloudflare edge instead ([details](https://cf.k8s.lex.la/latest/gateway-api/limitations/#client-certificate-validation-spectlsfrontend-is-refused)) |
 | `spec.addresses` | ❌ | Ignored; tunnel CNAME set in status |
 | `spec.infrastructure.parametersRef` | ✅ | Opts the Gateway into a dedicated data plane (`GatewayConfig`, group `cf.k8s.lex.la`) — its own proxy and tunnel |
-| `spec.infrastructure.labels` / `.annotations` | ✅ | Propagated to the rendered per-Gateway resources and pod template |
+| `spec.infrastructure.labels` / `.annotations` | ✅ | Propagated to the rendered per-Gateway resources, generated Secrets and pod template |
 
 > **Note:** Cloudflare Tunnel terminates TLS at its edge. TLS certificate references on listeners are validated (including cross-namespace ReferenceGrant checks), but the actual TLS termination is handled by Cloudflare, not by the controller.
 

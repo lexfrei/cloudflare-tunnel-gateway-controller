@@ -311,6 +311,7 @@ func (r *GatewayInfraReconciler) ensureGeneratedAuthSecret(
 
 	secret := &corev1.Secret{
 		Name: name, Namespace: gateway.Namespace,
+		Labels: render.ResourceLabels(gateway), Annotations: render.ResourceAnnotations(gateway),
 		Data: map[string][]byte{generatedAuthTokenKey: []byte(token)},
 	}
 

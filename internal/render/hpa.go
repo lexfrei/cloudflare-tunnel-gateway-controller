@@ -33,8 +33,8 @@ func Autoscaler(input *Input) *autoscalingv2.HorizontalPodAutoscaler {
 	return &autoscalingv2.HorizontalPodAutoscaler{
 		Name:        DeploymentName(input.Gateway),
 		Namespace:   input.Gateway.Namespace,
-		Labels:      resourceLabels(input.Gateway),
-		Annotations: resourceAnnotations(input.Gateway),
+		Labels:      ResourceLabels(input.Gateway),
+		Annotations: ResourceAnnotations(input.Gateway),
 		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
 			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
 				APIVersion: "apps/v1",
