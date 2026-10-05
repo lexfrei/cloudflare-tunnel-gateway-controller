@@ -472,14 +472,15 @@ func recordingProtocolResolver(lookup backendProtocolLookup) proxy.BackendProtoc
 // configuration (CA, hostname, SANs) for the proxy to apply on the backend
 // hop. SectionName on the policy's TargetRef is honoured per Gateway API:
 // when set, only the matching named port receives TLS — other ports of the
-// same Service are unaffected. For a core Service ref, a Service the cache does
-// not hold has no known port names, so a SectionName-scoped policy on it
-// applies to every port.
+// same Service are unaffected. A Service the cache does not hold has no known
+// port names, so a SectionName-scoped policy on it applies to every port.
 //
 // Behaviour by case:
 //
-//   - No policy targets the service: returns nil → the proxy dials the
-//     backend in plaintext (no operator intent to enforce).
+//   - The backend is not a core Service (isService false), or no policy
+//     targets the service: returns nil → the proxy dials the backend in
+//     plaintext. TargetRefs name core Services only, so a ServiceImport never
+//     picks up the policy of a same-named Service.
 //   - The policies, a policy's CA ConfigMap, or the Service port name a
 //     SectionName needs cannot be read for a reason other than not
 //     existing: returns an error wrapping errBackendTLSUnresolved, and the
@@ -502,6 +503,10 @@ func recordingProtocolResolver(lookup backendProtocolLookup) proxy.BackendProtoc
 // alphabetical {namespace}/{name}.
 func newBackendTLSResolver(c client.Client) backendTLSLookup {
 	return func(ctx context.Context, namespace, serviceName string, port int32, isService bool) (*proxy.BackendTLSConfig, error) {
+		if !isService {
+			return nil, nil
+		}
+
 		var policies gatewayv1.BackendTLSPolicyList
 		if err := c.List(ctx, &policies, client.InNamespace(namespace)); err != nil {
 			// Neither the API server nor the client knows the kind, so no
@@ -515,7 +520,7 @@ func newBackendTLSResolver(c client.Client) backendTLSLookup {
 				errBackendTLSUnresolved, namespace, err)
 		}
 
-		policy, err := selectPolicyForServicePort(ctx, c, policies.Items, namespace, serviceName, port, isService)
+		policy, err := selectPolicyForServicePort(ctx, c, policies.Items, namespace, serviceName, port)
 		if err != nil {
 			return nil, err
 		}
@@ -605,54 +610,40 @@ func poisonedBackendTLS(policy *gatewayv1.BackendTLSPolicy, serviceName, cause s
 	}
 }
 
-// selectPolicyForServicePort picks the precedence-winner among policies that
-// target a Service+Port: TargetRefs without SectionName apply to every port;
-// TargetRefs with SectionName apply only when the named port matches `port`,
-// or, for a core Service ref (isService), when the Service is not in the cache
-// and its port names are unknown.
-// Older creationTimestamp wins; ties break alphabetically by name.
+// selectPolicyForServicePort picks the policy that governs a Service port.
+// TargetRefs without SectionName apply to every port; TargetRefs with
+// SectionName apply only when the named port matches `port`, or when the
+// Service is not in the cache and its port names are unknown.
 //
-// `c`, `ctx`, and `namespace` enable the optional Service-port-name lookup —
-// when a policy carries a SectionName, the function maps the port number back
-// to the Service's port name and checks for a match. A failed lookup is
-// returned as an error wrapping errBackendTLSUnresolved.
+// A policy whose SectionName names this port selects a different target than
+// one covering the whole Service, so both are Accepted and the named-port
+// match governs the port. Among policies of equal specificity the older
+// creationTimestamp wins; ties break alphabetically by name.
+//
+// The Service is read only when at least one policy carries a SectionName; a
+// failed read is returned as an error wrapping errBackendTLSUnresolved.
 func selectPolicyForServicePort(
 	ctx context.Context,
 	c client.Client,
 	policies []gatewayv1.BackendTLSPolicy,
 	namespace, serviceName string,
 	port int32,
-	isService bool,
 ) (*gatewayv1.BackendTLSPolicy, error) {
+	resolvePortName := sync.OnceValues(func() (servicePortName, error) {
+		name, known, err := lookupServicePortName(ctx, c, namespace, serviceName, port)
+
+		return servicePortName{name: name, known: known}, err
+	})
+
 	var (
-		portName    string
-		portKnown   bool
-		portNameErr error
+		best       *gatewayv1.BackendTLSPolicy
+		bestScoped bool
 	)
-
-	// Defer the Service lookup until at least one policy carries a SectionName —
-	// most policies don't, so we avoid an extra Get for the common case.
-	portNameResolved := false
-	resolvePortName := func() (string, bool, error) {
-		if portNameResolved {
-			return portName, portKnown, portNameErr
-		}
-
-		portNameResolved = true
-		portName, portKnown, portNameErr = lookupServicePortName(ctx, c, namespace, serviceName, port)
-		// Port names count as unknown only for a core Service ref; for another
-		// kind sharing the name, an absent local Service has no port name.
-		portKnown = portKnown || !isService
-
-		return portName, portKnown, portNameErr
-	}
-
-	var best *gatewayv1.BackendTLSPolicy
 
 	for policyIdx := range policies {
 		policy := &policies[policyIdx]
 
-		targets, err := policyTargetsServicePort(policy, serviceName, resolvePortName)
+		targets, scoped, err := policyTargetsServicePort(policy, serviceName, resolvePortName)
 		if err != nil {
 			return nil, err
 		}
@@ -661,52 +652,68 @@ func selectPolicyForServicePort(
 			continue
 		}
 
-		if best == nil || isPolicyOlder(policy, best) {
-			best = policy
+		if best == nil || scoped && !bestScoped || scoped == bestScoped && isPolicyOlder(policy, best) {
+			best, bestScoped = policy, scoped
 		}
 	}
 
 	return best, nil
 }
 
+// servicePortName is a Service port's name; known is false when the Service
+// is not in the cache.
+type servicePortName struct {
+	name  string
+	known bool
+}
+
+// isServiceTargetRef reports whether a BackendTLSPolicy targetRef names a
+// core Service, the only target kind this controller attaches the policy to.
+func isServiceTargetRef(target gatewayv1.LocalPolicyTargetReference) bool {
+	kind := string(target.Kind)
+
+	return coregroup.Is(string(target.Group)) && (kind == "" || kind == serviceKind)
+}
+
 // policyTargetsServicePort reports whether any TargetRef in the policy points
-// at a Service with the given name AND, when SectionName is set, only when the
-// named port matches the resolved port name. resolvePortName is lazy — called
-// only when at least one TargetRef carries a SectionName.
+// at the named core Service and, when SectionName is set, only when the named
+// port matches the resolved port name. scoped reports that the match came
+// from a SectionName naming this port. resolvePortName is lazy — called only
+// when a matching TargetRef carries a SectionName.
 func policyTargetsServicePort(
 	policy *gatewayv1.BackendTLSPolicy,
 	serviceName string,
-	resolvePortName func() (string, bool, error),
-) (bool, error) {
-	for _, target := range policy.Spec.TargetRefs {
-		if string(target.Name) != serviceName {
-			continue
-		}
+	resolvePortName func() (servicePortName, error),
+) (bool, bool, error) {
+	targets := false
 
-		kind := string(target.Kind)
-		if kind != "" && kind != serviceKind {
+	for _, target := range policy.Spec.TargetRefs {
+		if string(target.Name) != serviceName || !isServiceTargetRef(target.LocalPolicyTargetReference) {
 			continue
 		}
 
 		if target.SectionName == nil || *target.SectionName == "" {
-			return true, nil
+			targets = true
+
+			continue
 		}
 
-		// SectionName set → only match when the actual backend port carries
-		// the same name. A Service the cache does not hold has no known port
-		// names, so the policy is taken to apply: a RequestMirror destination
-		// is dialed without the not-found check a backendRef gets.
-		portName, known, err := resolvePortName()
+		// A Service the cache does not hold has no known port names, so the
+		// policy is taken to apply: a RequestMirror destination is dialed
+		// without the not-found check a backendRef gets.
+		portName, err := resolvePortName()
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 
-		if !known || string(*target.SectionName) == portName {
-			return true, nil
+		if !portName.known {
+			targets = true
+		} else if string(*target.SectionName) == portName.name {
+			return true, true, nil
 		}
 	}
 
-	return false, nil
+	return targets, false, nil
 }
 
 // lookupServicePortName returns the name of the Service port matching `port`
@@ -749,55 +756,25 @@ func isPolicyOlder(candidate, incumbent *gatewayv1.BackendTLSPolicy) bool {
 	return candidate.Name < incumbent.Name
 }
 
-// resolveCABundlePEM returns the concatenated PEM-encoded CA certificate bundle
-// referenced by the BackendTLSPolicy, or ok=false if any reference fails to
-// resolve. Only same-namespace ConfigMap refs with a "ca.crt" key are
-// supported (Core in Gateway API v1). Returns ok=false on any of: unsupported
-// Group/Kind, missing ConfigMap, empty `ca.crt` key, or a `ca.crt` value that
-// does not contain at least one parseable PEM CERTIFICATE block — the proxy
-// then short-circuits the backend so traffic fails closed rather than
-// downgrading silently to plaintext when the policy can't be enforced. A
-// ConfigMap read error other than NotFound is returned wrapping
-// errBackendTLSUnresolved instead.
+// resolveCABundlePEM returns the concatenated PEM-encoded CA certificates of
+// the policy's valid CACertificateRefs, or ok=false when none is valid. Only
+// same-namespace ConfigMap refs with a "ca.crt" key holding at least one
+// parseable PEM CERTIFICATE block are valid (Core in Gateway API v1). An
+// invalid ref is left out of the trust pool, which only narrows it; with no
+// valid ref at all the proxy short-circuits the backend so traffic fails
+// closed rather than downgrading to plaintext. A ConfigMap read error other
+// than NotFound is returned wrapping errBackendTLSUnresolved instead.
 func resolveCABundlePEM(ctx context.Context, c client.Client, policy *gatewayv1.BackendTLSPolicy) (string, bool, error) {
-	if len(policy.Spec.Validation.CACertificateRefs) == 0 {
-		return "", false, nil
-	}
-
 	var bundle strings.Builder
 
 	for _, ref := range policy.Spec.Validation.CACertificateRefs {
-		group := string(ref.Group)
-		if !coregroup.Is(group) {
-			return "", false, nil
+		caPEM, err := readCARef(ctx, c, policy.Namespace, ref)
+		if err != nil {
+			return "", false, err
 		}
 
-		if string(ref.Kind) != configMapKind {
-			return "", false, nil
-		}
-
-		var caCM corev1.ConfigMap
-
-		key := client.ObjectKey{Namespace: policy.Namespace, Name: string(ref.Name)}
-		if err := c.Get(ctx, key, &caCM); err != nil {
-			if apierrors.IsNotFound(err) {
-				return "", false, nil
-			}
-
-			return "", false, fmt.Errorf("%w: reading CA ConfigMap %s/%s: %w",
-				errBackendTLSUnresolved, key.Namespace, key.Name, err)
-		}
-
-		caPEM, hasKey := caCM.Data[configMapCAKey]
-		if !hasKey || caPEM == "" {
-			return "", false, nil
-		}
-
-		// Mirror the reconciler's validateCARefs check — a ConfigMap with
-		// garbage content under ca.crt would otherwise be passed through to
-		// the proxy and silently fail every TLS handshake at runtime.
-		if !caBundleParses(caPEM) {
-			return "", false, nil
+		if caPEM == "" {
+			continue
 		}
 
 		bundle.WriteString(caPEM)
@@ -807,7 +784,38 @@ func resolveCABundlePEM(ctx context.Context, c client.Client, policy *gatewayv1.
 		}
 	}
 
-	return bundle.String(), true, nil
+	return bundle.String(), bundle.Len() > 0, nil
+}
+
+// readCARef returns the CA bundle of one CACertificateRef, "" when the ref is
+// invalid, or an error wrapping errBackendTLSUnresolved when its ConfigMap
+// cannot be read.
+func readCARef(ctx context.Context, c client.Client, namespace string, ref gatewayv1.LocalObjectReference) (string, error) {
+	if !coregroup.Is(string(ref.Group)) || string(ref.Kind) != configMapKind {
+		return "", nil
+	}
+
+	var caCM corev1.ConfigMap
+
+	key := client.ObjectKey{Namespace: namespace, Name: string(ref.Name)}
+	if err := c.Get(ctx, key, &caCM); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", nil
+		}
+
+		return "", fmt.Errorf("%w: reading CA ConfigMap %s/%s: %w",
+			errBackendTLSUnresolved, key.Namespace, key.Name, err)
+	}
+
+	// Mirror the reconciler's validateCARefs check — a ConfigMap with
+	// garbage content under ca.crt would otherwise be passed through to
+	// the proxy and silently fail every TLS handshake at runtime.
+	caPEM := caCM.Data[configMapCAKey]
+	if !caBundleParses(caPEM) {
+		return "", nil
+	}
+
+	return caPEM, nil
 }
 
 func caBundleParses(pemBundle string) bool {

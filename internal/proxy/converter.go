@@ -1097,17 +1097,19 @@ func convertBackendRef(
 	svcNamespace := common.svcNamespace
 	port := common.port
 
+	isService := IsServiceBackendRef(backend.BackendObjectReference)
+
 	// Resolve TLS first so the protocol resolver can know whether to silently
 	// pass through `appProtocol: https` (policy attached → suppressed) or warn
 	// (no policy → operator misconfigured a TLS hint with no actual TLS).
 	result.TLS, result.URL = resolveBackendTLS(ctx, tlsResolver, svcNamespace, serviceName, port,
-		IsServiceBackendRef(backend.BackendObjectReference), result.URL, sink)
+		isService, result.URL, sink)
 	result.TLS = attachGatewayClientCert(result.TLS, clientCert)
 
 	var protoFailClosed bool
 
 	result.Protocol, result.URL, result.WebSocket, protoFailClosed = resolveBackendProtocol(
-		ctx, resolver, svcNamespace, serviceName, port, result.URL, result.TLS != nil, sink,
+		ctx, serviceProtocolResolver(resolver, isService), svcNamespace, serviceName, port, result.URL, result.TLS != nil, sink,
 	)
 	if protoFailClosed {
 		// A TLS appProtocol without a BackendTLSPolicy makes the backendRef
@@ -1388,6 +1390,17 @@ func isTLSAppProtocol(appProto string) bool {
 	default:
 		return false
 	}
+}
+
+// serviceProtocolResolver returns resolver for a core Service ref and nil for
+// any other kind: an appProtocol belongs to a Service port, so a ServiceImport
+// must not inherit the one of a same-named local Service.
+func serviceProtocolResolver(resolver BackendProtocolResolver, isService bool) BackendProtocolResolver {
+	if !isService {
+		return nil
+	}
+
+	return resolver
 }
 
 // lookupAppProtocol returns the Service-port appProtocol via the resolver, or ""
