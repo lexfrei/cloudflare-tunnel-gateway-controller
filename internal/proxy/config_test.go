@@ -554,3 +554,20 @@ func TestBackendTLSConfig_ClientCertJSONRoundTrip(t *testing.T) {
 	assert.Equal(t, original.ClientKeyPEM, parsed.ClientKeyPEM)
 	assert.True(t, parsed.HasClientCert())
 }
+
+// TestParseConfig_AcceptsPreviousListenerShape pins mixed-version rollouts:
+// the previous release sent each rule's listeners as hostnames under the
+// "listeners" key and each Gateway's as "listenerHostnames". A proxy must
+// still parse that config, without isolating, rather than refuse the push.
+func TestParseConfig_AcceptsPreviousListenerShape(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := proxy.ParseConfig([]byte(`{
+		"version": 1,
+		"listenerHostnames": {"infra/gw": ["", "foo.example.com"]},
+		"rules": [{"listeners": {"infra/gw": ["foo.example.com"]}, "backends": [{"url": "http://a:80", "weight": 1}]}]
+	}`))
+	require.NoError(t, err)
+	assert.Empty(t, cfg.GatewayListeners)
+	assert.Empty(t, cfg.Rules[0].Listeners)
+}

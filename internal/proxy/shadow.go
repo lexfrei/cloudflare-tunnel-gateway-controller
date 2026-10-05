@@ -100,8 +100,9 @@ func DetectShadowedRules(cfg *Config) []RouteDiagnostic {
 	// one key the true winner is only known after all of them are seen —
 	// emitting against the running incumbent would name an intermediate
 	// claimant that itself serves zero traffic on the pair.
-	winners := make(map[shadowKey]shadowClaimant)
-	owners := compileListenerOwners(cfg.ListenerHostnames)
+	winners := make(map[portedShadowKey]shadowClaimant)
+	owners := compileListenerOwners(cfg.GatewayListeners)
+	arrivals := listenerArrivals(cfg.GatewayListeners)
 
 	var claims []shadowClaim
 
@@ -111,16 +112,22 @@ func DetectShadowedRules(cfg *Config) []RouteDiagnostic {
 
 		for _, ranked := range ruleShadowKeys(rule) {
 			key := ranked.key
-			if !isolation.isolationAllows(&hostOwners{owners: owners, host: representativeHost(key.hostname)}) {
-				continue
-			}
+			for _, arrival := range arrivals {
+				hosts := &hostOwners{
+					owners: owners, host: representativeHost(key.hostname), port: arrival.port, scheme: arrival.scheme,
+				}
+				if !isolation.isolationAllows(hosts) {
+					continue
+				}
 
-			claimant := shadowClaimant{provenance: cfg.Provenance[ruleIdx], rank: ranked.rank, flatIdx: ruleIdx}
-			claims = append(claims, shadowClaim{key: key, claimant: claimant})
+				claimant := shadowClaimant{provenance: cfg.Provenance[ruleIdx], rank: ranked.rank, flatIdx: ruleIdx}
+				ported := portedShadowKey{shadowKey: key, arrival: arrival}
+				claims = append(claims, shadowClaim{key: ported, claimant: claimant})
 
-			incumbent, claimed := winners[key]
-			if !claimed || claimant.beats(&incumbent) {
-				winners[key] = claimant
+				incumbent, claimed := winners[ported]
+				if !claimed || claimant.beats(&incumbent) {
+					winners[ported] = claimant
+				}
 			}
 		}
 	}
@@ -128,17 +135,61 @@ func DetectShadowedRules(cfg *Config) []RouteDiagnostic {
 	return shadowDiagnostics(claims, winners)
 }
 
+// portedShadowKey is a claim on a (hostname, match) pair for requests
+// arriving on one port with one scheme: rules reached through different
+// listeners never collide.
+type portedShadowKey struct {
+	shadowKey
+
+	arrival arrival
+}
+
+type arrival struct {
+	port   int32
+	scheme string
+}
+
+// listenerArrivals returns the port and scheme of every listener in the
+// config, plus the zero arrival for a request no listener takes, where only a
+// rule without listener data answers.
+func listenerArrivals(gateways map[string][]Listener) []arrival {
+	arrivals := []arrival{{}}
+
+	for _, listeners := range gateways {
+		for _, listener := range listeners {
+			candidate := arrival{port: listener.Port, scheme: listener.Scheme}
+			if !slices.Contains(arrivals, candidate) {
+				arrivals = append(arrivals, candidate)
+			}
+		}
+	}
+
+	// Sorted, so a rule losing on several arrivals is always reported for the
+	// same one, whatever the map order.
+	slices.SortFunc(arrivals, func(a, b arrival) int {
+		if a.port != b.port {
+			return int(a.port - b.port)
+		}
+
+		return strings.Compare(a.scheme, b.scheme)
+	})
+
+	return arrivals
+}
+
 type shadowClaim struct {
-	key      shadowKey
+	key      portedShadowKey
 	claimant shadowClaimant
 }
 
 // shadowDiagnostics is Pass 2: every losing claim gets a diagnostic naming the
-// final winner. A rule can claim the same key more than once — duplicate
-// matches, which the CRD list-map-key does not dedup for path-only matches — so
-// it collapses to one diagnostic per (losing rule, key) to avoid redundant
-// conditions/Events.
-func shadowDiagnostics(claims []shadowClaim, winners map[shadowKey]shadowClaimant) []RouteDiagnostic {
+// final winner. A rule is reported for a key when it loses it on any port and
+// scheme it is reached on, even if it wins another: the requests on that one
+// are served by the winner. A rule can claim the same key more than once —
+// duplicate matches, which the CRD list-map-key does not dedup for path-only
+// matches, and one claim per port and scheme — so it collapses to one
+// diagnostic per (losing rule, key) to avoid redundant conditions/Events.
+func shadowDiagnostics(claims []shadowClaim, winners map[portedShadowKey]shadowClaimant) []RouteDiagnostic {
 	type emittedClaim struct {
 		flatIdx int
 		key     shadowKey
@@ -151,21 +202,17 @@ func shadowDiagnostics(claims []shadowClaim, winners map[shadowKey]shadowClaiman
 	for i := range claims {
 		claim := &claims[i]
 
+		// A claim the rule wins is served, and one it loses to its own route
+		// sees its author's first-rule-wins ordering, which is spec'd
+		// separately; neither is reported.
 		winner := winners[claim.key]
-		if winner.flatIdx == claim.claimant.flatIdx {
-			continue // this claim IS the winner
-		}
-
-		if winner.provenance.sameRoute(&claim.claimant.provenance) {
-			// Within-route duplicates are the route author's own
-			// first-rule-wins ordering, spec'd separately — not a
-			// cross-tenant collision.
+		if winner.flatIdx == claim.claimant.flatIdx || winner.provenance.sameRoute(&claim.claimant.provenance) {
 			continue
 		}
 
-		dedupe := emittedClaim{flatIdx: claim.claimant.flatIdx, key: claim.key}
+		dedupe := emittedClaim{flatIdx: claim.claimant.flatIdx, key: claim.key.shadowKey}
 		if _, done := emitted[dedupe]; done {
-			continue // a duplicate match already emitted this exact diagnostic
+			continue
 		}
 
 		emitted[dedupe] = struct{}{}
@@ -378,15 +425,20 @@ func shadowBasis(winner, loser *shadowClaimant) string {
 
 // shadowedMessage builds the actionable operator-facing message: which pair is
 // shadowed, who wins, why, and that the route stays Accepted.
-func shadowedMessage(loser *shadowClaimant, key shadowKey, winner *shadowClaimant) string {
+func shadowedMessage(loser *shadowClaimant, key portedShadowKey, winner *shadowClaimant) string {
 	hostname := key.hostname
 	if hostname == "" {
 		hostname = "<any>"
 	}
 
+	requests := "matching requests"
+	if key.arrival.port != 0 {
+		requests = fmt.Sprintf("matching requests on port %d", key.arrival.port)
+	}
+
 	return fmt.Sprintf(
-		"rule %d match (host %q, match %s) is shadowed by %s (%s); matching requests are served by that route. "+
+		"rule %d match (host %q, match %s) is shadowed by %s (%s); %s are served by that route. "+
 			"This route remains Accepted. Resolve by removing the duplicate match or scoping hostnames per tenant.",
-		loser.provenance.RuleIndex, hostname, key.matchKey, winner.provenance.String(), shadowBasis(winner, loser),
+		loser.provenance.RuleIndex, hostname, key.matchKey, winner.provenance.String(), shadowBasis(winner, loser), requests,
 	)
 }
