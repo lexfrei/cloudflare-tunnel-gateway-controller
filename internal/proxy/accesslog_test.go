@@ -947,3 +947,63 @@ func TestCountingResponseWriter_ReadFrom_DoesNotOverrideExplicitStatus(t *testin
 	assert.Equal(t, http.StatusTeapot, wrapper.Status(),
 		"explicit WriteHeader before ReadFrom must NOT be clobbered by the implicit-200 path")
 }
+
+// TestHandler_AccessLog_GRPCUnavailableForcedThroughSampling keeps the
+// always-log carve-out for a failure the proxy reports to a gRPC client as
+// UNAVAILABLE on HTTP 200 instead of a 5xx.
+func TestHandler_AccessLog_GRPCUnavailableForcedThroughSampling(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{{
+			Hostnames: []string{"app.example.com"},
+			Backends:  []proxy.BackendRef{{URL: "http://backend.default.svc.cluster.local:8080", Weight: 1, UnavailableStatus: http.StatusInternalServerError}},
+		}},
+	}))
+
+	handler := proxy.NewHandler(router, proxy.WithAccessLog(logger, 0.0))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://app.example.com/pkg.Service/Method", nil)
+	req.Header.Set("Content-Type", "application/grpc")
+
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	require.NotEmpty(t, strings.TrimSpace(buf.String()), "rate=0 must still log a proxy-generated gRPC UNAVAILABLE")
+}
+
+// TestHandler_AccessLog_BackendGRPCUnavailableStillSampled is the other half
+// of the carve-out: an UNAVAILABLE the backend sent is the backend's answer,
+// sampled like any other HTTP 200.
+func TestHandler_AccessLog_BackendGRPCUnavailableStillSampled(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	backendURL := newGRPCStatusBackend(t, "14")
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{{
+			Hostnames: []string{"app.example.com"},
+			Backends:  []proxy.BackendRef{{URL: backendURL, Weight: 1}},
+		}},
+	}))
+
+	handler := proxy.NewHandler(router, proxy.WithAccessLog(logger, 0.0))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://app.example.com/pkg.Service/Method", nil)
+	req.Header.Set("Content-Type", "application/grpc")
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, "14", rec.Result().Trailer.Get("Grpc-Status"), "the backend trailer must reach the client")
+	assert.Empty(t, strings.TrimSpace(buf.String()), "a backend-sent UNAVAILABLE must not bypass sampling")
+}

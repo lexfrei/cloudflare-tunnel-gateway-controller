@@ -397,6 +397,10 @@ func writeRuleUnavailable(writer http.ResponseWriter, req *http.Request, rule *R
 // HTTPRoute rule, where the spec asks for the HTTP status.
 func writeUnavailable(writer http.ResponseWriter, req *http.Request, status int, message string) {
 	if isGRPCRequest(req) {
+		if counted, ok := writer.(*countingResponseWriter); ok {
+			counted.proxyGRPCFailure.Store(true)
+		}
+
 		writeGRPCStatus(writer, grpcStatusUnavailable, message)
 
 		return
@@ -557,8 +561,11 @@ func endServerSpan(span trace.Span, counted *countingResponseWriter) {
 		case status != 0:
 			span.SetAttributes(attribute.Int("http.response.status_code", status))
 
-			if status >= http.StatusInternalServerError {
+			switch {
+			case status >= http.StatusInternalServerError:
 				span.SetStatus(codes.Error, http.StatusText(status))
+			case counted.serverFailure():
+				span.SetStatus(codes.Error, "grpc-status UNAVAILABLE")
 			}
 		}
 	}

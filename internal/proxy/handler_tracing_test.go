@@ -483,3 +483,53 @@ func TestHandler_Tracing_PrunableTransportPool(t *testing.T) {
 	})
 	assert.Zero(t, remaining, "PruneTransports must evict the stale transport with tracing enabled")
 }
+
+// TestHandler_Tracing_GRPCUnavailableMarksSpanError pins that a failure the
+// proxy reports to a gRPC client as UNAVAILABLE on HTTP 200 still marks the
+// server span as an error, as the 5xx it replaces would.
+func TestHandler_Tracing_GRPCUnavailableMarksSpanError(t *testing.T) {
+	recorder := installRecordingTracer(t)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{{
+			Hostnames: []string{"app.example.com"},
+			Backends:  []proxy.BackendRef{{URL: "http://backend.default.svc.cluster.local:8080", Weight: 1, UnavailableStatus: http.StatusInternalServerError}},
+		}},
+	}))
+
+	handler := proxy.NewHandler(router, proxy.WithTracing("proxy"))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://app.example.com/pkg.Service/Method", nil)
+	req.Header.Set("Content-Type", "application/grpc")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	span := onlyServerSpan(t, recorder)
+	assert.Equal(t, codes.Error, span.Status().Code)
+}
+
+// TestHandler_Tracing_BackendGRPCUnavailableLeavesSpanUnset is the other half
+// of TestHandler_Tracing_GRPCUnavailableMarksSpanError: a grpc-status the
+// backend sent is its answer, not a proxy failure.
+func TestHandler_Tracing_BackendGRPCUnavailableLeavesSpanUnset(t *testing.T) {
+	recorder := installRecordingTracer(t)
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxy.Config{
+		Version: 1,
+		Rules: []proxy.RouteRule{{
+			Hostnames: []string{"app.example.com"},
+			Backends:  []proxy.BackendRef{{URL: newGRPCStatusBackend(t, "14"), Weight: 1}},
+		}},
+	}))
+
+	handler := proxy.NewHandler(router, proxy.WithTracing("proxy"))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://app.example.com/pkg.Service/Method", nil)
+	req.Header.Set("Content-Type", "application/grpc")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	span := onlyServerSpan(t, recorder)
+	assert.Equal(t, codes.Unset, span.Status().Code)
+}

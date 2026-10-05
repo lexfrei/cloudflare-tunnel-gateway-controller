@@ -74,7 +74,7 @@ Fields:
 
 ## Always-log-errors carve-out
 
-Status `>= 500` is logged regardless of `samplingRate`. A 5xx is by definition a server-side failure the operator needs to see, and dropping it to keep sample rate low would hide the most important diagnostic signal. If you set `samplingRate: 0` to keep volume minimal, you still get every 504 / 502 / 503 that the proxy emits.
+Status `>= 500` is logged regardless of `samplingRate`. A 5xx is by definition a server-side failure the operator needs to see, and dropping it to keep sample rate low would hide the most important diagnostic signal. If you set `samplingRate: 0` to keep volume minimal, you still get every 504 / 502 / 503 that the proxy emits. A gRPC request gets those failures as gRPC status `UNAVAILABLE` on HTTP 200; such a response is logged regardless of `samplingRate` too, with `status` 200. A gRPC error status sent by a backend is sampled like any other HTTP 200.
 
 ## Privacy considerations
 

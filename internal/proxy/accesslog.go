@@ -41,6 +41,11 @@ type countingResponseWriter struct {
 	status            atomic.Int32
 	writeHeaderCalled atomic.Bool
 
+	// proxyGRPCFailure is set by writeUnavailable when it answers a gRPC
+	// request with UNAVAILABLE in place of a 5xx. A backend's own grpc-status
+	// never sets it.
+	proxyGRPCFailure atomic.Bool
+
 	// onHijack, when non-nil, runs once immediately after a SUCCESSFUL inner
 	// hijack (a failed hijack never fires it). The metrics middleware uses it
 	// to move the request's accounting from the in-flight gauge to the
@@ -190,6 +195,12 @@ func (c *countingResponseWriter) ReadFrom(src io.Reader) (int64, error) {
 	return n, nil
 }
 
+// serverFailure reports a 5xx, or the proxy's own gRPC UNAVAILABLE written in
+// place of one, so both get the same always-log and span-error treatment.
+func (c *countingResponseWriter) serverFailure() bool {
+	return c.Status() >= http.StatusInternalServerError || c.proxyGRPCFailure.Load()
+}
+
 // accessLogSnapshot captures the request fields the access log
 // emits, taken BEFORE filters run. URL rewrite filters mutate
 // req.URL.Path in place (filter.go writeRewritePathFilter), so a
@@ -265,7 +276,7 @@ func (h *Handler) maybeEmitAccessLog(counted *countingResponseWriter, req *http.
 		return
 	}
 
-	if !shouldSampleAccessLog(h.accessLogSamplingRate, status, h.accessLogRandFn) {
+	if !counted.serverFailure() && !shouldSampleAccessLog(h.accessLogSamplingRate, status, h.accessLogRandFn) {
 		return
 	}
 

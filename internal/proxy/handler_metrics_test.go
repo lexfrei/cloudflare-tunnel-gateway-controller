@@ -497,3 +497,35 @@ func TestHandlerMetrics_WebSocketUpgrade_BackendNon101(t *testing.T) {
 		map[string]string{"hostname": "app.example.com"}), 0.0,
 		"the forwarded non-101 body must be counted in response_bytes_total")
 }
+
+// TestHandlerMetrics_GRPCFailureStatusClass pins that a failure the proxy
+// answers a gRPC request with (UNAVAILABLE on HTTP 200) counts as 5xx like
+// the HTTP status it stands in for, while a backend's own grpc-status keeps
+// the wire class.
+func TestHandlerMetrics_GRPCFailureStatusClass(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		backendURL string
+		wantClass  string
+	}{
+		{name: "proxy UNAVAILABLE counts as 5xx", backendURL: newHangupBackend(t), wantClass: "5xx"},
+		{name: "backend UNAVAILABLE counts as 2xx", backendURL: newGRPCStatusBackend(t, "14"), wantClass: "2xx"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, handler, reg := newMetricsHandler(t, tt.backendURL)
+
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://app.example.com/pkg.Service/Method", nil)
+			req.Header.Set("Content-Type", "application/grpc")
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+
+			labels := map[string]string{"hostname": "app.example.com", "status_class": tt.wantClass}
+			assert.InDelta(t, 1.0, gatherValue(t, reg, "cftunnel_proxy_requests_total", labels), 0.001)
+		})
+	}
+}

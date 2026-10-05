@@ -158,6 +158,25 @@ func newHangupBackend(t *testing.T) string {
 	return srv.URL
 }
 
+// newGRPCStatusBackend returns the URL of a backend that answers every request
+// as a gRPC server reporting grpcStatus in its trailer.
+func newGRPCStatusBackend(t *testing.T, grpcStatus string) string {
+	t.Helper()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/grpc")
+		writer.WriteHeader(http.StatusOK)
+		// A body (an empty gRPC frame) makes the response chunked, the only
+		// HTTP/1.1 framing that carries trailers.
+		_, _ = writer.Write([]byte{0, 0, 0, 0, 0})
+		_ = http.NewResponseController(writer).Flush()
+		writer.Header().Set(http.TrailerPrefix+"Grpc-Status", grpcStatus)
+	}))
+	t.Cleanup(srv.Close)
+
+	return srv.URL
+}
+
 func transportFailureRules(t *testing.T) map[string]transportFailure {
 	t.Helper()
 
