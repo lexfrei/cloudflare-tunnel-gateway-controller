@@ -151,14 +151,14 @@ Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute or GRP
 | `spec.listeners[].protocol` | ✅ | HTTP/HTTPS listeners bind HTTPRoute and GRPCRoute |
 | `spec.listeners[].port` | ✅ | Used for route binding when route specifies a port, and as the redirect port of a scheme-less `RequestRedirect` ([redirect port](https://cf.k8s.lex.la/latest/gateway-api/limitations/#redirect-port)) |
 | `spec.listeners[].hostname` | ✅ | Routes must have intersecting hostnames; a host is served only by routes on the most specific listener that matches it ([listener isolation](https://cf.k8s.lex.la/latest/gateway-api/limitations/#listener-isolation)) |
-| `spec.listeners[].tls` | ✅ | CertificateRefs validated with ReferenceGrant support |
+| `spec.listeners[].tls` | ✅ | `certificateRefs` validated, with ReferenceGrant support, but never served: clients get the Cloudflare edge certificate |
 | `spec.listeners[].allowedRoutes` | ✅ | Namespace (Same/All/Selector) and kind filtering |
 | `spec.tls.frontend` | ❌ | Refused: the Gateway is `Accepted=False` and its routes are not served; validate client certificates at the Cloudflare edge instead ([details](https://cf.k8s.lex.la/latest/gateway-api/limitations/#client-certificate-validation-spectlsfrontend-is-refused)) |
 | `spec.addresses` | ❌ | Only the tunnel CNAME is served: another hostname leaves the Gateway `Programmed=False`, any other address type refuses it (`Accepted=False`) ([details](https://cf.k8s.lex.la/latest/gateway-api/limitations/#specaddresses-accepts-only-the-tunnel-hostname)) |
 | `spec.infrastructure.parametersRef` | ✅ | Opts the Gateway into a dedicated data plane (`GatewayConfig`, group `cf.k8s.lex.la`) — its own proxy and tunnel |
 | `spec.infrastructure.labels` / `.annotations` | ✅ | Propagated to the rendered per-Gateway resources, generated Secrets and pod template |
 
-> **Note:** Cloudflare Tunnel terminates TLS at its edge. TLS certificate references on listeners are validated (including cross-namespace ReferenceGrant checks), but the actual TLS termination is handled by Cloudflare, not by the controller.
+> **Note:** Cloudflare Tunnel terminates TLS at its edge. `HTTPS` listeners are accepted and served, and their certificate references are validated (including cross-namespace ReferenceGrant checks), but the client gets the Cloudflare edge certificate, not the listener's `certificateRefs`.
 
 ### Supported Route Fields
 
@@ -187,7 +187,7 @@ A `backendRef` may target a core `Service`, a `ServiceImport` (`multicluster.x-k
 
 The L7 proxy handles routing for every tunnel request, so most Gateway API behavior works end-to-end. The caveats that remain are documented in full on the [Limitations](https://cf.k8s.lex.la/latest/gateway-api/limitations/) page:
 
-- Edge-side constraints — Cloudflare hostname registration and edge HTTPS termination apply to all traffic.
+- Edge-side constraints — Cloudflare hostname registration and edge HTTPS termination apply to all traffic: an `HTTPS` listener is served, but clients get the edge certificate, not the listener's `certificateRefs`.
 - A Gateway that sets `spec.tls.frontend` (client certificate validation) is refused, because clients complete TLS with the Cloudflare edge; require client certificates at the edge instead.
 - `spec.addresses` can only name the tunnel CNAME: another hostname leaves the Gateway `Programmed=False` with reason `AddressNotUsable`, and any other address type refuses it with reason `UnsupportedAddress`.
 - gRPC requires Cloudflare zone gRPC proxying enabled (dashboard → Network → gRPC); otherwise the edge returns `403` zone-wide for `application/grpc`.
@@ -200,7 +200,7 @@ The L7 proxy handles routing for every tunnel request, so most Gateway API behav
 - `RequestMirror` copies are dropped once a filter is at its in-flight dispatch cap (`proxy.mirror.maxInFlight`, counted by `cftunnel_proxy_mirror_dropped_total`), so a mirror backend that stops answering cannot grow the proxy's memory with request rate.
 - Informational `1xx` responses such as `103 Early Hints` are not forwarded through the tunnel; the client gets only the final response.
 - `HTTPRouteRule.name` uniqueness is not enforced at admission; an opt-in `ValidatingAdmissionPolicy` (`ruleNameUniquenessPolicy` Helm value) enforces it.
-- The non-canonical `group: core` is accepted for `backendRef`s and `BackendTLSPolicy` CA refs, and rejected for a Gateway's `clientCertificateRef` and the `ReferenceGrant` authorising it. Write `group: ""`, the spelling the Gateway API defines, and the asymmetry cannot bite.
+- The non-canonical `group: core` is accepted for `backendRef`s and `BackendTLSPolicy` CA refs, and rejected for a Gateway's `clientCertificateRef`, listener `certificateRefs` and the `ReferenceGrant` authorising them. Write `group: ""`, the spelling the Gateway API defines, and the asymmetry cannot bite.
 - Knative Serving via `net-gateway-api` needs a split-horizon setup — see the [Knative Serving guide](https://cf.k8s.lex.la/latest/guides/knative-serving/) — because its readiness prober dials the Gateway's tunnel address directly, which is not reachable in-cluster.
 
 The proxy can emit a structured per-request access log via `proxy.accessLog.enabled: true`. See [Access Logging](https://cf.k8s.lex.la/latest/operations/access-logging/).
