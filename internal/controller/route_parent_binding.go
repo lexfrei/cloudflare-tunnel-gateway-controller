@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"cmp"
 	"context"
 
 	"github.com/cockroachdb/errors"
@@ -226,7 +227,7 @@ func resolveListenerSetParentBinding(
 			Result: routebinding.BindingResult{
 				Accepted: false,
 				Reason:   gatewayv1.RouteReasonNoMatchingParent,
-				Message:  "Parent ListenerSet is not allowed by the Gateway",
+				Message:  cmp.Or(allowed.Message, "Parent ListenerSet is not allowed by the Gateway"),
 			},
 		}, nil
 	}

@@ -44,12 +44,19 @@ type BindingResult struct {
 // The error reports that no listener admits the route while one could not be
 // evaluated, such as one whose namespace selector needs a namespace that cannot
 // be read. When another listener admits the route, the result is Incomplete
-// instead.
+// instead. A Gateway that RequestsFrontendValidation admits no route.
 func (v *Validator) ValidateBinding(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 	route *RouteInfo,
 ) (BindingResult, error) {
+	if RequestsFrontendValidation(gateway) {
+		return BindingResult{
+			Reason:  gatewayv1.RouteReasonNoMatchingParent,
+			Message: ParentRequestsFrontendValidationMessage,
+		}, nil
+	}
+
 	listeners := gateway.Spec.Listeners
 
 	matched, rejectionReason, invalid, detail, err := findMatchingEntries(

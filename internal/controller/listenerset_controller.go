@@ -289,8 +289,6 @@ func (r *ListenerSetReconciler) computeAcceptance(
 	}
 
 	if !allowed.Accepted {
-		reason := gatewayv1.ListenerSetReasonNotAllowed
-
 		message := listenerSetMsgNotAllowed
 		if allowed.Message != "" {
 			message = allowed.Message
@@ -298,8 +296,16 @@ func (r *ListenerSetReconciler) computeAcceptance(
 
 		return listenerSetAcceptanceResult{
 			Accepted: false,
-			Reason:   reason,
+			Reason:   allowed.Reason,
 			Message:  message,
+		}, nil
+	}
+
+	if reason, refused := parentGatewayRefused(gateway); refused {
+		return listenerSetAcceptanceResult{
+			Accepted: false,
+			Reason:   gatewayv1.ListenerSetReasonParentNotAccepted,
+			Message:  "The parent Gateway is not accepted (reason " + reason + "); its own status names the cause",
 		}, nil
 	}
 
@@ -748,11 +754,11 @@ func buildListenerSetRejectedEntryStatuses(
 		out = append(out, gatewayv1.ListenerEntryStatus{
 			Name:           entry.Name,
 			SupportedKinds: supportedKinds,
-			// Zero, not a real count: a resource-level-rejected ListenerSet is
-			// not part of any merged Gateway, so its entries are not valid
-			// attachment points and no route can be Accepted on them. The spec
-			// counts only Accepted routes, so zero is correct here — unlike a
-			// conflicted entry on an accepted ListenerSet, which does count.
+			// Zero, not a real count: a ListenerSet rejected at resource level
+			// is not a valid attachment point. A ParentNotAccepted ListenerSet
+			// is still bound by spec, so a route on it may report its own
+			// parent verdict; that verdict, not this count, says whether it is
+			// served. A conflicted entry on an accepted ListenerSet does count.
 			AttachedRoutes: 0,
 			Conditions: []metav1.Condition{
 				{
@@ -809,6 +815,23 @@ func rejectedEntryResolvedRefsCondition(
 		Reason:             string(gatewayv1.ListenerReasonResolvedRefs),
 		Message:            msgReferencesResolved,
 	}
+}
+
+// parentGatewayRefused reports the reason of a parent Gateway's
+// Accepted=False. ListenersNotValid does not count: it judges only the
+// Gateway's own listeners, which a ListenerSet's entries do not depend on.
+// The parent's message is not returned, since it can name objects the
+// ListenerSet's owner may not be allowed to read. A verdict older than the
+// Gateway's spec lasts until the Gateway's next status write, which
+// requeues its ListenerSets.
+func parentGatewayRefused(gateway *gatewayv1.Gateway) (string, bool) {
+	accepted := meta.FindStatusCondition(gateway.Status.Conditions, string(gatewayv1.GatewayConditionAccepted))
+	if accepted == nil || accepted.Status != metav1.ConditionFalse ||
+		accepted.Reason == string(gatewayv1.GatewayReasonListenersNotValid) {
+		return "", false
+	}
+
+	return accepted.Reason, true
 }
 
 func listenerEntryReasonForListenerSetRejection(reason gatewayv1.ListenerSetConditionReason) string {
