@@ -118,3 +118,56 @@ func TestIsControllerOwnedRouteParentConditionType(t *testing.T) {
 		})
 	}
 }
+
+// TestBackendTLSPolicyUpdateStatus_ForeignConditionInOwnAncestor pins the
+// PolicyAncestorStatus.Conditions contract: a condition type this controller
+// does not write survives verbatim in our ancestor entry, and its unrelated
+// observedGeneration does not make the stale-status guard skip our write.
+func TestBackendTLSPolicyUpdateStatus_ForeignConditionInOwnAncestor(t *testing.T) {
+	t.Parallel()
+
+	gateway := gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "ns"}}
+	foreign := metav1.Condition{
+		Type:               "special.io/SomeField",
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: 5,
+		LastTransitionTime: metav1.NewTime(time.Now().Add(-time.Hour).Truncate(time.Second)),
+		Reason:             "SomeReason",
+		Message:            "set by a foreign controller",
+	}
+
+	policy := backendTLSPolicyFor("ns", "p", "svc", "cm", time.Time{})
+	policy.Generation = 1
+	policy.Status.Ancestors = []gatewayv1.PolicyAncestorStatus{{
+		AncestorRef:    gatewayAncestorRef(&gateway),
+		ControllerName: "test",
+		Conditions:     []metav1.Condition{foreign},
+	}}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(newBackendTLSPolicyScheme(t)).
+		WithObjects(policy).
+		WithStatusSubresource(policy).
+		Build()
+
+	reconciler := &BackendTLSPolicyReconciler{Client: fakeClient, ControllerName: "test"}
+	accepted := metav1.Condition{
+		Type: string(gatewayv1.PolicyConditionAccepted), Status: metav1.ConditionTrue,
+		ObservedGeneration: 1, Reason: string(gatewayv1.PolicyReasonAccepted),
+	}
+
+	key := types.NamespacedName{Namespace: "ns", Name: "p"}
+	require.NoError(t, reconciler.updateStatus(context.Background(), key,
+		[]gatewayv1.Gateway{gateway}, []metav1.Condition{accepted}, 1))
+
+	var stored gatewayv1.BackendTLSPolicy
+	require.NoError(t, fakeClient.Get(context.Background(), key, &stored))
+	require.Len(t, stored.Status.Ancestors, 1)
+
+	conditions := stored.Status.Ancestors[0].Conditions
+	got := findCondition(conditions, foreign.Type)
+	require.NotNil(t, got)
+	assert.Equal(t, foreign, *got)
+	assert.NotNil(t, findCondition(conditions, string(gatewayv1.PolicyConditionAccepted)),
+		"the foreign condition must not block our own write")
+}

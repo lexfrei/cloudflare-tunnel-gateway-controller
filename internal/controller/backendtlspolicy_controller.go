@@ -782,7 +782,7 @@ func (r *BackendTLSPolicyReconciler) partitionAncestors(
 			continue
 		}
 
-		if statusGenerationStale(reconciledGen, ancestor.Conditions) {
+		if conditionsStaleBy(reconciledGen, isControllerOwnedPolicyAncestorConditionType, ancestor.Conditions) {
 			// Stale: the caller skips the write, so the partial existing/others
 			// built so far is meaningless — return nil to make that explicit.
 			return nil, nil, true
@@ -793,6 +793,15 @@ func (r *BackendTLSPolicyReconciler) partitionAncestors(
 	}
 
 	return existing, others, false
+}
+
+// isControllerOwnedPolicyAncestorConditionType reports whether this controller
+// writes a condition type into its own PolicyAncestorStatus entry. Other types
+// belong to another controller: PolicyAncestorStatus.Conditions godoc forbids
+// changing them, and their observedGeneration is unrelated to ours.
+func isControllerOwnedPolicyAncestorConditionType(condType string) bool {
+	return condType == string(gatewayv1.PolicyConditionAccepted) ||
+		condType == string(gatewayv1.BackendTLSPolicyConditionResolvedRefs)
 }
 
 // gatewayAncestorRef returns the ParentReference identifying the supplied
