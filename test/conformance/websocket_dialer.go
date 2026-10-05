@@ -64,7 +64,7 @@ func buildEdgeWebSocketConfig(rawURL, protocol, origin, edgeHost string) (*webso
 	intendedHost := target.Host
 
 	edgeURL := url.URL{
-		Scheme:   "wss",
+		Scheme:   schemeWSS,
 		Host:     edgeHost,
 		Path:     target.Path,
 		RawQuery: target.RawQuery,
@@ -82,6 +82,9 @@ func buildEdgeWebSocketConfig(rawURL, protocol, origin, edgeHost string) (*webso
 	if intendedHost != edgeHost {
 		config.Header.Set(originalHostHeader, intendedHost)
 	}
+
+	config.Header.Set(originalProtoHeader, suiteScheme(target.Scheme))
+	config.Header.Set(originalPortHeader, suitePort(target.Host, target.Scheme))
 
 	config.TlsConfig = &tls.Config{
 		MinVersion: tls.VersionTLS12,

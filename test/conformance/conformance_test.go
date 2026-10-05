@@ -67,10 +67,14 @@ func TestGatewayAPIConformance(t *testing.T) {
 		// contract. (Distinct from SupportGatewayStaticAddresses, exempt below:
 		// the tunnel address is not user-supplied.)
 		features.SupportGatewayAddressEmpty,
-		// Extended Gateway: a host is answered only through routes attached to
-		// the most specific listener matching it. Listener ports are not
-		// compared, which the test's single-port Gateway does not exercise.
+		// Extended Gateway: a request is answered only through routes attached
+		// to the most specific listener matching its host and port.
 		features.SupportGatewayHTTPListenerIsolation,
+		// Extended Gateway: the proxy matches a listener by the port the edge
+		// keeps in Host, so a listener on 8080 is reachable on its own port.
+		// The harness carries the scheme in X-Original-Proto, since the test
+		// zone serves every request over HTTPS.
+		features.SupportGatewayPort8080,
 
 		// Extended HTTPRoute (Standard channel feature gates; v1 CRD fields)
 		features.SupportHTTPRouteQueryParamMatching,
@@ -85,12 +89,7 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportHTTPRouteRequestMirror,
 		features.SupportHTTPRouteRequestTimeout,
 		features.SupportHTTPRouteBackendTimeout,
-		// HTTPRouteParentRefPort is not claimed: its main test,
-		// HTTPRouteListenerPortMatching, routes by the port in Host, and the
-		// tunnel gives the proxy no port to route by. Its other test,
-		// HTTPRouteInvalidParentRefSectionNameNotMatchingPort, stops running
-		// too; routebinding unit tests cover that binding. parentRef.port is
-		// still honoured for binding.
+		features.SupportHTTPRouteParentRefPort,
 		features.SupportHTTPRouteBackendProtocolH2C,
 		features.SupportHTTPRouteBackendProtocolWebSocket,
 		features.SupportHTTPRouteRequestMultipleMirrors,
@@ -150,10 +149,9 @@ func TestGatewayAPIConformance(t *testing.T) {
 	// --- Exempt features ---
 	// Features that don't apply to tunnel architecture — skip silently.
 	opts.ExemptFeatures = []features.FeatureName{
-		// Gateway: tunnel has no static IPs, no multi-port, no infra propagation
+		// Gateway: tunnel has no static IPs, no infra propagation
 		features.SupportGatewayStaticAddresses,
 		features.SupportGatewayInfrastructurePropagation,
-		features.SupportGatewayPort8080,
 		features.SupportGatewayFrontendClientCertificateValidation,
 		features.SupportGatewayFrontendClientCertificateValidationInsecureFallback,
 		features.SupportGatewayHTTPSListenerDetectMisdirectedRequests,
@@ -289,7 +287,6 @@ func conformanceSkipTests() []string {
 		"GatewayFrontendClientCertificateValidationInsecureFallback",
 		"GatewayFrontendInvalidDefaultClientCertificateValidation",
 		"GatewayInvalidFrontendClientCertificateValidation",
-		"GatewayWithAttachedRoutesWithPort8080",
 	}
 }
 
@@ -407,6 +404,11 @@ func TestStaleSkipsStayLifted(t *testing.T) {
 		// (upstream #4936/#5003); TunnelWebSocketDialer routes the handshake
 		// through the edge like TunnelRoundTripper and TunnelGRPCClient.
 		"HTTPRouteBackendProtocolWebSocket",
+		// Lifted once the proxy matched listeners by the port in Host and the
+		// scheme in X-Forwarded-Proto.
+		"GatewayWithAttachedRoutesWithPort8080",
+		"HTTPRouteListenerPortMatching",
+		"HTTPRouteRedirectPortAndScheme",
 	}
 
 	for _, name := range lifted {

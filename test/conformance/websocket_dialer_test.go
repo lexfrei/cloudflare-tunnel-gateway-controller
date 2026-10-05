@@ -28,6 +28,7 @@ func TestBuildEdgeWebSocketConfig(t *testing.T) {
 		wantLocation     string
 		wantOriginalHost string
 		wantProtocol     []string
+		wantProto        string
 	}{
 		{
 			name:             "gateway host rewritten to edge, original host carried",
@@ -73,6 +74,15 @@ func TestBuildEdgeWebSocketConfig(t *testing.T) {
 			wantLocation:     "wss://cf-conformance-test.example.com/ws",
 			wantOriginalHost: "",
 		},
+		{
+			name:             "wss carries https",
+			rawURL:           "wss://abcd1234.cfargotunnel.com:443/ws",
+			origin:           "wss://gateway/TestWebSocket",
+			edgeHost:         "cf-conformance-test.example.com",
+			wantLocation:     "wss://cf-conformance-test.example.com/ws",
+			wantOriginalHost: "abcd1234.cfargotunnel.com:443",
+			wantProto:        "https",
+		},
 	}
 
 	for _, tt := range tests {
@@ -89,6 +99,22 @@ func TestBuildEdgeWebSocketConfig(t *testing.T) {
 			assert.Equal(t, tt.wantOriginalHost, config.Header.Get(originalHostHeader),
 				"X-Original-Host must carry the test's intended host, empty when it already equals the edge host")
 			assert.Equal(t, tt.wantProtocol, config.Protocol, "subprotocol must pass through only when non-empty")
+
+			wantProto := tt.wantProto
+			if wantProto == "" {
+				wantProto = "http"
+			}
+
+			assert.Equal(t, wantProto, config.Header.Get(originalProtoHeader),
+				"X-Original-Proto must carry the scheme the suite dialed")
+
+			wantPort := "80"
+			if wantProto == "https" {
+				wantPort = "443"
+			}
+
+			assert.Equal(t, wantPort, config.Header.Get(originalPortHeader),
+				"X-Original-Port must carry the port the suite dialed, the scheme's default when it names none")
 			require.NotNil(t, config.TlsConfig)
 			assert.Equal(t, tt.edgeHost, config.TlsConfig.ServerName, "TLS SNI must be the edge hostname")
 		})
