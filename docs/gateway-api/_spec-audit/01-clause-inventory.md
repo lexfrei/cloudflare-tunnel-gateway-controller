@@ -265,6 +265,7 @@ ID prefixes: GW=Gateway, HR=HTTPRoute, GR=GRPCRoute, SH=shared, GC=GatewayClass,
 | SH-45 | RouteParentStatus.Conditions | shared_types.go:506 | MUST | A Route MUST be considered "Accepted" if at least one of the Route's rules is implemented by the Gateway. |
 | SH-46 | RouteParentStatus.Conditions | shared_types.go:526 | MUST | Implementations MUST perform a read-modify-write cycle on this field before modifying it. |
 | SH-47 | RouteParentStatus.Conditions | shared_types.go:530 | MUST NOT | Implementations MUST NOT remove or reorder Conditions that they are not directly responsible for. |
+| SH-48 | RouteParentStatus.Conditions | shared_types.go:532 | MUST NOT | If an implementation sees a Condition with type `special.io/SomeField`, it MUST NOT remove, change or update that Condition. |
 | SH-49 | RouteParentStatus.Conditions | shared_types.go:534 | MUST | Implementations MUST always merge changes into Conditions of the same Type. |
 | SH-50 | RouteParentStatus.Conditions | shared_types.go:536 | MUST | Implementations MUST always update the `observedGeneration` field of the Condition to the `metadata.generation` of the Gateway at the time of update creation. |
 | SH-51 | RouteParentStatus.Conditions | shared_types.go:539 | MUST NOT | If the `observedGeneration` of a Condition is greater than the value the implementation knows about, then it MUST NOT perform the update on that Condition. |
