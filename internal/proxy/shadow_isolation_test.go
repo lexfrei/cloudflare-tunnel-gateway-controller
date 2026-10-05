@@ -1,6 +1,7 @@
 package proxy_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,15 +18,15 @@ func TestDetectShadowedRules_IsolatedClaimDoesNotShadow(t *testing.T) {
 	t.Parallel()
 
 	cfg := &proxy.Config{
-		ListenerHostnames: map[string][]string{isolationGateway: {"", "*.example.com"}},
+		GatewayListeners: map[string][]proxy.Listener{isolationGateway: hostListeners("", "*.example.com")},
 		Rules: []proxy.RouteRule{
 			{
 				Hostnames: []string{"*.example.com"}, Matches: []proxy.RouteMatch{pathPrefixMatch("/")},
-				Listeners: map[string][]string{isolationGateway: {""}},
+				Listeners: map[string][]proxy.Listener{isolationGateway: hostListeners("")},
 			},
 			{
 				Hostnames: []string{"*.example.com"}, Matches: []proxy.RouteMatch{pathPrefixMatch("/")},
-				Listeners: map[string][]string{isolationGateway: {"*.example.com"}},
+				Listeners: map[string][]proxy.Listener{isolationGateway: hostListeners("*.example.com")},
 			},
 		},
 		Provenance: []proxy.RuleProvenance{
@@ -42,9 +43,9 @@ func TestDetectShadowedRules_IsolatedClaimDoesNotShadow(t *testing.T) {
 func TestDetectShadowedRules_SameListenerStillShadows(t *testing.T) {
 	t.Parallel()
 
-	attached := map[string][]string{isolationGateway: {"*.example.com"}}
+	attached := map[string][]proxy.Listener{isolationGateway: hostListeners("*.example.com")}
 	cfg := &proxy.Config{
-		ListenerHostnames: map[string][]string{isolationGateway: {"", "*.example.com"}},
+		GatewayListeners: map[string][]proxy.Listener{isolationGateway: hostListeners("", "*.example.com")},
 		Rules: []proxy.RouteRule{
 			{Hostnames: []string{"*.example.com"}, Matches: []proxy.RouteMatch{pathPrefixMatch("/")}, Listeners: attached},
 			{Hostnames: []string{"*.example.com"}, Matches: []proxy.RouteMatch{pathPrefixMatch("/")}, Listeners: attached},
@@ -88,15 +89,15 @@ func TestDetectShadowedRules_IsolationAppliesToEveryKeyKind(t *testing.T) {
 			t.Parallel()
 
 			cfg := &proxy.Config{
-				ListenerHostnames: map[string][]string{isolationGateway: tc.listeners},
+				GatewayListeners: map[string][]proxy.Listener{isolationGateway: hostListeners(tc.listeners...)},
 				Rules: []proxy.RouteRule{
 					{
 						Hostnames: tc.hostnames, Matches: []proxy.RouteMatch{pathPrefixMatch("/")},
-						Listeners: map[string][]string{isolationGateway: {tc.loser}},
+						Listeners: map[string][]proxy.Listener{isolationGateway: hostListeners(tc.loser)},
 					},
 					{
 						Hostnames: tc.hostnames, Matches: []proxy.RouteMatch{pathPrefixMatch("/")},
-						Listeners: map[string][]string{isolationGateway: {tc.owner}},
+						Listeners: map[string][]proxy.Listener{isolationGateway: hostListeners(tc.owner)},
 					},
 				},
 				Provenance: []proxy.RuleProvenance{
@@ -106,6 +107,78 @@ func TestDetectShadowedRules_IsolationAppliesToEveryKeyKind(t *testing.T) {
 			}
 
 			assert.Empty(t, proxy.DetectShadowedRules(cfg))
+		})
+	}
+}
+
+// TestDetectShadowedRules_ListenersOnDifferentPortsDoNotShadow pins that a
+// rule is shadowed only when it loses on every port it is reached on: two
+// routes with the same match on listeners of different ports both serve, a
+// route with no listener data also serves ports no listener has, and a route
+// on two ports that loses on one still serves the other.
+func TestDetectShadowedRules_ListenersOnDifferentPortsDoNotShadow(t *testing.T) {
+	t.Parallel()
+
+	rule := func(listeners map[string][]proxy.Listener) proxy.RouteRule {
+		return proxy.RouteRule{Matches: []proxy.RouteMatch{pathPrefixMatch("/")}, Listeners: listeners}
+	}
+
+	cases := map[string]struct {
+		rules      []proxy.RouteRule
+		wantLosers []string
+	}{
+		"one port each": {
+			rules: []proxy.RouteRule{
+				rule(map[string][]proxy.Listener{"infra/gw": {{Port: 80}}}),
+				rule(map[string][]proxy.Listener{"infra/gw": {{Port: 443}}}),
+			},
+		},
+		"no listener data": {
+			rules: []proxy.RouteRule{
+				rule(map[string][]proxy.Listener{"infra/gw": {{Port: 80}}}),
+				rule(map[string][]proxy.Listener{"infra/gw": {{Port: 443}}}),
+				rule(nil),
+			},
+		},
+		"loses on one of two ports": {
+			rules: []proxy.RouteRule{
+				rule(map[string][]proxy.Listener{"infra/gw": {{Port: 80}}}),
+				rule(map[string][]proxy.Listener{"infra/gw": {{Port: 80}, {Port: 443}}}),
+			},
+		},
+		"loses on every port": {
+			rules: []proxy.RouteRule{
+				rule(map[string][]proxy.Listener{"infra/gw": {{Port: 80}, {Port: 443}}}),
+				rule(map[string][]proxy.Listener{"infra/gw": {{Port: 80}, {Port: 443}}}),
+			},
+			wantLosers: []string{"r1"},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &proxy.Config{
+				GatewayListeners: map[string][]proxy.Listener{"infra/gw": {{Port: 80}, {Port: 443}}},
+				Rules:            tc.rules,
+			}
+
+			for idx := range tc.rules {
+				created := shadowT0
+				if idx > 0 {
+					created = shadowT1
+				}
+
+				cfg.Provenance = append(cfg.Provenance, prov("HTTPRoute", "team", fmt.Sprintf("r%d", idx), created, 0))
+			}
+
+			var losers []string
+			for _, diag := range proxy.DetectShadowedRules(cfg) {
+				losers = append(losers, diag.Name)
+			}
+
+			assert.Equal(t, tc.wantLosers, losers)
 		})
 	}
 }

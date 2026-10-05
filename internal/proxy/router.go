@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,7 +39,7 @@ type compiledRule struct {
 	backendFilters [][]Filter // per-backend compiled filters (indexed by backend position)
 	priority       int
 	ruleIndex      int // original rule index for tiebreaking (earlier rules win)
-	listeners      map[string]map[string]struct{}
+	listeners      map[string]map[Listener]struct{}
 	// closedErr is the first filter compile error that made failClosed answer
 	// HTTP 500 for all or part of the rule; nil when every filter compiled.
 	closedErr error
@@ -193,7 +194,7 @@ type RouteResult struct {
 func (r *Router) Route(req *http.Request) *RouteResult {
 	table := r.table.Load()
 	host := extractHost(req)
-	hosts := &hostOwners{owners: table.owners, host: host}
+	hosts := &hostOwners{owners: table.owners, host: host, port: requestPort(req)}
 
 	// Try exact host match first. The map key only matches when the request
 	// host equals a configured hostname, so it is config-bounded.
@@ -441,7 +442,7 @@ func indexRuleByHostname(
 func compileRoutingTable(cfg *Config, env filterEnv) *routingTable {
 	table := &routingTable{
 		exactHosts: make(map[string][]*compiledRule),
-		owners:     compileListenerOwners(cfg.ListenerHostnames),
+		owners:     compileListenerOwners(cfg.GatewayListeners),
 		version:    cfg.Version,
 	}
 
@@ -826,19 +827,89 @@ func selectBackend(backends []BackendRef) int {
 // NOTE: Go's http.Request.Host always wraps IPv6 addresses in brackets
 // (e.g., "[::1]:8080"), so bare IPv6 like "::1" should not appear in practice.
 func extractHost(req *http.Request) string {
-	host := req.Header.Get(originalHostHeader)
-	if host == "" {
-		host = req.Host
+	host, _ := splitHostPort(rawRequestHost(req))
+
+	return host
+}
+
+func rawRequestHost(req *http.Request) string {
+	if host := req.Header.Get(originalHostHeader); host != "" {
+		return host
 	}
 
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		// Ensure we don't strip part of an IPv6 address.
-		if !strings.Contains(host[idx:], "]") {
-			host = host[:idx]
+	return req.Host
+}
+
+// splitHostPort returns the lowercased host and the port Host names, 0 when
+// it names none or one that is not a port number.
+func splitHostPort(hostport string) (string, int32) {
+	idx := strings.LastIndex(hostport, ":")
+	// A colon inside brackets belongs to an IPv6 address, not a port.
+	if idx == -1 || strings.Contains(hostport[idx:], "]") {
+		return strings.ToLower(hostport), 0
+	}
+
+	host := strings.ToLower(hostport[:idx])
+
+	port, err := strconv.ParseUint(hostport[idx+1:], 10, 16)
+	if err != nil {
+		return host, 0
+	}
+
+	return host, int32(port)
+}
+
+// requestPort returns the port a request arrived on: the port in Host, or
+// the default port of the request scheme when Host names none. Behind the
+// tunnel the edge passes Host as the client sent it and no other trace of
+// the port, so a client naming another port in Host than it connected on is
+// matched by the one it names. X-Original-Port, the conformance suite's
+// connection port, reaches here only in a deployment that opted in via
+// WithAllowXOriginalHost.
+func requestPort(req *http.Request) int32 {
+	carried, err := strconv.ParseUint(req.Header.Get(originalPortHeader), 10, 16)
+	if err == nil && carried != 0 {
+		return int32(carried)
+	}
+
+	_, port := splitHostPort(rawRequestHost(req))
+	if port == 0 {
+		port = defaultPort(requestScheme(req))
+	}
+
+	return port
+}
+
+func defaultPort(scheme string) int32 {
+	if scheme == schemeHTTPS {
+		return httpsDefaultPort
+	}
+
+	return httpDefaultPort
+}
+
+// requestScheme returns the scheme the client used. The Cloudflare edge sets
+// X-Forwarded-Proto on every request and overwrites a client's value, and
+// neither tunnel transport leaves a usable scheme in the URL or the TLS
+// state: the edge connection is TLS whatever the client spoke. X-Original-Proto
+// is the conformance suite's stand-in and reaches here only in a deployment
+// that opted in via WithAllowXOriginalHost. Without either header, as in
+// standalone mode behind no proxy, the scheme follows the connection.
+func requestScheme(req *http.Request) string {
+	for _, header := range []string{originalProtoHeader, headerXFProto} {
+		first, _, _ := strings.Cut(req.Header.Get(header), ",")
+
+		switch scheme := strings.ToLower(strings.TrimSpace(first)); scheme {
+		case schemeHTTP, schemeHTTPS:
+			return scheme
 		}
 	}
 
-	return strings.ToLower(host)
+	if req.TLS != nil {
+		return schemeHTTPS
+	}
+
+	return schemeHTTP
 }
 
 // matchesWildcard checks if a hostname matches a wildcard suffix.

@@ -103,8 +103,9 @@ func DetectShadowedRules(cfg *Config) []RouteDiagnostic {
 	// one key the true winner is only known after all of them are seen —
 	// emitting against the running incumbent would name an intermediate
 	// claimant that itself serves zero traffic on the pair.
-	winners := make(map[shadowKey]shadowClaimant)
-	owners := compileListenerOwners(cfg.ListenerHostnames)
+	winners := make(map[portedShadowKey]shadowClaimant)
+	owners := compileListenerOwners(cfg.GatewayListeners)
+	ports := listenerPorts(cfg.GatewayListeners)
 
 	var claims []shadowClaim
 
@@ -118,15 +119,19 @@ func DetectShadowedRules(cfg *Config) []RouteDiagnostic {
 		isolation := &compiledRule{listeners: compileRuleListeners(rule.Listeners)}
 
 		for _, key := range ruleShadowKeys(rule) {
-			if !isolation.isolationAllows(&hostOwners{owners: owners, host: representativeHost(key.hostname)}) {
-				continue
-			}
+			for _, port := range ports {
+				hosts := &hostOwners{owners: owners, host: representativeHost(key.hostname), port: port}
+				if !isolation.isolationAllows(hosts) {
+					continue
+				}
 
-			claims = append(claims, shadowClaim{key: key, claimant: claimant})
+				ported := portedShadowKey{shadowKey: key, port: port}
+				claims = append(claims, shadowClaim{key: ported, claimant: claimant})
 
-			incumbent, claimed := winners[key]
-			if !claimed || claimant.beats(&incumbent) {
-				winners[key] = claimant
+				incumbent, claimed := winners[ported]
+				if !claimed || claimant.beats(&incumbent) {
+					winners[ported] = claimant
+				}
 			}
 		}
 	}
@@ -134,8 +139,32 @@ func DetectShadowedRules(cfg *Config) []RouteDiagnostic {
 	return shadowDiagnostics(claims, winners)
 }
 
+// portedShadowKey is a claim on a (hostname, match) pair for requests on one
+// port: rules reached through listeners on different ports never collide.
+type portedShadowKey struct {
+	shadowKey
+
+	port int32
+}
+
+// listenerPorts returns every port a listener in the config is on, plus 0
+// for a port none is on, where only a rule without listener data answers.
+func listenerPorts(gateways map[string][]Listener) []int32 {
+	ports := []int32{0}
+
+	for _, listeners := range gateways {
+		for _, listener := range listeners {
+			if !slices.Contains(ports, listener.Port) {
+				ports = append(ports, listener.Port)
+			}
+		}
+	}
+
+	return ports
+}
+
 type shadowClaim struct {
-	key      shadowKey
+	key      portedShadowKey
 	claimant shadowClaimant
 }
 
@@ -144,7 +173,7 @@ type shadowClaim struct {
 // matches, which the CRD list-map-key does not dedup for path-only matches — so
 // it collapses to one diagnostic per (losing rule, key) to avoid redundant
 // conditions/Events.
-func shadowDiagnostics(claims []shadowClaim, winners map[shadowKey]shadowClaimant) []RouteDiagnostic {
+func shadowDiagnostics(claims []shadowClaim, winners map[portedShadowKey]shadowClaimant) []RouteDiagnostic {
 	type emittedClaim struct {
 		flatIdx int
 		key     shadowKey
@@ -152,26 +181,28 @@ func shadowDiagnostics(claims []shadowClaim, winners map[shadowKey]shadowClaiman
 
 	var diags []RouteDiagnostic
 
+	// A rule that wins a key on any port still serves it, and one that loses
+	// it to its own route sees its author's first-rule-wins ordering, which is
+	// spec'd separately, so neither is reported for that key.
 	emitted := make(map[emittedClaim]struct{}, len(claims))
 
 	for i := range claims {
 		claim := &claims[i]
 
 		winner := winners[claim.key]
-		if winner.flatIdx == claim.claimant.flatIdx {
-			continue // this claim IS the winner
+		if winner.flatIdx == claim.claimant.flatIdx || winner.provenance.sameRoute(&claim.claimant.provenance) {
+			emitted[emittedClaim{flatIdx: claim.claimant.flatIdx, key: claim.key.shadowKey}] = struct{}{}
 		}
+	}
 
-		if winner.provenance.sameRoute(&claim.claimant.provenance) {
-			// Within-route duplicates are the route author's own
-			// first-rule-wins ordering, spec'd separately — not a
-			// cross-tenant collision.
-			continue
-		}
+	for i := range claims {
+		claim := &claims[i]
 
-		dedupe := emittedClaim{flatIdx: claim.claimant.flatIdx, key: claim.key}
+		winner := winners[claim.key]
+
+		dedupe := emittedClaim{flatIdx: claim.claimant.flatIdx, key: claim.key.shadowKey}
 		if _, done := emitted[dedupe]; done {
-			continue // a duplicate match already emitted this exact diagnostic
+			continue // served, its own route's ordering, or already reported
 		}
 
 		emitted[dedupe] = struct{}{}
@@ -183,7 +214,7 @@ func shadowDiagnostics(claims []shadowClaim, winners map[shadowKey]shadowClaiman
 			RuleIndex: claim.claimant.provenance.RuleIndex,
 			Target:    DiagnosticShadowed,
 			Reason:    ReasonHostnameMatchShadowed,
-			Message:   shadowedMessage(&claim.claimant, claim.key, &winner),
+			Message:   shadowedMessage(&claim.claimant, claim.key.shadowKey, &winner),
 			WholeRule: false,
 		})
 	}

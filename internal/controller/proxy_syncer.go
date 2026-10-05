@@ -170,11 +170,10 @@ var errReplayMissedPods = errors.New("replay missed pods the EndpointSlice lists
 // ReferenceGrant.
 //
 // A Gateway managed by another controller MUST NOT contribute its client cert
-// to OUR proxy's mTLS handshake, its listener's hostname to what we serve, or
-// its listener's protocol to a scheme-less redirect. The client-cert resolver
-// also refuses a Gateway whose GatewayClass it cannot read; the hostname and
-// redirect passes drop a Gateway only when its class names another
-// controller. controllerName may be empty (tests), which accepts any Gateway
+// to OUR proxy's mTLS handshake or its listener's hostname to what we serve.
+// The client-cert resolver also refuses a Gateway whose GatewayClass it
+// cannot read; the hostname pass drops a Gateway only when its class names
+// another controller. controllerName may be empty (tests), which accepts any Gateway
 // regardless of its GatewayClass.
 func NewProxySyncer(
 	clusterDomain string,
@@ -1255,9 +1254,10 @@ func (s *ProxySyncer) buildProxyConfig(
 	grpcFailedRefs []ingress.BackendRefError,
 	certParents clientCertParents,
 ) *proxy.Config {
-	// One merge-view cache for this whole proxy-config build: the hostname and
-	// redirect-scheme passes both resolve the same Gateways, so they share a
-	// single merge instead of rebuilding it per route per pass (issue #332).
+	// One merge-view cache for this whole proxy-config build: the hostname
+	// pass, for HTTP and gRPC routes alike, and the listener-isolation pass
+	// resolve the same Gateways, so they share a single merge instead of
+	// rebuilding it per route per pass (issue #332).
 	views := newListenerViewCache(s.k8sClient, s.ViewStore)
 
 	// Narrow each route's hostnames to the intersection of its own hostnames
@@ -1266,15 +1266,6 @@ func (s *ProxySyncer) buildProxyConfig(
 	// inherits the listener's hostname instead of becoming a catch-all. Rewrite
 	// in-memory before handing to the converter; the input routes are untouched.
 	routes, undecided, httpListeners := withEffectiveHostnames(ctx, s.k8sClient, s.controllerName, routes, views, certParents.http)
-
-	// A RequestRedirect filter that leaves scheme empty must default to the
-	// scheme of the request, which behind the tunnel means the parent
-	// listener's protocol (cloudflared terminates TLS at the edge, so the
-	// origin request carries no usable scheme). Resolve it here so the
-	// converter sees an explicit scheme instead of the proxy's hardcoded
-	// https fallback; the listener port comes along with it. Input routes are
-	// left untouched.
-	routes = withDefaultRedirectScheme(ctx, s.k8sClient, s.controllerName, routes, views)
 
 	// Convert to proxy config with cross-namespace validation, backend
 	// protocol resolution (e.g. h2c from Service appProtocol), and
@@ -1349,10 +1340,10 @@ func (s *ProxySyncer) buildProxyConfig(
 	// to h2c HTTP rules on the wire, so the signal must be explicit.
 	cfg.HasGRPCRoute = len(grpcRoutes) > 0
 
-	// Listener isolation: the proxy answers a host only through rules attached
-	// to the most specific listener matching it, so it needs every attached
-	// Gateway's listener hostnames next to the per-rule attachments.
-	cfg.ListenerHostnames = gatewayListenerHostnames(ctx, s.k8sClient, views, cfg.Rules)
+	// Listener isolation: the proxy answers a request only through rules
+	// attached to the most specific listener matching its host and port, so it
+	// needs every attached Gateway's listeners next to the per-rule attachments.
+	cfg.GatewayListeners = gatewayListeners(ctx, s.k8sClient, views, cfg.Rules)
 
 	// Cross-route shadow detection (#474) runs LAST, over the exact rule
 	// stream the router will serve — after hostname-intersection narrowing and

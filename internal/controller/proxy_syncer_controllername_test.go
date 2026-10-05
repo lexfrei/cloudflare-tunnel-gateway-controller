@@ -4,9 +4,10 @@ package controller
 // carries this syncer's controllerName to it. Every other test of those passes
 // calls them directly and supplies the name itself, so a refactor that dropped
 // the argument between the field and a call site would leave them green. These
-// go through NewProxySyncer, and the fixture is built so that all three call
-// sites in buildProxyConfig — hostnames, redirect scheme, gRPC hostnames —
-// give a different answer when the name does not arrive.
+// go through NewProxySyncer, and the fixture is built so that both call sites
+// in buildProxyConfig — HTTP and gRPC hostnames, each also deciding the
+// listeners a rule is isolated by — give a different answer when the name does
+// not arrive.
 
 import (
 	"context"
@@ -50,11 +51,10 @@ func wiringGateway(name, className, hostname string, protocol gatewayv1.Protocol
 	}
 }
 
-// wiringRoute is hostname-less, so it inherits whatever listeners it binds to,
-// and carries a scheme-less redirect, so the redirect-scheme pass has
-// something to resolve. Our listener is HTTP; one foreign listener is HTTP on
-// a foreign hostname and the other is HTTPS on ours, so each pass has a
-// foreign parent that changes its answer when the filter is missing.
+// wiringRoute is hostname-less, so it inherits whatever listeners it binds to.
+// One foreign listener has a foreign hostname, which the route's hostnames
+// show, and the other has ours on another port, which only the listeners the
+// rule is isolated by show.
 func wiringRoute() *gatewayv1.HTTPRoute {
 	port := gatewayv1.PortNumber(80)
 
@@ -64,14 +64,6 @@ func wiringRoute() *gatewayv1.HTTPRoute {
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: parentRefsToGateways("ours", "theirs", "theirs-tls")},
 			Rules: []gatewayv1.HTTPRouteRule{
 				{
-					Filters: []gatewayv1.HTTPRouteFilter{
-						{
-							Type: gatewayv1.HTTPRouteFilterRequestRedirect,
-							RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
-								StatusCode: new(302),
-							},
-						},
-					},
 					BackendRefs: []gatewayv1.HTTPBackendRef{
 						{BackendRef: gatewayv1.BackendRef{
 							BackendObjectReference: gatewayv1.BackendObjectReference{Name: "svc", Port: &port},
@@ -120,11 +112,8 @@ func wiringClient(t *testing.T) client.Client {
 		gatewayClassFor("their-class", foreignControllerName),
 		wiringGateway("ours", "our-class", wiringOurHost, gatewayv1.HTTPProtocolType, 80),
 		wiringGateway("theirs", "their-class", wiringForeignHost, gatewayv1.HTTPProtocolType, 80),
-		// A foreign HTTPS listener carrying OUR hostname. It survives the
-		// hostname narrowing that runs first, so it is what makes the
-		// redirect-scheme call site fail on its own when the name is dropped
-		// there; a foreign listener with a foreign hostname would already have
-		// been filtered out by the pass before it.
+		// A foreign listener carrying OUR hostname leaves the hostnames
+		// unchanged, so only the rule's listeners tell it apart.
 		wiringGateway("theirs-tls", "their-class", wiringOurHost, gatewayv1.HTTPSProtocolType, 443),
 		&corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "team"},
@@ -133,24 +122,18 @@ func wiringClient(t *testing.T) client.Client {
 	).Build()
 }
 
-// redirectSchemeOf returns the scheme the converter stamped on the rule's
-// RequestRedirect filter.
-func redirectSchemeOf(t *testing.T, rule proxy.RouteRule) string {
-	t.Helper()
-
-	for _, filter := range rule.Filters {
-		if filter.RequestRedirect != nil && filter.RequestRedirect.Scheme != nil {
-			return *filter.RequestRedirect.Scheme
-		}
+var (
+	wiringOurListeners   = []proxy.Listener{{Hostname: wiringOurHost, Port: 80}}
+	wiringOursOnly       = map[string][]proxy.Listener{"infra/ours": wiringOurListeners}
+	wiringEveryListeners = map[string][]proxy.Listener{
+		"infra/ours":       wiringOurListeners,
+		"infra/theirs":     {{Hostname: wiringForeignHost, Port: 80}},
+		"infra/theirs-tls": {{Hostname: wiringOurHost, Port: 443}},
 	}
-
-	t.Fatal("rule carries no redirect scheme")
-
-	return ""
-}
+)
 
 // TestProxySyncer_ControllerNameReachesEveryPass builds the syncer the way the
-// manager does and reads the config it produces, so the field, all three call
+// manager does and reads the config it produces, so the field, both call
 // sites and the filter are covered as one path.
 func TestProxySyncer_ControllerNameReachesEveryPass(t *testing.T) {
 	t.Parallel()
@@ -165,10 +148,11 @@ func TestProxySyncer_ControllerNameReachesEveryPass(t *testing.T) {
 
 	assert.Equal(t, []string{wiringOurHost}, cfg.Rules[0].Hostnames,
 		"the hostname pass must receive the syncer's controllerName")
-	assert.Equal(t, "http", redirectSchemeOf(t, cfg.Rules[0]),
-		"the redirect-scheme pass must receive it too, or the foreign HTTPS listener decides")
+	assert.Equal(t, wiringOursOnly, cfg.Rules[0].Listeners,
+		"no foreign listener may isolate the rule, the one on our hostname included")
 	assert.Equal(t, []string{wiringOurHost}, cfg.Rules[1].Hostnames,
 		"and so must the gRPC hostname pass")
+	assert.Equal(t, wiringOursOnly, cfg.Rules[1].Listeners)
 }
 
 // TestProxySyncer_EmptyControllerNameAcceptsAnyGateway pins the other half of
@@ -188,7 +172,7 @@ func TestProxySyncer_EmptyControllerNameAcceptsAnyGateway(t *testing.T) {
 
 	assert.ElementsMatch(t, []string{wiringOurHost, wiringForeignHost}, cfg.Rules[0].Hostnames,
 		"an empty controllerName accepts any Gateway, which is what the existing tests rely on")
-	assert.Equal(t, "https", redirectSchemeOf(t, cfg.Rules[0]),
-		"and the foreign HTTPS listener then wins the scheme tie, as it did before the filter")
+	assert.Equal(t, wiringEveryListeners, cfg.Rules[0].Listeners)
 	assert.ElementsMatch(t, []string{wiringOurHost, wiringForeignHost}, cfg.Rules[1].Hostnames)
+	assert.Equal(t, wiringEveryListeners, cfg.Rules[1].Listeners)
 }

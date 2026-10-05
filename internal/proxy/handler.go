@@ -397,6 +397,8 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	// a client-supplied header. See WithAllowXOriginalHost.
 	if !h.allowXOriginalHost {
 		req.Header.Del(originalHostHeader)
+		req.Header.Del(originalProtoHeader)
+		req.Header.Del(originalPortHeader)
 	}
 
 	// The rewrite marker is proxy-owned: a URLRewrite filter sets it later in
@@ -843,6 +845,8 @@ func (h *Handler) createReverseProxy(backendURL *url.URL, protocol BackendProtoc
 			}
 
 			req.Header.Del(originalHostHeader)
+			req.Header.Del(originalProtoHeader)
+			req.Header.Del(originalPortHeader)
 		},
 		Transport:    h.backendTransport(backendURL.Host, protocol, backendTLS, headerTimeout),
 		ErrorHandler: h.proxyErrorHandler(hostname),

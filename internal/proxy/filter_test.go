@@ -167,13 +167,10 @@ func TestRequestRedirect_Basic(t *testing.T) {
 	assert.Equal(t, "https://new.example.com/path", resp.Header.Get("Location"))
 }
 
-// TestRequestRedirect_ConfigSchemeOverridesEmptyRequestScheme is the seam test
-// for the redirect-scheme defaulting: behind the tunnel cloudflared hands the
-// proxy a scheme-less request (req.URL.Scheme == ""), and the controller stamps
-// the parent listener's scheme into RedirectConfig.Scheme. This proves the
-// stamped scheme reaches the emitted Location — an http listener yields an
-// http:// redirect, not the https:// the bare fallback would emit.
-func TestRequestRedirect_ConfigSchemeOverridesEmptyRequestScheme(t *testing.T) {
+// TestRequestRedirect_ConfigSchemeOverridesRequestScheme pins a redirect that
+// names a scheme: it wins over the request's, and with no port named the
+// Location carries the new scheme's default port, not the request's.
+func TestRequestRedirect_ConfigSchemeOverridesRequestScheme(t *testing.T) {
 	t.Parallel()
 
 	scheme := "http"
@@ -184,24 +181,24 @@ func TestRequestRedirect_ConfigSchemeOverridesEmptyRequestScheme(t *testing.T) {
 		StatusCode: &statusCode,
 	})
 
-	// Scheme-less URL, exactly what the tunnel origin request carries.
 	req := &http.Request{
-		Host:   "app.example.com",
-		URL:    &url.URL{Host: "app.example.com", Path: "/p"},
-		Header: http.Header{},
+		Host:   "app.example.com:8443",
+		URL:    &url.URL{Path: "/p"},
+		Header: http.Header{"X-Forwarded-Proto": {testSchemeHTTPS}},
 	}
 
 	resp := filter.ProcessRequest(req)
 	require.NotNil(t, resp)
 	defer resp.Body.Close()
-	assert.Equal(t, "http://app.example.com/p", resp.Header.Get("Location"),
-		"the controller-stamped http scheme must reach the Location header")
+	assert.Equal(t, "http://app.example.com/p", resp.Header.Get("Location"))
 }
 
-// TestRequestRedirect_EmptySchemeFallsBackToHTTPS pins the documented fallback:
-// when neither the request carries a scheme nor the config sets one (no managed
-// parent resolved a listener scheme), the proxy emits https://.
-func TestRequestRedirect_EmptySchemeFallsBackToHTTPS(t *testing.T) {
+// TestRequestRedirect_EmptySchemeFollowsRequest pins where a redirect with
+// neither scheme nor port takes them from: the request's X-Forwarded-Proto,
+// which the edge sets, and the port in Host, left out when it is the scheme's
+// default. The URL is ignored: the tunnel's HTTP/2 transport fills it with
+// http whatever the client used.
+func TestRequestRedirect_EmptySchemeFollowsRequest(t *testing.T) {
 	t.Parallel()
 
 	statusCode := http.StatusFound
@@ -210,17 +207,32 @@ func TestRequestRedirect_EmptySchemeFallsBackToHTTPS(t *testing.T) {
 		StatusCode: &statusCode,
 	})
 
-	req := &http.Request{
-		Host:   "app.example.com",
-		URL:    &url.URL{Host: "app.example.com", Path: "/p"},
-		Header: http.Header{},
+	cases := []struct {
+		host, proto, want string
+	}{
+		{"app.example.com", "https", "https://app.example.com/p"},
+		{"app.example.com:443", "https", "https://app.example.com/p"},
+		{"app.example.com:8443", "https", "https://app.example.com:8443/p"},
+		{"app.example.com:80", "http", "http://app.example.com/p"},
+		{"app.example.com:8080", "http", "http://app.example.com:8080/p"},
+		{"app.example.com", "", "http://app.example.com/p"},
 	}
 
-	resp := filter.ProcessRequest(req)
-	require.NotNil(t, resp)
-	defer resp.Body.Close()
-	assert.Equal(t, "https://app.example.com/p", resp.Header.Get("Location"),
-		"with no request scheme and no config scheme, the fallback is https")
+	for _, tc := range cases {
+		req := &http.Request{
+			Host:   tc.host,
+			URL:    &url.URL{Scheme: "http", Host: "localhost:8080", Path: "/p"},
+			Header: http.Header{},
+		}
+		if tc.proto != "" {
+			req.Header.Set("X-Forwarded-Proto", tc.proto)
+		}
+
+		resp := filter.ProcessRequest(req)
+		require.NotNil(t, resp)
+		assert.Equal(t, tc.want, resp.Header.Get("Location"), "Host %q, X-Forwarded-Proto %q", tc.host, tc.proto)
+		require.NoError(t, resp.Body.Close())
+	}
 }
 
 func TestRequestRedirect_PortAndPath(t *testing.T) {
@@ -240,8 +252,8 @@ func TestRequestRedirect_PortAndPath(t *testing.T) {
 
 	req := &http.Request{
 		Host:   "example.com",
-		URL:    &url.URL{Scheme: testSchemeHTTPS, Host: "example.com", Path: "/old-path"},
-		Header: http.Header{},
+		URL:    &url.URL{Host: "example.com", Path: "/old-path"},
+		Header: http.Header{"X-Forwarded-Proto": {testSchemeHTTPS}},
 	}
 
 	resp := filter.ProcessRequest(req)
@@ -287,8 +299,8 @@ func TestRequestRedirect_ReplacePrefixMatch(t *testing.T) {
 
 	req := &http.Request{
 		Host:   "example.com",
-		URL:    &url.URL{Scheme: testSchemeHTTPS, Host: "example.com", Path: "/api/users"},
-		Header: http.Header{},
+		URL:    &url.URL{Host: "example.com", Path: "/api/users"},
+		Header: http.Header{"X-Forwarded-Proto": {testSchemeHTTPS}},
 	}
 
 	// Set matched prefix as would happen during route matching.

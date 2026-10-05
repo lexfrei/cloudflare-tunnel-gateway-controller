@@ -389,6 +389,8 @@ func buildBackendUpgradeRequest(req *http.Request, backendURL *url.URL) *http.Re
 	// path deletes have to be deleted here too: neither means anything to a
 	// backend, and the marker would advertise how this proxy signals to itself.
 	outReq.Header.Del(originalHostHeader)
+	outReq.Header.Del(originalProtoHeader)
+	outReq.Header.Del(originalPortHeader)
 	outReq.Header.Del(hostRewrittenHeader)
 
 	removeHopByHopHeaders(outReq.Header)

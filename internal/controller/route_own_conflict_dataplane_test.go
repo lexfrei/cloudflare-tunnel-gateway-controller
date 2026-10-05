@@ -34,29 +34,3 @@ func TestWithEffectiveHostnames_OwnConflictedListenerNotInherited(t *testing.T) 
 	require.Len(t, out, 1)
 	assert.Equal(t, []gatewayv1.Hostname{"b.example.com"}, out[0].Spec.Hostnames)
 }
-
-// TestWithDefaultRedirectScheme_OwnConflictedListenerDoesNotSeedScheme pins
-// the same rule for the redirect scheme: a conflicting pair of HTTPS listeners
-// is not programmed, so only the distinct HTTP listener seeds the scheme.
-func TestWithDefaultRedirectScheme_OwnConflictedListenerDoesNotSeedScheme(t *testing.T) {
-	t.Parallel()
-
-	fromAll := &gatewayv1.AllowedRoutes{Namespaces: &gatewayv1.RouteNamespaces{From: namespacesFromAllPtr()}}
-	hostA := gatewayv1.Hostname("a.example.com")
-	gw := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{Name: "gw", Namespace: "infra"},
-		Spec: gatewayv1.GatewaySpec{Listeners: []gatewayv1.Listener{
-			{Name: "c1", Port: 443, Protocol: gatewayv1.HTTPSProtocolType, Hostname: &hostA, AllowedRoutes: fromAll},
-			{Name: "c2", Port: 443, Protocol: gatewayv1.HTTPSProtocolType, Hostname: &hostA, AllowedRoutes: fromAll},
-			{Name: "ok", Port: 80, Protocol: gatewayv1.HTTPProtocolType, AllowedRoutes: fromAll},
-		}},
-	}
-
-	out := withDefaultRedirectScheme(context.Background(), buildGatewayFakeClient(t, gw), "",
-		[]*gatewayv1.HTTPRoute{redirectRoute(nil)}, nil)
-	require.Len(t, out, 1)
-
-	got := redirectFilterScheme(out[0])
-	require.NotNil(t, got)
-	assert.Equal(t, "http", *got)
-}
