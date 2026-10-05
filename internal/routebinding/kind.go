@@ -88,12 +88,17 @@ func kindMatches(allowed gatewayv1.RouteGroupKind, routeKind gatewayv1.Kind) boo
 		return false
 	}
 
-	allowedGroup := gatewayv1.Group(gatewayv1.GroupName)
-	if allowed.Group != nil && *allowed.Group != "" {
-		allowedGroup = *allowed.Group
+	return routeKindGroup(allowed) == gatewayv1.GroupName
+}
+
+// routeKindGroup applies the API default for an omitted group. An explicit
+// empty group is kept: it names the core API group, not the Gateway API one.
+func routeKindGroup(kind gatewayv1.RouteGroupKind) gatewayv1.Group {
+	if kind.Group == nil {
+		return gatewayv1.GroupName
 	}
 
-	return allowedGroup == gatewayv1.Group(gatewayv1.GroupName)
+	return *kind.Group
 }
 
 // FilterSupportedKinds returns only the route kinds that this controller supports
@@ -117,17 +122,10 @@ func FilterSupportedKinds(
 	var supported []gatewayv1.RouteGroupKind
 
 	hasInvalid := false
-	gatewayGroup := gatewayv1.Group(gatewayv1.GroupName)
 
 	for _, kind := range kinds {
-		// Get the group, defaulting to gateway.networking.k8s.io
-		group := gatewayGroup
-		if kind.Group != nil && *kind.Group != "" {
-			group = *kind.Group
-		}
-
 		// Only HTTPRoute and GRPCRoute are supported by this controller
-		if group == gatewayGroup && (kind.Kind == KindHTTPRoute || kind.Kind == KindGRPCRoute) {
+		if routeKindGroup(kind) == gatewayv1.GroupName && (kind.Kind == KindHTTPRoute || kind.Kind == KindGRPCRoute) {
 			supported = append(supported, kind)
 		} else if explicitlySpecified {
 			// Mark as invalid only if kinds were explicitly specified
