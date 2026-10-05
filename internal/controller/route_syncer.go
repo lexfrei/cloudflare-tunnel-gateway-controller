@@ -1681,19 +1681,22 @@ func injectPlaneRefusals(
 }
 
 // applyPlaneRefusals drops, BEFORE partitioning, every Gateway that may not
-// have the dedicated data plane it asked for: one claiming a tunnel another
-// namespace already serves, and one whose namespace is at the operator's cap.
+// have the dedicated data plane it asked for: one refused as a whole, one
+// claiming a tunnel another namespace already serves, and one whose namespace
+// is at the operator's cap.
 //
-// Both must run here rather than at partition time. A fabricated tunnel claim
-// would otherwise collect the incumbent's routes and inject its own into the
-// incumbent's document; a Gateway over the cap gets no plane rendered, so
-// building and pushing its config would program routes onto a data plane that
-// does not exist.
+// All three must run here rather than at partition time. A fabricated tunnel
+// claim would otherwise collect the incumbent's routes and inject its own into
+// the incumbent's document; a Gateway over the cap, or refused as a whole, gets
+// no plane rendered, so building and pushing its config would program routes
+// onto a data plane that does not exist.
 func (s *RouteSyncer) applyPlaneRefusals(
 	ctx context.Context,
 	infra *infraGateways,
 	resolvedConfig *config.ResolvedConfig,
 ) {
+	applyGatewayRefusals(infra)
+
 	claims := collectTunnelClaims(ctx, infra.listed, s.ConfigResolver, resolvedConfig.TunnelID)
 
 	applyTunnelOwnership(infra, resolvedConfig.TunnelID, resolvedConfig.AllowSharedTunnels, claims)
@@ -1710,9 +1713,9 @@ func (s *RouteSyncer) applyPlaneRefusals(
 }
 
 // gatewayPlaneError returns the refusal affecting a route accepted on
-// gatewayKey: a refused tunnel claim, a namespace over its data-plane quota,
-// or the broken-data-plane sentinel for an opted-in Gateway that failed to
-// resolve; nil when the Gateway is served.
+// gatewayKey: a refused tunnel claim, a namespace over its data-plane quota, a
+// Gateway refused as a whole, or the broken-data-plane sentinel for an
+// opted-in Gateway that failed to resolve; nil when the Gateway is served.
 func gatewayPlaneError(gatewayKey string, infra *infraGateways) error {
 	// A refused tunnel claim is checked before the generic broken case: both
 	// fail closed, but "your data plane is unavailable" would send the tenant
@@ -1735,6 +1738,11 @@ func gatewayPlaneError(gatewayKey string, infra *infraGateways) error {
 			"; the route is not programmed (see the Gateway's Accepted condition)")
 	}
 
+	if infra.isRefused(gatewayKey) {
+		return errors.New("the Gateway is not accepted; the route is not programmed " +
+			"(see the Gateway's Accepted condition)")
+	}
+
 	if infra.isBroken(gatewayKey) {
 		return errBrokenDataPlane
 	}
@@ -1755,15 +1763,15 @@ func partitionKeyForGateway(gatewayKey string, infra *infraGateways) string {
 
 // assignParentPartitions records, on each route binding, the partition every
 // managed parent is served from, so the status writer can keep each partition's
-// diagnostics on its own parents. A parent on a broken dedicated Gateway is
-// served from no partition and gets no entry.
+// diagnostics on its own parents. A parent on a broken or refused dedicated
+// Gateway is served from no partition and gets no entry.
 func assignParentPartitions(bindings map[string]routeBindingInfo, infra *infraGateways) {
 	for key := range bindings {
 		binding := bindings[key]
 		binding.parentPartitions = make(map[int]string, len(binding.parentGateways))
 
 		for refIdx, gatewayKey := range binding.parentGateways {
-			if infra.isBroken(gatewayKey) {
+			if infra.isBroken(gatewayKey) || infra.isRefused(gatewayKey) {
 				continue
 			}
 

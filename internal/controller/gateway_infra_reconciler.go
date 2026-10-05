@@ -33,6 +33,7 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/configtls"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/render"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelownership"
 )
 
@@ -155,7 +156,8 @@ func (r *GatewayInfraReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// A refused plane is removed rather than merely left unconfigured, whether
-	// the refusal is a contested tunnel or the namespace's cap.
+	// the refusal is a contested tunnel, the namespace's cap, or a Gateway
+	// refused as a whole.
 	//
 	// This matters for a SHARED token, where both parties hold the same
 	// credentials and both connectors really do register: the edge
@@ -932,11 +934,12 @@ func (r *GatewayInfraReconciler) classConfigInfraGateways(
 }
 
 // dedicatedPlaneRefused reports whether this Gateway may not have a dedicated
-// data plane: because it claims a tunnel belonging to another namespace or to
-// the GatewayClass, because Cloudflare does not confirm its claim, or because
-// its namespace already holds as many planes as the operator allows.
+// data plane: because it is refused as a whole (routebinding.GatewayRefused),
+// because it claims a tunnel belonging to another namespace or to the
+// GatewayClass, because Cloudflare does not confirm its claim, or because its
+// namespace already holds as many planes as the operator allows.
 //
-// Both run the same decision over the same shared claim set as the route
+// These run the same decision over the same shared claim set as the route
 // partitioner and the Gateway reconciler, so all three agree on the same
 // inputs; a lapsed Cloudflare confirmation reaches this layer through the
 // Gateway status the Gateway reconciler writes on its requeue. An error here
@@ -946,6 +949,10 @@ func (r *GatewayInfraReconciler) dedicatedPlaneRefused(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 ) (bool, error) {
+	if _, refused := routebinding.GatewayRefused(gateway); refused {
+		return true, nil
+	}
+
 	// Reads the policy from THIS Gateway's class, while SyncAllRoutes reads it
 	// from the first managed class. Why that is not a divergence is in
 	// applyPlaneRefusals.

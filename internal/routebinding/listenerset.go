@@ -32,17 +32,17 @@ const invalidAllowedListenersMessage = "The parent Gateway's allowedListeners se
 // is allowed to attach. The default (unset) is From=None, i.e. attachment is
 // rejected unless the Gateway opts in. A selector that does not parse admits
 // no ListenerSet. The error reports a namespace that could not be read, which
-// leaves the acceptance undecided. A Gateway that RequestsFrontendValidation
-// admits no ListenerSet.
+// leaves the acceptance undecided. A Gateway that RequestsFrontendValidation, or
+// requests an UnsupportedAddressType, admits no ListenerSet.
 func (v *Validator) EvaluateListenerSetAcceptance(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 	listenerSet *gatewayv1.ListenerSet,
 ) (ListenerSetAcceptance, error) {
-	if RequestsFrontendValidation(gateway) {
+	if message, refused := GatewayRefused(gateway); refused {
 		return ListenerSetAcceptance{
 			Reason:  gatewayv1.ListenerSetReasonParentNotAccepted,
-			Message: ParentRequestsFrontendValidationMessage,
+			Message: message,
 		}, nil
 	}
 

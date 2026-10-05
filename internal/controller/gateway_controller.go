@@ -200,6 +200,10 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, r.refuseFrontendValidation(ctx, &gateway)
 	}
 
+	if addressType, unsupported := routebinding.UnsupportedAddressType(&gateway); unsupported {
+		return ctrl.Result{}, r.refuseUnsupportedAddress(ctx, &gateway, addressType)
+	}
+
 	resolvedConfig, perGatewayMode, err := r.resolveGatewayConfig(ctx, &gateway)
 	if err != nil {
 		return r.handleResolveError(ctx, &gateway, err, "failed to resolve gateway configuration")
@@ -457,6 +461,33 @@ func (r *GatewayReconciler) refuseFrontendValidation(ctx context.Context, gatewa
 	}
 
 	return r.setConfigErrorStatus(ctx, gateway, errFrontendValidationRefused)
+}
+
+// errUnsupportedAddress marks a Gateway refused because spec.addresses
+// requests a type other than Hostname, so the status writer reports it with
+// reason UnsupportedAddress.
+var errUnsupportedAddress = errors.New("unsupported spec.addresses type")
+
+// refuseUnsupportedAddress reports a Gateway whose spec.addresses requests a
+// type other than Hostname as Accepted=False with reason UnsupportedAddress.
+// Route binding refuses the same Gateway through
+// routebinding.UnsupportedAddressType. No requeue: only a spec edit can change
+// the verdict.
+func (r *GatewayReconciler) refuseUnsupportedAddress(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	addressType gatewayv1.AddressType,
+) error {
+	message := fmt.Sprintf("spec.addresses requests a %s address, which is not supported: "+
+		"a Cloudflare Tunnel is reachable only at its cfargotunnel.com hostname. "+
+		"Remove spec.addresses or use a Hostname address.", addressType)
+
+	if !isRefusalReported(gateway, message) {
+		log.FromContext(ctx).Info("refusing a Gateway whose spec.addresses requests an unsupported type",
+			"gateway", gateway.Namespace+"/"+gateway.Name, "type", addressType)
+	}
+
+	return r.setConfigErrorStatus(ctx, gateway, errors.Mark(errors.New(message), errUnsupportedAddress))
 }
 
 // errTunnelClaimRefused marks a Gateway refused by the tunnel-ownership rule,
@@ -739,14 +770,15 @@ func (r *GatewayReconciler) updateStatus(
 
 		mergeErr = applyAttachedListenerSets(ctx, r.Client, &freshGateway, views)
 
+		tunnelHostname := cfg.TunnelID + cfArgotunnelSuffix
 		freshGateway.Status.Addresses = []gatewayv1.GatewayStatusAddress{
 			{
 				Type:  new(gatewayv1.HostnameAddressType),
-				Value: cfg.TunnelID + cfArgotunnelSuffix,
+				Value: tunnelHostname,
 			},
 		}
 
-		certErr = r.applyTopLevelGatewayConditions(ctx, &freshGateway, gwView, perGatewayMode, now)
+		certErr = r.applyTopLevelGatewayConditions(ctx, &freshGateway, gwView, perGatewayMode, tunnelHostname, now)
 
 		countErr, err = r.applyListenerStatuses(ctx, &freshGateway, gwView, now)
 		if err != nil {
@@ -776,6 +808,7 @@ func (r *GatewayReconciler) applyTopLevelGatewayConditions(
 	gateway *gatewayv1.Gateway,
 	gwView *gatewayListenerView,
 	perGatewayMode bool,
+	tunnelHostname string,
 	now metav1.Time,
 ) error {
 	_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, gateway, r.checkSecretReferenceGrant)
@@ -799,12 +832,33 @@ func (r *GatewayReconciler) applyTopLevelGatewayConditions(
 		programmed = r.perGatewayProgrammedCondition(ctx, gateway, now)
 	}
 
+	if requested, unusable := unusableHostnameAddress(gateway, tunnelHostname); unusable {
+		programmed.Status = metav1.ConditionFalse
+		programmed.Reason = string(gatewayv1.GatewayReasonAddressNotUsable)
+		programmed.Message = truncateMessage(fmt.Sprintf("spec.addresses requests hostname %q, "+
+			"but this Gateway is reachable only at %s; request that hostname, or leave the value empty",
+			requested, tunnelHostname))
+	}
+
 	applyGatewayConditions(&gateway.Status.Conditions, []metav1.Condition{
 		accepted,
 		programmed,
 	}, buildClientCertResolvedRefsCondition(gateway.Generation, now, clientCertErr))
 
 	return transientClientCertError(clientCertErr)
+}
+
+// unusableHostnameAddress returns the first Hostname value in spec.addresses
+// other than the tunnel hostname. An empty value asks the implementation to
+// assign one, and the tunnel hostname is what it assigns.
+func unusableHostnameAddress(gateway *gatewayv1.Gateway, tunnelHostname string) (string, bool) {
+	for _, address := range gateway.Spec.Addresses {
+		if address.Value != "" && address.Value != tunnelHostname {
+			return address.Value, true
+		}
+	}
+
+	return "", false
 }
 
 // transientClientCertError returns err when it is a client certificate read
@@ -1108,7 +1162,7 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 
 		prefix := "Failed to resolve Gateway configuration: "
 		if errors.Is(configErr, errTunnelClaimRefused) || errors.Is(configErr, errDataPlaneQuotaExceeded) ||
-			errors.Is(configErr, errFrontendValidationRefused) {
+			errors.Is(configErr, errFrontendValidationRefused) || errors.Is(configErr, errUnsupportedAddress) {
 			// Nothing failed to resolve; the Gateway was refused.
 			prefix = refusedConditionPrefix
 		}
@@ -1226,6 +1280,14 @@ func configErrorReasons(configErr error) configErrorReasonSet {
 		}
 	}
 
+	if errors.Is(configErr, errUnsupportedAddress) {
+		return configErrorReasonSet{
+			accepted:   string(gatewayv1.GatewayReasonUnsupportedAddress),
+			programmed: string(gatewayv1.GatewayReasonInvalid),
+			listener:   string(gatewayv1.ListenerReasonInvalid),
+		}
+	}
+
 	if errors.Is(configErr, errFrontendValidationRefused) {
 		return configErrorReasonSet{
 			accepted:   string(gatewayv1.GatewayReasonInvalid),
@@ -1253,7 +1315,8 @@ type configErrorReasonSet struct {
 // configErrorGatewayConditions is the Gateway-level verdict when a Gateway
 // cannot be programmed for a deterministic reason: its configuration did not
 // resolve, it claimed a tunnel it does not own, its namespace is at the
-// operator's data-plane cap, or it sets spec.tls.frontend. The reasons
+// operator's data-plane cap, it sets spec.tls.frontend, or it requests an
+// unsupported address type. The reasons
 // differ per case and are chosen by configErrorReasons; the message is
 // shared.
 func configErrorGatewayConditions(

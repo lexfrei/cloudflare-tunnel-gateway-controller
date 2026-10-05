@@ -154,7 +154,7 @@ Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute or GRP
 | `spec.listeners[].tls` | ✅ | CertificateRefs validated with ReferenceGrant support |
 | `spec.listeners[].allowedRoutes` | ✅ | Namespace (Same/All/Selector) and kind filtering |
 | `spec.tls.frontend` | ❌ | Refused: the Gateway is `Accepted=False` and its routes are not served; validate client certificates at the Cloudflare edge instead ([details](https://cf.k8s.lex.la/latest/gateway-api/limitations/#client-certificate-validation-spectlsfrontend-is-refused)) |
-| `spec.addresses` | ❌ | Ignored; tunnel CNAME set in status |
+| `spec.addresses` | ❌ | Only the tunnel CNAME is served: another hostname leaves the Gateway `Programmed=False`, any other address type refuses it (`Accepted=False`) ([details](https://cf.k8s.lex.la/latest/gateway-api/limitations/#specaddresses-accepts-only-the-tunnel-hostname)) |
 | `spec.infrastructure.parametersRef` | ✅ | Opts the Gateway into a dedicated data plane (`GatewayConfig`, group `cf.k8s.lex.la`) — its own proxy and tunnel |
 | `spec.infrastructure.labels` / `.annotations` | ✅ | Propagated to the rendered per-Gateway resources, generated Secrets and pod template |
 
@@ -189,6 +189,7 @@ The L7 proxy handles routing for every tunnel request, so most Gateway API behav
 
 - Edge-side constraints — Cloudflare hostname registration and edge HTTPS termination apply to all traffic.
 - A Gateway that sets `spec.tls.frontend` (client certificate validation) is refused, because clients complete TLS with the Cloudflare edge; require client certificates at the edge instead.
+- `spec.addresses` can only name the tunnel CNAME: another hostname leaves the Gateway `Programmed=False` with reason `AddressNotUsable`, and any other address type refuses it with reason `UnsupportedAddress`.
 - gRPC requires Cloudflare zone gRPC proxying enabled (dashboard → Network → gRPC); otherwise the edge returns `403` zone-wide for `application/grpc`.
 - `BackendTLSPolicy` (proxy → backend TLS) is supported at minimum-viable scope: explicit `CACertificateRefs` only, `Hostname` and `URI` SANs, backend mTLS via the Gateway's `clientCertificateRef`.
 - Backend WebSocket via `appProtocol: kubernetes.io/ws` (and `/wss` with a `BackendTLSPolicy`).
