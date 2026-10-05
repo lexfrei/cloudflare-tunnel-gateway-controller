@@ -214,7 +214,7 @@ func buildRedirectBase(req *http.Request, config *RedirectConfig) *url.URL {
 	hostname = stripPort(hostname)
 
 	host := hostname
-	if config.Port != nil {
+	if config.Port != nil && !isSchemeDefaultPort(scheme, *config.Port) {
 		host = fmt.Sprintf("%s:%d", hostname, *config.Port)
 	}
 
@@ -222,6 +222,12 @@ func buildRedirectBase(req *http.Request, config *RedirectConfig) *url.URL {
 		Scheme: scheme,
 		Host:   host,
 	}
+}
+
+// isSchemeDefaultPort reports whether port is the well-known port of scheme,
+// which the HTTPRequestRedirectFilter Port godoc says Location should not carry.
+func isSchemeDefaultPort(scheme string, port int32) bool {
+	return (scheme == schemeHTTP && port == 80) || (scheme == schemeHTTPS && port == 443)
 }
 
 // buildRedirectPath resolves the redirect path from the config and request.
