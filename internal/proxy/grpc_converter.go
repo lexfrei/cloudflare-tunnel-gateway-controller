@@ -384,10 +384,12 @@ func applyGRPCBackendTransport(
 	port int32,
 	sink *diagSink,
 ) {
-	result.TLS, result.URL = resolveBackendTLS(ctx, tlsResolver, svcNamespace, serviceName, port, result.URL)
+	result.TLS, result.URL = resolveBackendTLS(ctx, tlsResolver, svcNamespace, serviceName, port, result.URL, sink)
 	result.TLS = attachGatewayClientCert(result.TLS, clientCert)
 
 	if result.TLS != nil {
+		failInvalidBackendTLS(result)
+
 		// TLS is on — newTLSTransport handles ALPN HTTP/2 negotiation, the
 		// h2c marker would be ignored on that path (and is misleading), so
 		// leave Protocol at the default and keep the https:// URL.

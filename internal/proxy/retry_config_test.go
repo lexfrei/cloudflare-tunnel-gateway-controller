@@ -205,7 +205,9 @@ func TestConfig_Validate_AcceptsRetryBoundaries(t *testing.T) {
 }
 
 // TestConvertHTTPRoutes_RetryAttemptsOverCap pins that a rule asking for more
-// retries than the proxy allows is still served, with the cap, and reported.
+// retries than the proxy allows is served with the cap and reported as a
+// Warning Event, not PartiallyInvalid: attempts is a maximum, so retrying less
+// keeps the route fully valid and the spec forbids PartiallyInvalid on it.
 func TestConvertHTTPRoutes_RetryAttemptsOverCap(t *testing.T) {
 	t.Parallel()
 
@@ -219,9 +221,8 @@ func TestConvertHTTPRoutes_RetryAttemptsOverCap(t *testing.T) {
 	assert.Equal(t, []int{503}, cfg.Rules[0].Retry.Codes)
 
 	require.Len(t, cfg.Diagnostics, 1)
-	assert.Equal(t, proxy.DiagnosticAccepted, cfg.Diagnostics[0].Target)
-	assert.Equal(t, string(gatewayv1.RouteReasonUnsupportedValue), cfg.Diagnostics[0].Reason)
-	assert.False(t, cfg.Diagnostics[0].WholeRule)
+	assert.Equal(t, proxy.DiagnosticEvent, cfg.Diagnostics[0].Target)
+	assert.Equal(t, proxy.EventTypeWarning, cfg.Diagnostics[0].EventType)
 	assert.Contains(t, cfg.Diagnostics[0].Message, "attempts")
 }
 

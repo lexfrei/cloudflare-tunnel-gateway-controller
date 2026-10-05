@@ -778,6 +778,7 @@ func convertMirrorFilter(
 	// main leg: with both inputs non-nil, the mirror leg does mTLS too.
 	if tlsResolver != nil {
 		if tls := tlsResolver(ctx, mirrorNS, string(mirror.BackendRef.Name), mirrorPort); tls != nil {
+			reportUnenforceableTLS(sink, tls, "Mirrored requests to it fail; the main request is unaffected.")
 			mirrorConfig.TLS = attachGatewayClientCert(tls, clientCert)
 			mirrorConfig.BackendURL = forceHTTPSScheme(mirrorURL)
 		}
@@ -1056,7 +1057,7 @@ func convertBackendRef(
 	// Resolve TLS first so the protocol resolver can know whether to silently
 	// pass through `appProtocol: https` (policy attached → suppressed) or warn
 	// (no policy → operator misconfigured a TLS hint with no actual TLS).
-	result.TLS, result.URL = resolveBackendTLS(ctx, tlsResolver, svcNamespace, serviceName, port, result.URL)
+	result.TLS, result.URL = resolveBackendTLS(ctx, tlsResolver, svcNamespace, serviceName, port, result.URL, sink)
 	result.TLS = attachGatewayClientCert(result.TLS, clientCert)
 
 	var protoFailClosed bool
@@ -1070,6 +1071,7 @@ func convertBackendRef(
 		result.UnavailableStatus = http.StatusBadGateway
 	}
 
+	failInvalidBackendTLS(&result)
 	applyBackendFilters(ctx, &result, backend.Filters, namespace, clusterDomain, validator, tlsResolver, clientCert, sink)
 
 	return result, true
@@ -1205,6 +1207,7 @@ func resolveBackendTLS(
 	namespace, serviceName string,
 	port int32,
 	rawURL string,
+	sink *diagSink,
 ) (*BackendTLSConfig, string) {
 	if resolver == nil {
 		return nil, rawURL
@@ -1215,7 +1218,27 @@ func resolveBackendTLS(
 		return nil, rawURL
 	}
 
+	reportUnenforceableTLS(sink, tls, "Requests to this backend get HTTP 500.")
+
 	return tls, forceHTTPSScheme(rawURL)
+}
+
+// reportUnenforceableTLS records a policy the proxy cannot meet as an invalid
+// backendRef; consequence completes the message for the referencing leg.
+func reportUnenforceableTLS(sink *diagSink, tls *BackendTLSConfig, consequence string) {
+	if tls.Unenforceable == "" {
+		return
+	}
+
+	sink.add(DiagnosticResolvedRefs, ReasonInvalidBackendTLSPolicy, tls.Unenforceable+" "+consequence, false)
+}
+
+// failInvalidBackendTLS gives a backend whose BackendTLSPolicy cannot be met
+// the invalid-backendRef 500 instead of dialing it into a failed handshake.
+func failInvalidBackendTLS(result *BackendRef) {
+	if result.TLS != nil && result.TLS.Unenforceable != "" {
+		result.UnavailableStatus = http.StatusInternalServerError
+	}
 }
 
 // resolveBackendProtocol applies the protocol resolver to a backend reference
@@ -1606,14 +1629,12 @@ func applyRuleTiming(rule *gatewayv1.HTTPRouteRule, proxyRule *RouteRule, sink *
 			proxyRule.Retry = retry
 		}
 
+		// Attempts is a maximum, so the capped rule is still fully valid and
+		// PartiallyInvalid MUST NOT be set; an Event reports the cap instead.
 		if retry != nil && retry.Attempts > MaxRetryAttempts {
-			sink.add(
-				DiagnosticAccepted,
-				string(gatewayv1.RouteReasonUnsupportedValue),
+			sink.event(EventTypeWarning,
 				fmt.Sprintf("The rule's retry attempts (%d) exceed the proxy's limit; the rule retries at most %d times.",
-					retry.Attempts, MaxRetryAttempts),
-				false,
-			)
+					retry.Attempts, MaxRetryAttempts))
 			retry.Attempts = MaxRetryAttempts
 		}
 	}

@@ -59,7 +59,7 @@ type routeStatusUpdateParams struct {
 	// reconciledGeneration is the route's metadata.generation at the time this
 	// reconcile read the spec and computed its conclusions. It is used to skip
 	// the write when a newer reconcile has already advanced our entries past it
-	// (see statusGenerationStale); the writer still stamps observedGeneration
+	// (see conditionsStaleBy); the writer still stamps observedGeneration
 	// from the freshly-fetched generation.
 	reconciledGeneration int64
 }
@@ -206,7 +206,7 @@ func partitionPriorParents(
 			continue
 		}
 
-		if statusGenerationStale(reconciledGeneration, parent.Conditions) {
+		if conditionsStaleBy(reconciledGeneration, isControllerOwnedRouteParentConditionType, parent.Conditions) {
 			return nil, nil, true
 		}
 
@@ -224,7 +224,7 @@ func partitionPriorParents(
 func mergeOwnParentConditions(priorOwn []gatewayv1.RouteParentStatus, desired *gatewayv1.RouteParentStatus) []metav1.Condition {
 	for i := range priorOwn {
 		if parentRefIdentityEqual(priorOwn[i].ParentRef, desired.ParentRef) {
-			return preserveOwnedConditionTransitions(priorOwn[i].Conditions, desired.Conditions)
+			return preserveRouteParentConditionTransitions(priorOwn[i].Conditions, desired.Conditions)
 		}
 	}
 
