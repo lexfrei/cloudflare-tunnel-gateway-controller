@@ -100,7 +100,7 @@ func emitGRPCEdgeHint(recorder events.EventRecorder, route runtime.Object) {
 // passes to buildAcceptedCondition: no sync error (else Pending), at least one
 // bound parent (else a binding rejection), no caller override (the explicit-quic
 // UnsupportedProtocol case), and no diagnostic-derived whole-route override (every
-// rule unservable → UnsupportedValue). diagnosticConditions is the single source
+// rule unservable). diagnosticConditions is the single source
 // of truth for that last input, so the gate cannot drift from the condition the
 // operator sees. The zero generation/time are unused — only the override (first
 // return) is read, and its presence does not depend on them.
