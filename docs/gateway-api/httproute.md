@@ -14,8 +14,8 @@ All matching and filter behavior is performed by the in-process L7 proxy that th
 | Query parameter matching | ✅ | Exact and RegularExpression |
 | HTTP method matching | ✅ | All HTTP methods |
 | Weighted traffic splitting | ✅ | True traffic distribution across backends |
-| RequestHeaderModifier filter | ✅ | |
-| ResponseHeaderModifier filter | ✅ | |
+| RequestHeaderModifier filter | ✅ | Of `set` or `add` entries whose names differ only in case, the first is used |
+| ResponseHeaderModifier filter | ✅ | Of `set` or `add` entries whose names differ only in case, the first is used |
 | RequestRedirect filter | ✅ | A `ReplacePrefixMatch` path is built the same way as in URLRewrite |
 | URLRewrite filter | ✅ | Replaces the matched prefix and leaves the remaining segments unchanged, dot segments included |
 | RequestMirror filter | ✅ | |
