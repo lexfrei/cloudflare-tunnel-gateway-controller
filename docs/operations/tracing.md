@@ -14,7 +14,7 @@ When tracing is enabled on the proxy:
 
 - Each inbound request gets a **server span** (`SpanKind=Server`). If the request already carries a W3C `traceparent` (injected upstream), the server span is parented to it; otherwise it starts a new trace subject to sampling.
 - Each backend call gets a **client span** (`SpanKind=Client`) that is a child of the server span. The proxy injects the client span's context into `traceparent` / `tracestate` on the outbound request, so a trace-aware backend continues the same trace.
-- The server span records the response status code and marks 5xx as an error. WebSocket upgrades (`101`) are tagged rather than timed, since the span would otherwise span the whole session.
+- The server span records the response status code and marks 5xx as an error, and also the gRPC `UNAVAILABLE` the proxy sends on HTTP 200 in place of a 5xx. A gRPC error status sent by a backend does not mark the span. WebSocket upgrades (`101`) are tagged rather than timed, since the span would otherwise span the whole session.
 
 When tracing is enabled on the controller, its Cloudflare API client and its proxy config-push client each emit a client span. Reconciles do not run inside an inbound trace, so these are typically root spans rather than children of a reconcile trace; they still carry the call's latency and the `trace_id` / `span_id` log correlation.
 

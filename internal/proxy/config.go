@@ -97,7 +97,8 @@ type RouteRule struct {
 	// requests fail closed with an HTTP error instead of being served silently
 	// without the dropped config, as the Gateway API spec requires. The proxy
 	// router sets 500 on its own compiled copy when a rule-level filter fails
-	// to compile. This is the rule-level analogue of BackendRef.UnavailableStatus.
+	// to compile. A gRPC request gets gRPC status UNAVAILABLE instead of the
+	// HTTP status. This is the rule-level analogue of BackendRef.UnavailableStatus.
 	UnavailableStatus int `json:"unavailableStatus,omitempty"`
 }
 
@@ -382,7 +383,8 @@ type BackendRef struct {
 	// nonexistent Service) and 503 for a Service that exists but has no ready
 	// endpoints, applied to the proportion of requests that would otherwise have
 	// been routed to this backend. The proxy router sets 500 on its own compiled
-	// copy when one of the backend's filters fails to compile.
+	// copy when one of the backend's filters fails to compile. A gRPC request
+	// gets gRPC status UNAVAILABLE instead of the HTTP status.
 	UnavailableStatus int `json:"unavailableStatus,omitempty"`
 }
 

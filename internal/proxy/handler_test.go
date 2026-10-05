@@ -1449,6 +1449,16 @@ func TestErrorHandler_504Surface(t *testing.T) {
 
 			assert.Equal(t, tt.wantStatus, recorder.Code,
 				"errorHandler status for %T must be %d", tt.err, tt.wantStatus)
+
+			grpcReq := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://app.example.com/pkg.Service/Method", nil)
+			grpcReq.Header.Set("Content-Type", "application/grpc")
+
+			fake := newFakeCloudflaredRespWriter()
+			proxy.ErrorHandlerForTest(fake, grpcReq, tt.err)
+
+			assert.Equal(t, http.StatusOK, fake.Status())
+			assert.Equal(t, "14", fake.Header().Get(http.TrailerPrefix+"Grpc-Status"),
+				"a gRPC request gets UNAVAILABLE for %T", tt.err)
 		})
 	}
 }

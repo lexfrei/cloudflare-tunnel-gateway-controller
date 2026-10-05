@@ -207,6 +207,77 @@ func TestGatewayOriginProxy_ProxyHTTP_GRPCNoMatchEmitsUnimplemented(t *testing.T
 		"a gRPC request matching no route must surface as Unimplemented (12)")
 }
 
+// TestGatewayOriginProxy_ProxyHTTP_GRPCUnavailableBackendEmitsUnavailable pins
+// the GRPCRoute invalid-backend clause on the production writer: a gRPC
+// request routed to a backend the proxy refuses to dial must reach the client
+// as UNAVAILABLE (14) in a grpc-status trailer, not as a bare HTTP 500.
+func TestGatewayOriginProxy_ProxyHTTP_GRPCUnavailableBackendEmitsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	router := proxypkg.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxypkg.Config{Version: 1, Rules: []proxypkg.RouteRule{{
+		Hostnames: []string{"example.com"},
+		Matches:   []proxypkg.RouteMatch{{Path: &proxypkg.PathMatch{Type: proxypkg.PathMatchPathPrefix, Value: "/"}}},
+		Backends: []proxypkg.BackendRef{{
+			URL: "http://backend.default.svc.cluster.local:8080", Weight: 1, UnavailableStatus: http.StatusInternalServerError,
+		}},
+	}}}))
+
+	originProxy := tunnel.NewGatewayOriginProxy(proxypkg.NewHandler(router), nil)
+
+	req := httptest.NewRequestWithContext(
+		t.Context(), http.MethodPost, "http://example.com/pkg.Service/Method", nil,
+	)
+	req.Header.Set("Content-Type", "application/grpc")
+
+	zlog := zerolog.Nop()
+	rw := newTestResponseWriter()
+
+	require.NoError(t, originProxy.ProxyHTTP(rw, tracing.NewTracedHTTPRequest(req, 0, &zlog), false))
+
+	assert.Equal(t, http.StatusOK, rw.Code)
+	require.NotNil(t, rw.trailers, "an unavailable gRPC backend must emit a grpc-status trailer")
+	assert.Equal(t, "14", rw.trailers.Get("Grpc-Status"))
+}
+
+// TestGatewayOriginProxy_ProxyHTTP_GRPCDialFailureEmitsUnavailable covers a
+// backend that drops the connection without answering: a gRPC client must read
+// UNAVAILABLE from the grpc-status trailer, not a bare HTTP 502.
+func TestGatewayOriginProxy_ProxyHTTP_GRPCDialFailureEmitsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	hangup := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		conn, _, err := http.NewResponseController(writer).Hijack()
+		if err == nil {
+			_ = conn.Close()
+		}
+	}))
+	t.Cleanup(hangup.Close)
+
+	router := proxypkg.NewRouter()
+	require.NoError(t, router.UpdateConfig(&proxypkg.Config{Version: 1, Rules: []proxypkg.RouteRule{{
+		Hostnames: []string{"example.com"},
+		Matches:   []proxypkg.RouteMatch{{Path: &proxypkg.PathMatch{Type: proxypkg.PathMatchPathPrefix, Value: "/"}}},
+		Backends:  []proxypkg.BackendRef{{URL: hangup.URL, Weight: 1}},
+	}}}))
+
+	originProxy := tunnel.NewGatewayOriginProxy(proxypkg.NewHandler(router), nil)
+
+	req := httptest.NewRequestWithContext(
+		t.Context(), http.MethodPost, "http://example.com/pkg.Service/Method", nil,
+	)
+	req.Header.Set("Content-Type", "application/grpc")
+
+	zlog := zerolog.Nop()
+	rw := newTestResponseWriter()
+
+	require.NoError(t, originProxy.ProxyHTTP(rw, tracing.NewTracedHTTPRequest(req, 0, &zlog), false))
+
+	assert.Equal(t, http.StatusOK, rw.Code)
+	require.NotNil(t, rw.trailers, "a gRPC dial failure must emit a grpc-status trailer")
+	assert.Equal(t, "14", rw.trailers.Get("Grpc-Status"))
+}
+
 // TestGatewayOriginProxy_ProxyHTTP_HTTPNoMatchStays404 confirms the non-gRPC
 // no-match path is unchanged: a plain HTTP request still gets a bare 404, not
 // the gRPC trailers-only shape.

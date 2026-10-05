@@ -69,7 +69,7 @@ const (
 	// appProtocolWSS is the Kubernetes Service appProtocol value selecting
 	// WebSocket over TLS to the backend. Same precondition as appProtocol:
 	// https — operators MUST attach a BackendTLSPolicy so the proxy has a CA
-	// to verify against. Without a policy the backend fails closed (502).
+	// to verify against. Without a policy the backend fails closed (500).
 	appProtocolWSS = "kubernetes.io/wss"
 )
 
@@ -1106,9 +1106,10 @@ func convertBackendRef(
 		ctx, resolver, svcNamespace, serviceName, port, result.URL, result.TLS != nil, sink,
 	)
 	if protoFailClosed {
-		// A TLS appProtocol without a BackendTLSPolicy: dialing plaintext would
-		// fail anyway, so return 502 for this backend's traffic fraction.
-		result.UnavailableStatus = http.StatusBadGateway
+		// A TLS appProtocol without a BackendTLSPolicy makes the backendRef
+		// invalid (UnsupportedProtocol), so its traffic fraction gets the
+		// invalid-backendRef 500 instead of a plaintext dial.
+		result.UnavailableStatus = http.StatusInternalServerError
 	}
 
 	failInvalidBackendTLS(&result)
@@ -1258,7 +1259,7 @@ func resolveBackendTLS(
 		return nil, rawURL
 	}
 
-	reportUnenforceableTLS(sink, tls, "Requests to this backend get HTTP 500.")
+	reportUnenforceableTLS(sink, tls, "Requests to this backend get HTTP 500 (gRPC UNAVAILABLE).")
 
 	return tls, forceHTTPSScheme(rawURL)
 }
@@ -1337,7 +1338,7 @@ func resolveBackendProtocol(
 	case appProtocolWSS:
 		// TLS-bearing WebSocket: without a BackendTLSPolicy the proxy has no
 		// trust anchor and the upgrade would fail. Fail the backend closed
-		// (502) and surface it, instead of dialing plaintext to a TLS backend.
+		// (500) and surface it, instead of dialing plaintext to a TLS backend.
 		fc := unpolicedTLSAppProtocol(tlsAttached, namespace, serviceName, port, appProto, sink)
 
 		return BackendProtocolHTTP, rawURL, true, fc
@@ -1397,7 +1398,7 @@ func lookupAppProtocol(ctx context.Context, resolver BackendProtocolResolver, na
 // unpolicedTLSAppProtocol handles a TLS-bearing appProtocol (https, wss). When a
 // BackendTLSPolicy is attached the hint is honoured silently. Without one the
 // proxy has no CA to verify against, so per the Gateway API spec this is an
-// unsupported app protocol: the backend fails closed (502) and a
+// unsupported app protocol: the backend fails closed (500) and a
 // ResolvedRefs-target diagnostic is recorded. Returns whether the backend must
 // fail closed.
 func unpolicedTLSAppProtocol(tlsAttached bool, namespace, serviceName string, port int32, appProto string, sink *diagSink) bool {
@@ -1426,7 +1427,7 @@ func unpolicedTLSAppProtocol(tlsAttached bool, namespace, serviceName string, po
 func unpolicedTLSMessage(serviceName, appProto string) string {
 	return fmt.Sprintf(
 		"Service %q declares appProtocol %q but no BackendTLSPolicy targets it; "+
-			"the proxy has no CA to verify the backend, so requests to it receive HTTP 502. "+
+			"the proxy has no CA to verify the backend, so requests to it are refused (HTTP 500, gRPC UNAVAILABLE). "+
 			"Attach a BackendTLSPolicy to the Service to enable TLS to this backend.",
 		serviceName, appProto,
 	)

@@ -236,7 +236,7 @@ kubectl get endpoints --selector app.kubernetes.io/component=proxy \
 
 ### Some routes answer HTTP 500 after a controller upgrade
 
-A shared proxy whose `proxy.image.tag` lags the controller behaves like the per-Gateway case described in [Image older than the controller](per-gateway-isolation.md#operational-notes): a filter type it does not know makes it answer HTTP 500 for the requests that filter would have processed, while the rest of the pushed config applies. Move the proxy image forward to match the controller.
+A shared proxy whose `proxy.image.tag` lags the controller behaves like the per-Gateway case described in [Image older than the controller](per-gateway-isolation.md#operational-notes): a filter type it does not know makes it answer HTTP 500 (gRPC: `UNAVAILABLE`) for the requests that filter would have processed, while the rest of the pushed config applies. Move the proxy image forward to match the controller.
 
 ### Config API returns stale version
 

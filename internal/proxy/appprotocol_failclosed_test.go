@@ -36,7 +36,7 @@ func appProtoTestRoute() *gatewayv1.HTTPRoute {
 // without a BackendTLSPolicy cannot be served — the proxy has no trust anchor,
 // so dialing plaintext to a TLS backend would silently fail. Per the Gateway
 // API spec this is an unsupported app protocol: the backend fails closed (its
-// traffic fraction returns HTTP 502) and a ResolvedRefs-target diagnostic with
+// traffic fraction returns HTTP 500) and a ResolvedRefs-target diagnostic with
 // reason UnsupportedProtocol is recorded with an actionable message naming the
 // fix (attach a BackendTLSPolicy).
 func TestConvertHTTPRoutes_AppProtocolHTTPS_WithoutPolicy_FailsClosed(t *testing.T) {
@@ -63,7 +63,7 @@ func TestConvertHTTPRoutes_AppProtocolHTTPS_WithoutPolicy_FailsClosed(t *testing
 
 			require.Len(t, cfg.Rules, 1)
 			require.Len(t, cfg.Rules[0].Backends, 1)
-			assert.Equal(t, http.StatusBadGateway, cfg.Rules[0].Backends[0].UnavailableStatus,
+			assert.Equal(t, http.StatusInternalServerError, cfg.Rules[0].Backends[0].UnavailableStatus,
 				"a TLS appProtocol without a BackendTLSPolicy must fail the backend closed")
 
 			require.Len(t, cfg.Diagnostics, 1)

@@ -97,7 +97,7 @@ The `from` entry is keyed on the referencing route's kind. For a cross-namespace
 
 ## Status and failure modes
 
-- A missing `ExternalBackend` surfaces `ResolvedRefs=False, BackendNotFound` on the referencing route and returns HTTP 500 for that backend's traffic fraction (other weighted backends keep serving).
+- A missing `ExternalBackend` surfaces `ResolvedRefs=False, BackendNotFound` on the referencing route and returns HTTP 500 (gRPC: `UNAVAILABLE`) for that backend's traffic fraction (other weighted backends keep serving).
 - An unauthorized cross-namespace reference surfaces `ResolvedRefs=False, RefNotPermitted`.
 - An `ExternalBackend` may be a primary `backendRef` but **not** a `RequestMirror` destination — a mirror target must resolve to an in-cluster DNS name (`Service` or `ServiceImport`). A mirror to an `ExternalBackend` is dropped with `Reason=InvalidKind`; the main request is unaffected.
 

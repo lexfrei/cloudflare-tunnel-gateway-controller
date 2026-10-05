@@ -40,7 +40,8 @@ func grpcAppProtoRoute() *gatewayv1.GRPCRoute {
 // declares a TLS appProtocol (https / HTTPS / kubernetes.io/wss) with no
 // BackendTLSPolicy cannot be served — the proxy has no trust anchor, so dialing
 // cleartext h2c to a TLS backend would silently defeat the operator's stated TLS
-// intent. The backend fails closed (HTTP 502 for its traffic fraction) and a
+// intent. The backend fails closed (marked 500, which a gRPC client receives as
+// UNAVAILABLE, for its traffic fraction) and a
 // ResolvedRefs-target diagnostic with reason UnsupportedProtocol is recorded,
 // mirroring the HTTP path (appprotocol_failclosed_test.go).
 func TestConvertGRPCRoutes_AppProtocolTLS_WithoutPolicy_FailsClosed(t *testing.T) {
@@ -67,7 +68,7 @@ func TestConvertGRPCRoutes_AppProtocolTLS_WithoutPolicy_FailsClosed(t *testing.T
 
 			require.Len(t, cfg.Rules, 1)
 			require.Len(t, cfg.Rules[0].Backends, 1)
-			assert.Equal(t, http.StatusBadGateway, cfg.Rules[0].Backends[0].UnavailableStatus,
+			assert.Equal(t, http.StatusInternalServerError, cfg.Rules[0].Backends[0].UnavailableStatus,
 				"a TLS appProtocol without a BackendTLSPolicy must fail the gRPC backend closed")
 
 			require.Len(t, cfg.Diagnostics, 1)

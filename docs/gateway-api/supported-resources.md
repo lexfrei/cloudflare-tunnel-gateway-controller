@@ -90,7 +90,7 @@ When an HTTPRoute references a Service whose target port sets `appProtocol`, the
 | `kubernetes.io/wss` | Yes | WebSocket over TLS: requires a matching `BackendTLSPolicy` (same precondition as `appProtocol: https`); see [Backend Protocol notes](limitations.md#backend-protocol-servicespecportsappprotocol) |
 | any other value | No | Logged with a warning; proxy falls back to default HTTP/1.1 |
 
-A GRPCRoute backend is HTTP/2 by definition, so it is dialed h2c by default and only the TLS-vs-cleartext decision applies: a TLS `appProtocol` (`https` / `HTTPS` / `kubernetes.io/wss`) with no `BackendTLSPolicy` fails the backend closed (HTTP 502, `ResolvedRefs=False, Reason=UnsupportedProtocol`), identical to the HTTPRoute path. See [gRPC backends and appProtocol](limitations.md#grpc-backends-and-appprotocol).
+A GRPCRoute backend is HTTP/2 by definition, so it is dialed h2c by default and only the TLS-vs-cleartext decision applies: a TLS `appProtocol` (`https` / `HTTPS` / `kubernetes.io/wss`) with no `BackendTLSPolicy` fails the backend closed (gRPC status `UNAVAILABLE`, `ResolvedRefs=False, Reason=UnsupportedProtocol`), as the HTTPRoute path does with HTTP 500. See [gRPC backends and appProtocol](limitations.md#grpc-backends-and-appprotocol).
 
 ### Filters
 
@@ -138,7 +138,7 @@ GRPCRoute is served by the in-process L7 proxy. gRPC requests are HTTP/2 POSTs t
 | `spec.rules[].matches[].method` | Yes | `Exact` (service+method, service-only, method-only) and `RegularExpression` |
 | `spec.rules[].matches[].headers` | Yes | Exact and RegularExpression matchers (shared with HTTP) |
 | `spec.rules[].backendRefs` | Yes | Service backends; cleartext h2c by default, TLS + ALPN HTTP/2 when a BackendTLSPolicy targets the Service |
-| `spec.rules[].filters` | Partial | Core `RequestHeaderModifier` and extended `ResponseHeaderModifier` are served through the shared header-modifier pipeline (rule- and backend-scoped). `RequestMirror` and `ExtensionRef` are not served yet and fail closed (matching requests receive HTTP 500). |
+| `spec.rules[].filters` | Partial | Core `RequestHeaderModifier` and extended `ResponseHeaderModifier` are served through the shared header-modifier pipeline (rule- and backend-scoped). `RequestMirror` and `ExtensionRef` are not served yet and fail closed (matching requests receive gRPC status `UNAVAILABLE`). |
 | BackendTLSPolicy / Gateway `clientCertificateRef` | Yes | When a `BackendTLSPolicy` targets the backend Service, the proxy dials TLS with HTTP/2 negotiated via ALPN. The Gateway's `clientCertificateRef` is presented for mTLS only when a policy is also attached (Gateway API spec — a client cert over plaintext is meaningless). See [GRPCRoute docs](grpcroute.md#backend-tls). |
 
 gRPC method matching maps to paths as follows:
@@ -201,7 +201,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 
 !!! warning "An invalid backend ref fails its own traffic fraction"
 
-    If a backend ref in a rule fails validation — cross-namespace denial (`RefNotPermitted`), a missing Service (`BackendNotFound`), an unsupported kind/port, or a `BackendTLSPolicy` the proxy cannot enforce (`InvalidBackendTLSPolicy`) — it stays in the weighted pool and the proxy returns HTTP 500 for its traffic fraction only; the other backends in the same rule keep serving their proportional share. The route status shows `ResolvedRefs=False`. Weighting is not failover: an invalid ref fails closed for its fraction rather than silently shifting that traffic to the healthy backends. Only when *every* backend in a rule is unavailable (or all carry `weight: 0`) does the rule return 500 for all of its traffic. A `weight: 0` invalid ref carries no traffic, so it is dropped rather than marked. See [Unavailable backends return a status, not a dial error](limitations.md#unavailable-backends-return-a-status-not-a-dial-error).
+    If a backend ref in a rule fails validation — cross-namespace denial (`RefNotPermitted`), a missing Service (`BackendNotFound`), an unsupported kind/port, or a `BackendTLSPolicy` the proxy cannot enforce (`InvalidBackendTLSPolicy`) — it stays in the weighted pool and the proxy returns HTTP 500 (gRPC: `UNAVAILABLE`) for its traffic fraction only; the other backends in the same rule keep serving their proportional share. The route status shows `ResolvedRefs=False`. Weighting is not failover: an invalid ref fails closed for its fraction rather than silently shifting that traffic to the healthy backends. Only when *every* backend in a rule is unavailable (or all carry `weight: 0`) does the rule return 500 (gRPC: `UNAVAILABLE`) for all of its traffic. A `weight: 0` invalid ref carries no traffic, so it is dropped rather than marked. See [Unavailable backends return a status, not a dial error](limitations.md#unavailable-backends-return-a-status-not-a-dial-error).
 
 ## Status Conditions
 

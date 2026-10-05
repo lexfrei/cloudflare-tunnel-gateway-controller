@@ -314,7 +314,13 @@ func (s *metricsRequestState) finish() {
 
 	s.metrics.requestsInFlight.Dec()
 	s.metrics.requestDuration.WithLabelValues(s.hostname).Observe(time.Since(s.start).Seconds())
-	s.metrics.requestsTotal.WithLabelValues(s.hostname, statusClass(s.counted.Status())).Inc()
+
+	class := statusClass(s.counted.Status())
+	if s.counted.proxyGRPCFailure.Load() {
+		class = statusClass(http.StatusInternalServerError)
+	}
+
+	s.metrics.requestsTotal.WithLabelValues(s.hostname, class).Inc()
 	s.metrics.responseBytes.WithLabelValues(s.hostname).Add(float64(s.counted.BytesWritten()))
 	s.metrics.requestBytes.WithLabelValues(s.hostname).Add(float64(s.bodyBytes.Load()))
 }
