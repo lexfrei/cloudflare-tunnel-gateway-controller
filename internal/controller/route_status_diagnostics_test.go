@@ -54,6 +54,45 @@ func TestDiagnostics_EveryRuleUnservable_AcceptedFalse(t *testing.T) {
 		"PartiallyInvalid must not be set when the whole route is rejected")
 }
 
+// TestDiagnostics_EveryRuleIncompatibleFilters_AcceptedReason pins that a route
+// whose every rule is refused for incompatible filters carries the spec's
+// IncompatibleFilters reason, and that a mix of causes falls back to
+// UnsupportedValue.
+func TestDiagnostics_EveryRuleIncompatibleFilters_AcceptedReason(t *testing.T) {
+	t.Parallel()
+
+	incompatible := proxy.RouteDiagnostic{
+		Namespace: "default", Name: "web", RuleIndex: 0, Target: proxy.DiagnosticAccepted,
+		Reason: string(gatewayv1.RouteReasonIncompatibleFilters), Message: "rule 0 incompatible", WholeRule: true,
+	}
+	unsupported := proxy.RouteDiagnostic{
+		Namespace: "default", Name: "web", RuleIndex: 1, Target: proxy.DiagnosticAccepted,
+		Reason: string(gatewayv1.RouteReasonUnsupportedValue), Message: "rule 1 bad", WholeRule: true,
+	}
+	secondIncompatible := incompatible
+	secondIncompatible.RuleIndex = 1
+
+	tests := []struct {
+		name        string
+		diagnostics []proxy.RouteDiagnostic
+		want        gatewayv1.RouteConditionReason
+	}{
+		{name: "all incompatible", diagnostics: []proxy.RouteDiagnostic{incompatible, secondIncompatible}, want: gatewayv1.RouteReasonIncompatibleFilters},
+		{name: "mixed causes", diagnostics: []proxy.RouteDiagnostic{incompatible, unsupported}, want: gatewayv1.RouteReasonUnsupportedValue},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			accepted := findCondition(buildParentStatusForDiag(tt.diagnostics, 2).Conditions, string(gatewayv1.RouteConditionAccepted))
+			require.NotNil(t, accepted)
+			assert.Equal(t, metav1.ConditionFalse, accepted.Status)
+			assert.Equal(t, string(tt.want), accepted.Reason)
+		})
+	}
+}
+
 // TestDiagnostics_SomeRulesDropped_PartiallyInvalid pins that when only some
 // rules are unservable, the route stays Accepted=True and gets a
 // PartiallyInvalid=True condition whose message starts with the spec-mandated

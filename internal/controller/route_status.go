@@ -48,7 +48,7 @@ type routeStatusUpdateParams struct {
 	acceptedOverride *acceptedConditionOverride
 	// diagnostics are the converter's per-route findings about config that will
 	// not be served exactly as written (e.g. unsupported filters). The status
-	// writer turns them into an Accepted=False/UnsupportedValue override (when
+	// writer turns them into an Accepted=False override (when
 	// every rule is wholly unservable) or a PartiallyInvalid=True condition
 	// (when only some rules/backends are affected and the route still serves).
 	diagnostics []proxy.RouteDiagnostic
@@ -453,7 +453,7 @@ func dataPlaneDiagnostic(target proxy.DiagnosticTarget) bool {
 }
 
 // diagnosticConditions derives, from the converter's per-route Accepted-target
-// diagnostics, either an Accepted=False/UnsupportedValue override (when every
+// diagnostics, either an Accepted=False override (when every
 // rule of the route is wholly unservable) or a PartiallyInvalid=True condition
 // (when only some rules or backend fractions are affected and the route still
 // serves the rest). Returns (nil, nil) when there are no Accepted-target
@@ -488,7 +488,7 @@ func diagnosticConditions(
 	// Every rule wholly unservable → the route cannot be served at all.
 	if ruleCount > 0 && len(wholeRuleIdx) >= ruleCount {
 		return &acceptedConditionOverride{
-			reason:  string(gatewayv1.RouteReasonUnsupportedValue),
+			reason:  wholeRouteRejectionReason(accepted),
 			message: droppedConfigMessage(accepted, false),
 		}, nil
 	}
@@ -502,6 +502,18 @@ func diagnosticConditions(
 		Reason:             string(gatewayv1.RouteReasonUnsupportedValue),
 		Message:            droppedConfigMessage(accepted, true),
 	}
+}
+
+// wholeRouteRejectionReason is IncompatibleFilters when that is the only cause
+// behind the rejection, and UnsupportedValue otherwise.
+func wholeRouteRejectionReason(accepted []proxy.RouteDiagnostic) string {
+	for i := range accepted {
+		if accepted[i].Reason != string(gatewayv1.RouteReasonIncompatibleFilters) {
+			return string(gatewayv1.RouteReasonUnsupportedValue)
+		}
+	}
+
+	return string(gatewayv1.RouteReasonIncompatibleFilters)
 }
 
 // buildShadowedCondition aggregates Shadowed-target diagnostics into one

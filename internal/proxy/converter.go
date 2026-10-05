@@ -278,11 +278,43 @@ func convertHTTPRouteRule(
 		}
 	}
 
+	if hasRedirectAndRewrite(rule) {
+		proxyRule.UnavailableStatus = http.StatusInternalServerError
+
+		sink.add(DiagnosticAccepted, string(gatewayv1.RouteReasonIncompatibleFilters), incompatibleFiltersMessage, true)
+	}
+
 	applyRuleTiming(rule, &proxyRule, sink)
 
 	warnIfWSResponseFilterStripsHandshake(&proxyRule, sink)
 
 	return proxyRule
+}
+
+const incompatibleFiltersMessage = "rule combines RequestRedirect and URLRewrite filters (at rule or backendRef level); " +
+	"matching requests receive HTTP 500. Keep only one of the two on the rule."
+
+// hasRedirectAndRewrite reports whether a rule carries both a RequestRedirect and
+// a URLRewrite anywhere across its own and its backendRefs' filters, which the
+// spec forbids on one rule. The CRD's CEL checks each filter list separately,
+// so only the cross-level pairs reach here.
+func hasRedirectAndRewrite(rule *gatewayv1.HTTPRouteRule) bool {
+	var redirect, rewrite bool
+
+	note := func(filters []gatewayv1.HTTPRouteFilter) {
+		for idx := range filters {
+			redirect = redirect || filters[idx].Type == gatewayv1.HTTPRouteFilterRequestRedirect
+			rewrite = rewrite || filters[idx].Type == gatewayv1.HTTPRouteFilterURLRewrite
+		}
+	}
+
+	note(rule.Filters)
+
+	for idx := range rule.BackendRefs {
+		note(rule.BackendRefs[idx].Filters)
+	}
+
+	return redirect && rewrite
 }
 
 // wsHandshakeRequiredHeaders is the set of response headers that RFC 6455
@@ -919,23 +951,31 @@ func clampPercent(value int64) int32 {
 }
 
 func convertHeaderModifier(modifier *gatewayv1.HTTPHeaderFilter) *HeaderModifier {
-	result := &HeaderModifier{}
-
-	for _, header := range modifier.Set {
-		result.Set = append(result.Set, HeaderValue{
-			Name:  string(header.Name),
-			Value: header.Value,
-		})
+	return &HeaderModifier{
+		Set:    firstHeaderPerName(modifier.Set),
+		Add:    firstHeaderPerName(modifier.Add),
+		Remove: append([]string(nil), modifier.Remove...),
 	}
+}
 
-	for _, header := range modifier.Add {
-		result.Add = append(result.Add, HeaderValue{
-			Name:  string(header.Name),
-			Value: header.Value,
-		})
+// firstHeaderPerName keeps the first entry of each case-insensitive header
+// name: the HTTPHeader Name godoc says later equivalent entries MUST be ignored,
+// and the CRD's listMapKey only rejects exact duplicates.
+func firstHeaderPerName(headers []gatewayv1.HTTPHeader) []HeaderValue {
+	var result []HeaderValue
+
+	seen := make(map[string]struct{}, len(headers))
+
+	for _, header := range headers {
+		key := http.CanonicalHeaderKey(string(header.Name))
+		if _, dup := seen[key]; dup {
+			continue
+		}
+
+		seen[key] = struct{}{}
+
+		result = append(result, HeaderValue{Name: string(header.Name), Value: header.Value})
 	}
-
-	result.Remove = append(result.Remove, modifier.Remove...)
 
 	return result
 }
