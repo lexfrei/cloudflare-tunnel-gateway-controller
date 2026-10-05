@@ -191,7 +191,7 @@ The L7 proxy handles routing for every tunnel request, so most Gateway API behav
 - A Gateway that sets `spec.tls.frontend` (client certificate validation) is refused, because clients complete TLS with the Cloudflare edge; require client certificates at the edge instead.
 - `spec.addresses` can only name the tunnel CNAME: another hostname leaves the Gateway `Programmed=False` with reason `AddressNotUsable`, and any other address type refuses it with reason `UnsupportedAddress`.
 - gRPC requires Cloudflare zone gRPC proxying enabled (dashboard → Network → gRPC); otherwise the edge returns `403` zone-wide for `application/grpc`.
-- `BackendTLSPolicy` (proxy → backend TLS) is supported at minimum-viable scope: explicit `CACertificateRefs` only, `Hostname` and `URI` SANs, backend mTLS via the Gateway's `clientCertificateRef`.
+- `BackendTLSPolicy` (proxy → backend TLS) is supported at minimum-viable scope: core `Service` targets only, explicit `CACertificateRefs` only, `Hostname` and `URI` SANs, backend mTLS via the Gateway's `clientCertificateRef`. A `ServiceImport` backend is dialed plaintext.
 - Backend WebSocket via `appProtocol: kubernetes.io/ws` (and `/wss` with a `BackendTLSPolicy`).
 - `timeouts.request` / `timeouts.backendRequest` are enforced as header-only deadlines, so streaming responses (SSE, chunked, gRPC server-streaming) keep flowing past the deadline.
 - `retry` (Experimental channel) retries every method at most 10 times, at least 10ms apart, and a request body over 64 KiB, or a streamed one the first attempt did not finish sending, is not resent once the proxy has started reading it.
