@@ -1258,7 +1258,7 @@ func resolveBackendTLS(
 		return nil, rawURL
 	}
 
-	reportUnenforceableTLS(sink, tls, "Requests to this backend get HTTP 500.")
+	reportUnenforceableTLS(sink, tls, "Requests to this backend get HTTP 500 (gRPC UNAVAILABLE).")
 
 	return tls, forceHTTPSScheme(rawURL)
 }

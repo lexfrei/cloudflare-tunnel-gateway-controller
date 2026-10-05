@@ -194,10 +194,11 @@ func TestConvertGRPCRoutes_FiltersFailClosedWithDiagnostic(t *testing.T) {
 
 // TestConvertGRPCRoutes_BackendFiltersFailClosedWithDiagnostic pins that a
 // GRPCRoute *backend*-scoped unsupported filter (RequestMirror) fails that
-// backend closed — its traffic fraction returns HTTP 500 — and records a
-// backend-scope diagnostic, rather than being silently dropped while the rule
-// serves on. This is the gRPC analogue of the HTTP per-backend filter
-// fail-closed; the core header modifiers serve instead of failing closed.
+// backend closed — its traffic fraction is marked 500, UNAVAILABLE on the
+// wire — and records a backend-scope diagnostic, rather than being silently
+// dropped while the rule serves on. This is the gRPC analogue of the HTTP
+// per-backend filter fail-closed; the core header modifiers serve instead of
+// failing closed.
 func TestConvertGRPCRoutes_BackendFiltersFailClosedWithDiagnostic(t *testing.T) {
 	t.Parallel()
 

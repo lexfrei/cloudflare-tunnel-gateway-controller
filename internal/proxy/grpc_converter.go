@@ -46,7 +46,7 @@ const grpcSegmentPattern = "[^/]+"
 //
 // The core RequestHeaderModifier and extended ResponseHeaderModifier filters
 // are served through the shared header-modifier pipeline; RequestMirror and
-// ExtensionRef are not served yet and fail closed (HTTP 500).
+// ExtensionRef are not served yet and fail closed (UNAVAILABLE).
 // Multiple backendRefs are weighted: every listed backend is emitted with its
 // weight, and the proxy's weighted-random selection splits traffic in
 // proportion to those weights (same as HTTPRoute).
@@ -155,7 +155,7 @@ func convertGRPCFilter(filter *gatewayv1.GRPCRouteFilter, scope string, sink *di
 // applyGRPCBackendFilters converts a GRPCRoute backendRef's per-backend filters
 // and applies them to result: supported header modifiers are appended to
 // result.Filters; an unsupported filter (RequestMirror, ExtensionRef) fails only
-// this backend's traffic fraction closed (HTTP 500), the gRPC analogue of the
+// this backend's traffic fraction closed (UNAVAILABLE), the gRPC analogue of the
 // HTTP per-backend filter fail-closed. The rule keeps serving its other backends.
 func applyGRPCBackendFilters(result *BackendRef, filters []gatewayv1.GRPCRouteFilter, sink *diagSink) {
 	for filterIdx := range filters {
@@ -172,7 +172,7 @@ func applyGRPCBackendFilters(result *BackendRef, filters []gatewayv1.GRPCRouteFi
 
 // unsupportedGRPCFilterMessage builds the actionable status message for a
 // GRPCRoute filter type the proxy cannot serve. It names the offending type, the
-// consequence (HTTP 500 for matched requests), and the supported alternatives.
+// consequence (UNAVAILABLE for matched requests), and the supported alternatives.
 func unsupportedGRPCFilterMessage(scope, filterType string) string {
 	return fmt.Sprintf(
 		"GRPCRoute filter type %q on this %s is not supported; matching requests receive HTTP 500. "+

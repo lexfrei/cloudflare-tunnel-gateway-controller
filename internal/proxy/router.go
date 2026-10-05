@@ -623,13 +623,13 @@ func compileRule(rule *RouteRule, ruleIndex int, env filterEnv) (*compiledRule, 
 // noBackend is failClosed's backendIdx for a rule-level filter.
 const noBackend = -1
 
-// failClosed returns a copy of rule that answers HTTP 500 instead of serving
-// without a filter this proxy could not compile: the whole rule for a
-// rule-level filter, or only the backend carrying it (its share of the weighted
-// pool) for a backend-level one. The Gateway API forbids skipping a filter an
-// implementation cannot honour, so the rule is neither dropped, which would let
-// its requests fall through to a less specific rule, nor served as if the filter
-// were absent. The copy keeps cfg itself as pushed.
+// failClosed returns a copy of rule that answers HTTP 500 (gRPC: UNAVAILABLE)
+// instead of serving without a filter this proxy could not compile: the whole
+// rule for a rule-level filter, or only the backend carrying it (its share of
+// the weighted pool) for a backend-level one. The Gateway API forbids skipping
+// a filter an implementation cannot honour, so the rule is neither dropped,
+// which would let its requests fall through to a less specific rule, nor served
+// as if the filter were absent. The copy keeps cfg itself as pushed.
 func failClosed(rule *RouteRule, backendIdx int) *RouteRule {
 	closed := *rule
 

@@ -380,14 +380,29 @@ func (h *Handler) RecordContainedPanic() {
 // without the dropped config. Returns true when it wrote the error, so the
 // caller short-circuits before backend selection, the WebSocket upgrade, and
 // the filter pipeline — all of which would otherwise reach the backend.
-func writeRuleUnavailable(writer http.ResponseWriter, rule *RouteRule) bool {
+func writeRuleUnavailable(writer http.ResponseWriter, req *http.Request, rule *RouteRule) bool {
 	if rule == nil || rule.UnavailableStatus == 0 {
 		return false
 	}
 
-	http.Error(writer, http.StatusText(rule.UnavailableStatus), rule.UnavailableStatus)
+	writeUnavailable(writer, req, rule.UnavailableStatus, http.StatusText(rule.UnavailableStatus))
 
 	return true
+}
+
+// writeUnavailable answers a request the proxy will not forward. GRPCRoute
+// requires UNAVAILABLE where HTTPRoute requires an HTTP error status, and a
+// gRPC client cannot read an HTTP status (it sees Unknown), so a gRPC request
+// gets a trailers-only UNAVAILABLE whatever the configured status, also on an
+// HTTPRoute rule, where the spec asks for the HTTP status.
+func writeUnavailable(writer http.ResponseWriter, req *http.Request, status int, message string) {
+	if isGRPCRequest(req) {
+		writeGRPCStatus(writer, grpcStatusUnavailable, message)
+
+		return
+	}
+
+	http.Error(writer, message, status)
 }
 
 // ServeHTTP implements http.Handler.
@@ -430,7 +445,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 	// (nil-safe; "" when metrics are disabled or no hostname matched).
 	metricsState.setHostname(result.MatchedHostname)
 
-	if writeRuleUnavailable(writer, result.Rule) {
+	if writeRuleUnavailable(writer, req, result.Rule) {
 		return
 	}
 
@@ -477,6 +492,9 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 // Unimplemented) for a method/route that does not exist. Kept as a plain string
 // so the data plane does not depend on the grpc-go codes package for one value.
 const grpcStatusUnimplemented = "12"
+
+// grpcStatusUnavailable is codes.Unavailable.
+const grpcStatusUnavailable = "14"
 
 // isGRPCRequest reports whether req is a gRPC call, identified by its
 // application/grpc content type (RFC-style prefix match covers the
@@ -705,7 +723,7 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 				slog.Int("backend_count", len(result.Rule.Backends)))
 		}
 
-		http.Error(writer, "no backend available for this route", http.StatusInternalServerError)
+		writeUnavailable(writer, req, http.StatusInternalServerError, "no backend available for this route")
 
 		return
 	}
@@ -717,14 +735,14 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 	// — 500 for an invalid ref per the Gateway API spec — instead of dialing a
 	// dead address and surfacing a 502. See BackendRef.UnavailableStatus.
 	if backend.UnavailableStatus != 0 {
-		http.Error(writer, "backend unavailable", backend.UnavailableStatus)
+		writeUnavailable(writer, req, backend.UnavailableStatus, "backend unavailable")
 
 		return
 	}
 
 	backendURL, err := url.Parse(backend.URL)
 	if err != nil {
-		http.Error(writer, "invalid backend URL", http.StatusInternalServerError)
+		writeUnavailable(writer, req, http.StatusInternalServerError, "invalid backend URL")
 
 		return
 	}
@@ -736,7 +754,7 @@ func (h *Handler) proxyToBackend(writer http.ResponseWriter, req *http.Request, 
 	// opaque 502 — this is what makes the "never dialed" guarantee on
 	// externalBackendScheme literally true.
 	if backendURL.Scheme == externalBackendScheme {
-		http.Error(writer, "backend unavailable", http.StatusInternalServerError)
+		writeUnavailable(writer, req, http.StatusInternalServerError, "backend unavailable")
 
 		return
 	}
