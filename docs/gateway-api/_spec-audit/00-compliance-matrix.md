@@ -10,14 +10,14 @@ Clause-by-clause audit of the implementation against the normative (RFC-2119) su
 4. Ran the official conformance suite (Gateway HTTP + gRPC profiles) against a fresh kind cluster + real Cloudflare test tunnel as pass/fail ground truth.
 5. Adversarially re-verified every GAP — a skeptic tried to refute each (CRD enforcement, N/A, conditional-satisfied, documented-deviation) before it was allowed to stand. 18 of 25 first-pass GAPs did not survive.
 
-## Dashboard (397 clauses: 376 from the v1.5.1 first-pass classification, 2 added by the v1.6.0 refresh — GW-106 MET, RG-06 NA — 2 covering the tunnel-ownership refusal — GW-107 MET, SH-78 GAP — SH-48 MET, and 16 added by the v1.6.2 sync — 11 MET, GW-112 PARTIAL, 4 NA)
+## Dashboard (397 clauses: 376 from the v1.5.1 first-pass classification, 2 added by the v1.6.0 refresh — GW-106 MET, RG-06 NA — 2 covering the tunnel-ownership refusal — GW-107 MET, SH-78 GAP — SH-48 MET, and 16 added by the v1.6.2 sync — classified 11 MET, GW-112 PARTIAL, 4 NA)
 
 Counts are the current `rows-*.md` verdicts (`cat rows-*.md | grep -E '^\| [A-Z]+-[0-9]+ \|' | awk -F'|' '{print $5}' | sort | uniq -c`); rows move as fixes land, so the table drifts from the first-pass split of 221 MET / 31 PARTIAL / 25 GAP / 99 N/A that this table carried when the matrix was first published. The 25 first-pass GAPs are traced under "Adversarial verification".
 
 | Status | Count |
 | --- | --- |
-| MET | 278 |
-| PARTIAL | 22 |
+| MET | 281 |
+| PARTIAL | 19 |
 | GAP | 1 |
 | REFUTED | 1 |
 | DOWNGRADE-NA | 1 |
@@ -42,6 +42,8 @@ The rows were re-read against the vendored v1.6.2 text and the code on master. F
 - NA → PARTIAL: SH-19 (the Standard CRD enforces parentRef distinctness, but compares `namespace` literally, so an unset namespace and the route's own namespace count as different parents).
 - NA → DOWNGRADE-DOCUMENTED: BTLS-04 (`shouldmay-BTLS.md` already had it as DEVIATED-DOCUMENTED).
 - MET → PARTIAL: GW-88 and LS-35, with the new GW-112: a cross-namespace certificate reference of a kind other than Secret is reported InvalidCertificateRef (InvalidClientCertificateRef for the client certificate) before any grant check, where the clause asks for RefNotPermitted when no ReferenceGrant allows it.
+
+Since the sync, GW-88, GW-112 and LS-35 moved PARTIAL → MET: the ReferenceGrant is checked before the kind, and only a grant naming the reference's own kind allows it.
 
 Kept as recorded, pending a maintainer decision: GW-02 and GW-24 (listeners matched without their port), GW-101 and GW-103 (no OverlappingTLSConfig), GR-14 and GR-15 (HTTPRoute/GRPCRoute hostname conflict), SH-33 and SH-34 (an unparseable timeout or retry policy is reported as "Dropped Rule" while the rule keeps serving), SH-78 (Pending with Accepted=False), HR-62 (the scheme of a scheme-less redirect).
 

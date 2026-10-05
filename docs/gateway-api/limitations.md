@@ -56,7 +56,7 @@ This implementation also accepts the non-canonical `core` in several places. Tha
 
 The asymmetry is deliberate. Accepting `core` on backend references is kept only so manifests that already rely on it keep working; Secret references never accepted it, so there is nothing to keep compatible there, and they follow the spec.
 
-Both halves of the Secret case reject it, and they fail in different places, so either one alone is enough to break a working manifest. A `clientCertificateRef` spelled `core` is not recognised as a core `Secret` reference at all, so it never reaches the grant check and the Gateway reports `ResolvedRefs=False`. A grant spelled `core` — the shape you get by copying a working `Service` grant and changing `kind` — matches nothing, so a canonically spelled reference across namespaces is still refused, as `RefNotPermitted`. A listener `certificateRefs` entry spelled `core` fails on the listener instead: it reports `ResolvedRefs=False` with reason `InvalidCertificateRef`.
+Both halves of the Secret case reject it, and they fail in different places, so either one alone is enough to break a working manifest. A `clientCertificateRef` spelled `core` is not recognised as a core `Secret` reference at all, so the Gateway reports `ResolvedRefs=False`; across namespaces the reason is `RefNotPermitted` unless a grant also spells the group `core`. A grant spelled `core` — the shape you get by copying a working `Service` grant and changing `kind` — matches nothing, so a canonically spelled reference across namespaces is still refused, as `RefNotPermitted`. A listener `certificateRefs` entry spelled `core` fails on the listener instead: it reports `ResolvedRefs=False`, with reason `RefNotPermitted` across namespaces unless a grant also spells the group `core`, and `InvalidCertificateRef` otherwise.
 
 Both are fail-closed: the backend hop proceeds without a client certificate rather than with someone else's, and nothing is served that should not be. But if you arrived here because a certificate reference stopped working after you carried over a spelling that works for `backendRef`, one of those two is why.
 
@@ -178,7 +178,7 @@ An `HTTPS` listener is accepted and serves the requests clients send to the edge
 
 ### Certificate references of an unsupported kind
 
-A listener `certificateRefs` entry, or a `clientCertificateRef`, that names anything other than a core `Secret` is reported `ResolvedRefs=False` with `InvalidCertificateRef` (`InvalidClientCertificateRef` for the client certificate) before any `ReferenceGrant` is looked up. A cross-namespace reference of another kind that no grant allows therefore gets that reason, where the spec asks for `RefNotPermitted`. Either way the reference is refused.
+Only a core `Secret` is supported. A listener `certificateRefs` entry, or a `clientCertificateRef`, that names any other kind is refused with `ResolvedRefs=False`. Across namespaces the `ReferenceGrant` is checked first, and it must name that kind: with no such grant the reason is `RefNotPermitted`, otherwise `InvalidCertificateRef` (`InvalidClientCertificateRef` for the client certificate).
 
 ### `Programmed` on the shared plane does not track the proxy
 

@@ -1204,7 +1204,7 @@ func (r *ListenerSetReconciler) secretToListenerSets(
 
 // referenceGrantToListenerSets maps a ReferenceGrant event to reconcile
 // requests for every ListenerSet that needs a ReferenceGrant from
-// Kind=ListenerSet to a Secret in the grant's namespace. Without this, a
+// Kind=ListenerSet to a certificate in the grant's namespace. Without this, a
 // ReferenceGrant create/delete leaves dependent ListenerSets with stale
 // ResolvedRefs status.
 func (r *ListenerSetReconciler) referenceGrantToListenerSets(
@@ -1216,7 +1216,7 @@ func (r *ListenerSetReconciler) referenceGrantToListenerSets(
 		return nil
 	}
 
-	if !grantTargetsSecret(grant) {
+	if !grantFromKind(grant, kindListenerSet) {
 		return nil
 	}
 
@@ -1290,11 +1290,11 @@ func listenerSetReferencesSecretsInNamespace(listenerSet *gatewayv1.ListenerSet,
 	return false
 }
 
-// grantTargetsSecret returns true when the ReferenceGrant has any to-entry
-// for a core Secret.
-func grantTargetsSecret(grant *gatewayv1beta1.ReferenceGrant) bool {
-	for _, target := range grant.Spec.To {
-		if isCoreSecret(string(target.Group), string(target.Kind)) {
+// grantFromKind reports whether the ReferenceGrant admits referrers of the
+// given Gateway API kind from any namespace.
+func grantFromKind(grant *gatewayv1beta1.ReferenceGrant, kind string) bool {
+	for _, from := range grant.Spec.From {
+		if from.Group == gatewayv1.GroupName && string(from.Kind) == kind {
 			return true
 		}
 	}

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -93,26 +94,19 @@ func loadGatewayClientCertPEM(
 		return nil, nil, nil
 	}
 
-	if !isCoreSecretRef(ref) {
+	targetNS, verdict, err := classifyCertRef(gateway.Namespace, *ref, func(targetNamespace string) (bool, error) {
+		return grantChecker(ctx, gateway, targetNamespace, *ref)
+	})
+
+	switch {
+	case err != nil:
+		// A grant that could not be read says nothing about the ref, so
+		// the status emit path keeps the previous ResolvedRefs verdict.
+		return nil, nil, errors.Wrapf(errGatewayClientCertTransientError, "%s", err.Error())
+	case verdict == certRefNotPermitted:
+		return nil, nil, errGatewayClientCertRefNotPermitted
+	case verdict == certRefUnsupportedKind:
 		return nil, nil, errGatewayClientCertUnsupportedRef
-	}
-
-	targetNS := gateway.Namespace
-	if ref.Namespace != nil {
-		targetNS = string(*ref.Namespace)
-	}
-
-	if targetNS != gateway.Namespace {
-		allowed, err := grantChecker(ctx, gateway, targetNS, *ref)
-		if err != nil {
-			// A grant that could not be read says nothing about the ref, so
-			// the status emit path keeps the previous ResolvedRefs verdict.
-			return nil, nil, errors.Wrapf(errGatewayClientCertTransientError, "%s", err.Error())
-		}
-
-		if !allowed {
-			return nil, nil, errGatewayClientCertRefNotPermitted
-		}
 	}
 
 	secret := &corev1.Secret{}
@@ -234,7 +228,7 @@ func buildClientCertResolvedRefsCondition(generation int64, now metav1.Time, err
 
 // checkSecretReferenceGrantForGateway walks the ReferenceGrants in the target
 // namespace and reports whether any grants the Gateway's namespace access to
-// the referenced Secret. A free function so the ProxySyncer can authorise the
+// the referenced object. A free function so the ProxySyncer can authorise the
 // same cross-namespace path without holding a GatewayReconciler reference.
 func checkSecretReferenceGrantForGateway(
 	ctx context.Context,
@@ -243,18 +237,35 @@ func checkSecretReferenceGrantForGateway(
 	targetNamespace string,
 	ref gatewayv1.SecretObjectReference,
 ) (bool, error) {
+	return referenceGrantPermitsRef(ctx, c, targetNamespace, ref, func(grant *gatewayv1beta1.ReferenceGrant) bool {
+		return grantAllowsGatewayFromNamespace(grant, gateway.Namespace)
+	})
+}
+
+// referenceGrantPermitsRef reports whether a ReferenceGrant in targetNamespace
+// admits the referrer (decided by fromAllowed) and names the ref's own group
+// and kind: a grant to Secrets does not permit a reference to anything else.
+func referenceGrantPermitsRef(
+	ctx context.Context,
+	c client.Client,
+	targetNamespace string,
+	ref gatewayv1.SecretObjectReference,
+	fromAllowed func(*gatewayv1beta1.ReferenceGrant) bool,
+) (bool, error) {
 	var grants gatewayv1beta1.ReferenceGrantList
 	if err := c.List(ctx, &grants, client.InNamespace(targetNamespace)); err != nil {
 		return false, errors.Wrapf(err, "listing ReferenceGrants in %s", targetNamespace)
 	}
 
+	group, kind := secretRefGroupKind(&ref)
+
 	for i := range grants.Items {
-		if !grantAllowsGatewayFromNamespace(&grants.Items[i], gateway.Namespace) {
+		if !fromAllowed(&grants.Items[i]) {
 			continue
 		}
 
 		for _, to := range grants.Items[i].Spec.To {
-			if !isCoreSecret(string(to.Group), string(to.Kind)) {
+			if string(to.Group) != group || string(to.Kind) != kind {
 				continue
 			}
 
@@ -265,6 +276,49 @@ func checkSecretReferenceGrantForGateway(
 	}
 
 	return false, nil
+}
+
+// certRefVerdict is what a certificate reference earns before its target is
+// read.
+type certRefVerdict int
+
+const (
+	certRefAllowed certRefVerdict = iota
+	certRefNotPermitted
+	certRefUnsupportedKind
+)
+
+// classifyCertRef resolves the ref's namespace and checks the ReferenceGrant
+// before the kind: the spec reserves InvalidCertificateRef and
+// InvalidClientCertificateRef for a reference that is allowed, so a
+// cross-namespace reference no grant permits is RefNotPermitted whatever it
+// points at. granted is consulted only for a cross-namespace reference.
+func classifyCertRef(
+	ownerNamespace string,
+	ref gatewayv1.SecretObjectReference,
+	granted func(targetNamespace string) (bool, error),
+) (string, certRefVerdict, error) {
+	targetNamespace := ownerNamespace
+	if ref.Namespace != nil {
+		targetNamespace = string(*ref.Namespace)
+	}
+
+	if targetNamespace != ownerNamespace {
+		allowed, err := granted(targetNamespace)
+		if err != nil {
+			return targetNamespace, certRefNotPermitted, err
+		}
+
+		if !allowed {
+			return targetNamespace, certRefNotPermitted, nil
+		}
+	}
+
+	if !isCoreSecretRef(&ref) {
+		return targetNamespace, certRefUnsupportedKind, nil
+	}
+
+	return targetNamespace, certRefAllowed, nil
 }
 
 // grantAllowsGatewayFromNamespace reports whether the grant admits Gateways
@@ -284,6 +338,18 @@ func grantAllowsGatewayFromNamespace(grant *gatewayv1beta1.ReferenceGrant, gatew
 // isCoreSecretRef reports whether the ref targets a core/v1 Secret. nil
 // Group/Kind are treated as the spec defaults.
 func isCoreSecretRef(ref *gatewayv1.SecretObjectReference) bool {
+	return isCoreSecret(secretRefGroupKind(ref))
+}
+
+func unsupportedCertRefMessage(ref *gatewayv1.SecretObjectReference) string {
+	group, kind := secretRefGroupKind(ref)
+
+	return fmt.Sprintf("Unsupported certificate ref kind: %s/%s", group, kind)
+}
+
+// secretRefGroupKind returns the ref's group and kind with the spec defaults
+// (core group, Secret) applied.
+func secretRefGroupKind(ref *gatewayv1.SecretObjectReference) (string, string) {
 	group := ""
 	if ref.Group != nil {
 		group = string(*ref.Group)
@@ -294,7 +360,7 @@ func isCoreSecretRef(ref *gatewayv1.SecretObjectReference) bool {
 		kind = string(*ref.Kind)
 	}
 
-	return isCoreSecret(group, kind)
+	return group, kind
 }
 
 // isCoreSecret is the one group/kind test for a Secret reference and for the

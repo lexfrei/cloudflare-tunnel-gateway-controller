@@ -74,42 +74,25 @@ func validateListenerSetCertRef(
 	listenerSet *gatewayv1.ListenerSet,
 	ref gatewayv1.SecretObjectReference,
 ) (listenerEntryRefsCheck, error) {
-	refKind := kindSecret
-	if ref.Kind != nil {
-		refKind = string(*ref.Kind)
-	}
+	refNamespace, verdict, err := classifyCertRef(listenerSet.Namespace, ref, func(targetNamespace string) (bool, error) {
+		return checkListenerSetSecretReferenceGrant(ctx, cli, listenerSet, targetNamespace, ref)
+	})
 
-	refGroup := ""
-	if ref.Group != nil {
-		refGroup = string(*ref.Group)
-	}
-
-	if !isCoreSecret(refGroup, refKind) {
+	switch {
+	case err != nil:
+		return listenerEntryRefsCheck{}, err
+	case verdict == certRefNotPermitted:
+		return listenerEntryRefsCheck{
+			Status:  metav1.ConditionFalse,
+			Reason:  string(gatewayv1.ListenerReasonRefNotPermitted),
+			Message: fmt.Sprintf("Cross-namespace reference to %s/%s not permitted", refNamespace, ref.Name),
+		}, nil
+	case verdict == certRefUnsupportedKind:
 		return listenerEntryRefsCheck{
 			Status:  metav1.ConditionFalse,
 			Reason:  string(gatewayv1.ListenerReasonInvalidCertificateRef),
-			Message: fmt.Sprintf("Unsupported certificate ref kind: %s/%s", refGroup, refKind),
+			Message: unsupportedCertRefMessage(&ref),
 		}, nil
-	}
-
-	refNamespace := listenerSet.Namespace
-	if ref.Namespace != nil {
-		refNamespace = string(*ref.Namespace)
-	}
-
-	if refNamespace != listenerSet.Namespace {
-		allowed, err := checkListenerSetSecretReferenceGrant(ctx, cli, listenerSet, refNamespace, ref)
-		if err != nil {
-			return listenerEntryRefsCheck{}, err
-		}
-
-		if !allowed {
-			return listenerEntryRefsCheck{
-				Status:  metav1.ConditionFalse,
-				Reason:  string(gatewayv1.ListenerReasonRefNotPermitted),
-				Message: fmt.Sprintf("Cross-namespace reference to %s/%s not permitted", refNamespace, ref.Name),
-			}, nil
-		}
 	}
 
 	return validateListenerSetSecretExists(ctx, cli, refNamespace, ref)
@@ -178,7 +161,7 @@ func validateListenerSetSecretExists(
 }
 
 // checkListenerSetSecretReferenceGrant returns true when a ReferenceGrant in
-// targetNamespace permits the ListenerSet to reference the Secret. Unlike
+// targetNamespace permits the ListenerSet to reference the object. Unlike
 // Gateway-scoped grants this one MUST have from.Kind == ListenerSet (per
 // spec: ReferenceGrants applied to a Gateway are not inherited by child
 // ListenerSets).
@@ -189,29 +172,9 @@ func checkListenerSetSecretReferenceGrant(
 	targetNamespace string,
 	ref gatewayv1.SecretObjectReference,
 ) (bool, error) {
-	var grants gatewayv1beta1.ReferenceGrantList
-	if err := cli.List(ctx, &grants, client.InNamespace(targetNamespace)); err != nil {
-		return false, errors.Wrap(err, "failed to list ReferenceGrants")
-	}
-
-	for i := range grants.Items {
-		grant := &grants.Items[i]
-		if !grantAllowsListenerSet(grant, listenerSet.Namespace) {
-			continue
-		}
-
-		for _, target := range grant.Spec.To {
-			if !isCoreSecret(string(target.Group), string(target.Kind)) {
-				continue
-			}
-
-			if target.Name == nil || *target.Name == "" || string(*target.Name) == string(ref.Name) {
-				return true, nil
-			}
-		}
-	}
-
-	return false, nil
+	return referenceGrantPermitsRef(ctx, cli, targetNamespace, ref, func(grant *gatewayv1beta1.ReferenceGrant) bool {
+		return grantAllowsListenerSet(grant, listenerSet.Namespace)
+	})
 }
 
 func grantAllowsListenerSet(
