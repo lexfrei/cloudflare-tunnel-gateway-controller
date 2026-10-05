@@ -74,7 +74,8 @@ func TestBackendTLSResolver_PoisonedConfigSaysWhy(t *testing.T) {
 				WithObjects(tt.objects(t)...).
 				Build()
 
-			got := newBackendTLSResolver(fakeClient)(context.Background(), "ns", "svc", 443)
+			got, err := newBackendTLSResolver(fakeClient)(context.Background(), "ns", "svc", 443, true)
+			require.NoError(t, err)
 			require.NotNil(t, got)
 			assert.Empty(t, got.CABundlePEM)
 			assert.Contains(t, got.Unenforceable, "ns/p")
@@ -96,7 +97,8 @@ func TestBackendTLSResolver_ValidPolicyIsEnforceable(t *testing.T) {
 			caConfigMap("ns", "cm", generateSelfSignedCAPEM(t))).
 		Build()
 
-	got := newBackendTLSResolver(fakeClient)(context.Background(), "ns", "svc", 443)
+	got, err := newBackendTLSResolver(fakeClient)(context.Background(), "ns", "svc", 443, true)
+	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.NotEmpty(t, got.CABundlePEM)
 	assert.Empty(t, got.Unenforceable)

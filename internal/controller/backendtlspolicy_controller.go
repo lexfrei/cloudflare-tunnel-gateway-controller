@@ -395,7 +395,8 @@ func (r *BackendTLSPolicyReconciler) conflictWinnerFor(
 // Mismatch with the runtime resolver, by design: selectPolicyForServicePort
 // (internal/controller/proxy_syncer.go) resolves SectionName against the
 // actual Service port-name via a Service Get and matches when
-// SectionName == port-name. So a scoped (SectionName="https") and an
+// SectionName == port-name, or when a Service ref's Service is not in the
+// cache. So a scoped (SectionName="https") and an
 // unscoped policy on a Service with a port named "https" both reach the
 // resolver for that port at runtime, where the older one wins. This
 // status-side mapper deliberately treats those as different scopes per

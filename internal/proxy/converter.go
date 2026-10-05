@@ -86,7 +86,9 @@ type BackendProtocolResolver func(ctx context.Context, namespace, serviceName st
 // BackendTLSResolver returns the TLS config the proxy must apply when dialing
 // the given backend Service port, or nil when no BackendTLSPolicy targets it.
 // It lets the converter inject TLS settings without itself reading the API.
-type BackendTLSResolver func(ctx context.Context, namespace, serviceName string, port int32) *BackendTLSConfig
+// isService reports whether the ref names a core Service rather than another
+// kind, such as a ServiceImport, resolved under the same name.
+type BackendTLSResolver func(ctx context.Context, namespace, serviceName string, port int32, isService bool) *BackendTLSConfig
 
 // ClientCertConfig carries the PEM-encoded TLS client certificate (optionally
 // a chain) and matching private key that the proxy must present during backend
@@ -809,7 +811,8 @@ func convertMirrorFilter(
 	// TLS config the same way attachGatewayClientCert handles it for the
 	// main leg: with both inputs non-nil, the mirror leg does mTLS too.
 	if tlsResolver != nil {
-		if tls := tlsResolver(ctx, mirrorNS, string(mirror.BackendRef.Name), mirrorPort); tls != nil {
+		if tls := tlsResolver(ctx, mirrorNS, string(mirror.BackendRef.Name), mirrorPort,
+			IsServiceBackendRef(mirror.BackendRef)); tls != nil {
 			reportUnenforceableTLS(sink, tls, "Mirrored requests to it fail; the main request is unaffected.")
 			mirrorConfig.TLS = attachGatewayClientCert(tls, clientCert)
 			mirrorConfig.BackendURL = forceHTTPSScheme(mirrorURL)
@@ -1097,7 +1100,8 @@ func convertBackendRef(
 	// Resolve TLS first so the protocol resolver can know whether to silently
 	// pass through `appProtocol: https` (policy attached → suppressed) or warn
 	// (no policy → operator misconfigured a TLS hint with no actual TLS).
-	result.TLS, result.URL = resolveBackendTLS(ctx, tlsResolver, svcNamespace, serviceName, port, result.URL, sink)
+	result.TLS, result.URL = resolveBackendTLS(ctx, tlsResolver, svcNamespace, serviceName, port,
+		IsServiceBackendRef(backend.BackendObjectReference), result.URL, sink)
 	result.TLS = attachGatewayClientCert(result.TLS, clientCert)
 
 	var protoFailClosed bool
@@ -1247,6 +1251,7 @@ func resolveBackendTLS(
 	resolver BackendTLSResolver,
 	namespace, serviceName string,
 	port int32,
+	isService bool,
 	rawURL string,
 	sink *diagSink,
 ) (*BackendTLSConfig, string) {
@@ -1254,7 +1259,7 @@ func resolveBackendTLS(
 		return nil, rawURL
 	}
 
-	tls := resolver(ctx, namespace, serviceName, port)
+	tls := resolver(ctx, namespace, serviceName, port, isService)
 	if tls == nil {
 		return nil, rawURL
 	}

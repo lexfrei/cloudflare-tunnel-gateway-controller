@@ -35,7 +35,7 @@ func TestConvertRoutes_ClientCertResolverSeesTheRoute(t *testing.T) {
 	backend := gatewayv1.BackendRef{BackendObjectReference: gatewayv1.BackendObjectReference{
 		Name: "svc", Port: new(gatewayv1.PortNumber(443)),
 	}}
-	tlsResolver := func(context.Context, string, string, int32) *proxy.BackendTLSConfig {
+	tlsResolver := func(context.Context, string, string, int32, bool) *proxy.BackendTLSConfig {
 		return &proxy.BackendTLSConfig{ServerName: "svc"}
 	}
 	routeNN := types.NamespacedName{Namespace: "team", Name: "r"}

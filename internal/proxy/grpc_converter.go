@@ -312,7 +312,7 @@ func convertGRPCBackendRef(
 	applyGRPCBackendFilters(&result, backend.Filters, sink)
 
 	applyGRPCBackendTransport(ctx, &result, protocolResolver, tlsResolver, clientCert,
-		common.svcNamespace, common.serviceName, common.port, sink)
+		common.svcNamespace, common.serviceName, common.port, IsServiceBackendRef(backend.BackendObjectReference), sink)
 
 	return result, true
 }
@@ -367,9 +367,10 @@ func applyGRPCBackendTransport(
 	clientCert *ClientCertConfig,
 	svcNamespace, serviceName string,
 	port int32,
+	isService bool,
 	sink *diagSink,
 ) {
-	result.TLS, result.URL = resolveBackendTLS(ctx, tlsResolver, svcNamespace, serviceName, port, result.URL, sink)
+	result.TLS, result.URL = resolveBackendTLS(ctx, tlsResolver, svcNamespace, serviceName, port, isService, result.URL, sink)
 	result.TLS = attachGatewayClientCert(result.TLS, clientCert)
 
 	if result.TLS != nil {

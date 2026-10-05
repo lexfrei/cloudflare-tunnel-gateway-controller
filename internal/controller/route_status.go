@@ -893,9 +893,11 @@ const (
 	// its other parents lend, and is left out of its data plane's config when
 	// none lends one.
 	routeReasonParentNotEvaluated = "ParentNotEvaluated"
-	// routeReasonRefsUndecided marks a ResolvedRefs diagnostic for a reference
-	// whose ReferenceGrants could not be read. It never reaches a condition:
-	// the status writer keeps the previous ResolvedRefs verdict instead.
+	// routeReasonRefsUndecided marks a ResolvedRefs diagnostic derived from an
+	// input that could not be read: a reference's ReferenceGrants, or a
+	// backend's TLS, appProtocol or client-certificate settings. It never
+	// reaches a condition: the status writer keeps the previous ResolvedRefs
+	// verdict instead.
 	routeReasonRefsUndecided = "RefsUndecided"
 	// routeConditionTunnelShared is set True when this route's per-Gateway data
 	// plane shares one Cloudflare Tunnel with another dedicated Gateway (#488).

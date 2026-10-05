@@ -151,7 +151,7 @@ func TestConvertGRPCRoutes_PolicyOnBackendUpgradesToTLS(t *testing.T) {
 		},
 	}
 
-	tlsResolver := func(_ context.Context, namespace, serviceName string, port int32) *proxy.BackendTLSConfig {
+	tlsResolver := func(_ context.Context, namespace, serviceName string, port int32, _ bool) *proxy.BackendTLSConfig {
 		if namespace == "default" && serviceName == "echo-svc" && port == 8443 {
 			return &proxy.BackendTLSConfig{
 				CABundlePEM: "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n",
@@ -209,7 +209,7 @@ func TestConvertGRPCRoutes_GatewayClientCertStampedOnGRPCBackend(t *testing.T) {
 		},
 	}
 
-	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+	tlsResolver := func(_ context.Context, _, _ string, _ int32, _ bool) *proxy.BackendTLSConfig {
 		return &proxy.BackendTLSConfig{
 			CABundlePEM: "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n",
 			ServerName:  "echo-svc.default.svc.cluster.local",
@@ -271,7 +271,7 @@ func TestConvertGRPCRoutes_ClientCertOnlyWithoutPolicyStaysCleartext(t *testing.
 	}
 
 	// tlsResolver returns nil for every Service — no policy in the cluster.
-	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+	tlsResolver := func(_ context.Context, _, _ string, _ int32, _ bool) *proxy.BackendTLSConfig {
 		return nil
 	}
 
@@ -327,7 +327,7 @@ func TestConvertGRPCRoutes_MixedTLSAndCleartextBackends(t *testing.T) {
 		},
 	}
 
-	tlsResolver := func(_ context.Context, _, serviceName string, _ int32) *proxy.BackendTLSConfig {
+	tlsResolver := func(_ context.Context, _, serviceName string, _ int32, _ bool) *proxy.BackendTLSConfig {
 		if serviceName == "echo-tls" {
 			return &proxy.BackendTLSConfig{CABundlePEM: "FAKE", ServerName: "echo-tls"}
 		}
@@ -500,7 +500,14 @@ func TestConvertGRPCRoutes_ServiceImportBackendResolved(t *testing.T) {
 		},
 	}
 
-	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil, nil)
+	isService := true
+	tlsResolver := func(_ context.Context, _, _ string, _ int32, service bool) *proxy.BackendTLSConfig {
+		isService = service
+
+		return nil
+	}
+
+	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, tlsResolver, nil)
 
 	require.Len(t, cfg.Rules, 1)
 	require.Len(t, cfg.Rules[0].Backends, 1)
@@ -510,6 +517,7 @@ func TestConvertGRPCRoutes_ServiceImportBackendResolved(t *testing.T) {
 		"ServiceImport gRPC backend must resolve to a clusterset.local URL")
 	assert.Equal(t, proxy.BackendProtocolH2C, cfg.Rules[0].Backends[0].Protocol,
 		"gRPC backends are forced to h2c")
+	assert.False(t, isService, "the TLS resolver is told the ref is not a core Service")
 }
 
 // TestConvertGRPCRoutes_ExternalBackendSentinel proves a gRPC ExternalBackend
@@ -604,7 +612,7 @@ func TestConvertGRPCRoutes_ExternalBackendSkipsBackendTLSResolver(t *testing.T) 
 	// A BackendTLSPolicy resolver that, if consulted, would cross-wire TLS onto
 	// the ExternalBackend (modelling a like-named Service collision).
 	resolverCalled := false
-	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+	tlsResolver := func(_ context.Context, _, _ string, _ int32, _ bool) *proxy.BackendTLSConfig {
 		resolverCalled = true
 
 		return &proxy.BackendTLSConfig{
@@ -1124,7 +1132,7 @@ func TestConvertRoutes_BackendTLSEquivalentAcrossRouteKinds(t *testing.T) {
 
 	var calls []resolverCall
 
-	tlsResolver := func(_ context.Context, namespace, serviceName string, port int32) *proxy.BackendTLSConfig {
+	tlsResolver := func(_ context.Context, namespace, serviceName string, port int32, _ bool) *proxy.BackendTLSConfig {
 		calls = append(calls, resolverCall{namespace: namespace, service: serviceName, port: port})
 
 		cfgCopy := *tlsConfig

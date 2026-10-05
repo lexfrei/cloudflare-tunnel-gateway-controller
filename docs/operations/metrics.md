@@ -24,7 +24,7 @@ These metrics track the core synchronization of routes to Cloudflare Tunnel.
 | `cftunnel_failed_backend_refs` | Gauge | `type` | Failed backend references by route type |
 | `cftunnel_sync_errors_total` | Counter | `error_type` | Sync errors by type |
 
-A sustained run of `error_type="proxy_push"` errors for one data plane also surfaces on the affected routes as a `cf.k8s.lex.la/ProxyConfigPushed=False` condition (plus a Warning Event), so a proxy that stops receiving config is visible on route status, not only on this counter. The condition clears on the first successful push.
+A sustained run of failed `error_type="proxy_push"` pushes for one data plane also surfaces on the affected routes as a `cf.k8s.lex.la/ProxyConfigPushed=False` condition (plus a Warning Event), so a proxy that stops receiving config is visible on route status, not only on this counter. The condition clears on the first successful push. A push held back because the controller cannot read a backend's TLS, `appProtocol`, client certificate or `ReferenceGrant` inputs (see [Fail-closed enforcement](../gateway-api/limitations.md#fail-closed-enforcement)) counts here too but does not raise the condition: watch this counter, or the `proxy config not pushed` log line, to catch a data plane that has stopped receiving config that way.
 
 ### Cloudflare API Metrics
 
@@ -345,6 +345,16 @@ spec:
           annotations:
             summary: "Sync errors for 15 minutes"
             description: "A failing tunnel document write, such as a revoked API token, shows up only here, in TunnelDocumentWriteFailed Events and in the controller log"
+
+        - alert: CloudflareTunnelProxyPushFailing
+          expr: |
+            sum(increase(cftunnel_sync_errors_total{error_type="proxy_push"}[15m])) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Proxy config pushes failing or held back"
+            description: "Counts every failed proxy push, including one that lost a version race to a newer push; a push held back while backend inputs cannot be read does not set ProxyConfigPushed=False on routes, so this counter is where it shows"
 
         - alert: CloudflareTunnelSyncSlow
           expr: |

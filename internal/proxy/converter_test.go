@@ -390,7 +390,7 @@ func TestConvertHTTPRoutes_AppProtocolWS_WithPolicy_Warns(t *testing.T) {
 	routes := []*gatewayv1.HTTPRoute{httpAppProtocolTestRoute(pathPrefix)}
 
 	protocolResolver := func(_ context.Context, _, _ string, _ int32) string { return "kubernetes.io/ws" }
-	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+	tlsResolver := func(_ context.Context, _, _ string, _ int32, _ bool) *proxy.BackendTLSConfig {
 		return &proxy.BackendTLSConfig{
 			CABundlePEM: "-----BEGIN CERTIFICATE-----\nQUFBQQ==\n-----END CERTIFICATE-----\n",
 			ServerName:  "svc.default.svc.cluster.local",
@@ -567,7 +567,7 @@ func TestConvertHTTPRoutes_AppProtocolWSS_WithPolicy_NoWarn(t *testing.T) {
 	routes := []*gatewayv1.HTTPRoute{httpAppProtocolTestRoute(pathPrefix)}
 
 	protocolResolver := func(_ context.Context, _, _ string, _ int32) string { return "kubernetes.io/wss" }
-	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+	tlsResolver := func(_ context.Context, _, _ string, _ int32, _ bool) *proxy.BackendTLSConfig {
 		return &proxy.BackendTLSConfig{
 			CABundlePEM: "-----BEGIN CERTIFICATE-----\nQUFBQQ==\n-----END CERTIFICATE-----\n",
 			ServerName:  "svc.default.svc.cluster.local",
@@ -669,7 +669,7 @@ func TestConvertHTTPRoutes_AppProtocolHTTPSWithPolicy_NoWarn(t *testing.T) {
 	routes := []*gatewayv1.HTTPRoute{httpAppProtocolTestRoute(pathPrefix)}
 
 	protocolResolver := func(_ context.Context, _, _ string, _ int32) string { return "https" }
-	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+	tlsResolver := func(_ context.Context, _, _ string, _ int32, _ bool) *proxy.BackendTLSConfig {
 		return &proxy.BackendTLSConfig{
 			CABundlePEM: "-----BEGIN CERTIFICATE-----\nQUFBQQ==\n-----END CERTIFICATE-----\n",
 			ServerName:  "svc.default.svc.cluster.local",
@@ -729,7 +729,7 @@ func TestConvertHTTPRoutes_Mirror_TargetHasBackendTLSPolicy_AttachesTLSConfig(t 
 		},
 	}
 
-	tlsResolver := func(_ context.Context, _, serviceName string, _ int32) *proxy.BackendTLSConfig {
+	tlsResolver := func(_ context.Context, _, serviceName string, _ int32, _ bool) *proxy.BackendTLSConfig {
 		if serviceName == "mirror-target" {
 			return &proxy.BackendTLSConfig{
 				CABundlePEM: "-----BEGIN CERTIFICATE-----\nQUFBQQ==\n-----END CERTIFICATE-----\n",
@@ -796,7 +796,7 @@ func TestConvertHTTPRoutes_Mirror_TargetHasBackendTLSPolicy_StampsGatewayClientC
 		},
 	}
 
-	tlsResolver := func(_ context.Context, _, serviceName string, _ int32) *proxy.BackendTLSConfig {
+	tlsResolver := func(_ context.Context, _, serviceName string, _ int32, _ bool) *proxy.BackendTLSConfig {
 		if serviceName == "mirror-target" {
 			return &proxy.BackendTLSConfig{
 				CABundlePEM: "-----BEGIN CERTIFICATE-----\nQUFBQQ==\n-----END CERTIFICATE-----\n",
@@ -858,7 +858,7 @@ func TestConvertHTTPRoutes_BackendTLSPolicy_OverridesH2C(t *testing.T) {
 	// Service signals h2c.
 	protocolResolver := func(_ context.Context, _, _ string, _ int32) string { return "kubernetes.io/h2c" }
 	// BackendTLSPolicy also targets the Service.
-	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+	tlsResolver := func(_ context.Context, _, _ string, _ int32, _ bool) *proxy.BackendTLSConfig {
 		return &proxy.BackendTLSConfig{
 			CABundlePEM: "-----BEGIN CERTIFICATE-----\nQUFBQQ==\n-----END CERTIFICATE-----\n",
 			ServerName:  "svc.default.svc.cluster.local",
@@ -1313,6 +1313,49 @@ func TestConvertHTTPRoutes_MirrorWithPercent(t *testing.T) {
 	assert.Equal(t, int32(20), *cfg.Rules[0].Filters[0].RequestMirror.Percent)
 }
 
+// TestConvertHTTPRoutes_TLSResolverIsToldTheKind pins the isService argument:
+// a Service backendRef reports true, and a ServiceImport backendRef or mirror
+// destination reports false.
+func TestConvertHTTPRoutes_TLSResolverIsToldTheKind(t *testing.T) {
+	t.Parallel()
+
+	siGroup := gatewayv1.Group("multicluster.x-k8s.io")
+	siKind := gatewayv1.Kind("ServiceImport")
+	port := gatewayv1.PortNumber(80)
+
+	routes := []*gatewayv1.HTTPRoute{{
+		ObjectMeta: metav1.ObjectMeta{Name: "kinds", Namespace: "default"},
+		Spec: gatewayv1.HTTPRouteSpec{
+			Hostnames: []gatewayv1.Hostname{"example.com"},
+			Rules: []gatewayv1.HTTPRouteRule{{
+				Filters: []gatewayv1.HTTPRouteFilter{{
+					Type: gatewayv1.HTTPRouteFilterRequestMirror,
+					RequestMirror: &gatewayv1.HTTPRequestMirrorFilter{BackendRef: gatewayv1.BackendObjectReference{
+						Group: &siGroup, Kind: &siKind, Name: "mirror-import", Port: &port,
+					}},
+				}},
+				BackendRefs: []gatewayv1.HTTPBackendRef{
+					backendRef("svc", 80, 1),
+					{BackendRef: gatewayv1.BackendRef{BackendObjectReference: gatewayv1.BackendObjectReference{
+						Group: &siGroup, Kind: &siKind, Name: "imported", Port: &port,
+					}}},
+				},
+			}},
+		},
+	}}
+
+	seen := map[string]bool{}
+	tlsResolver := func(_ context.Context, _, serviceName string, _ int32, isService bool) *proxy.BackendTLSConfig {
+		seen[serviceName] = isService
+
+		return nil
+	}
+
+	proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil, tlsResolver, nil)
+
+	assert.Equal(t, map[string]bool{"svc": true, "imported": false, "mirror-import": false}, seen)
+}
+
 func TestConvertHTTPRoutes_MirrorServiceImportBackend(t *testing.T) {
 	t.Parallel()
 
@@ -1661,7 +1704,7 @@ func TestConvertHTTPRoutes_BackendTLSPolicy_AttachesTLSConfig(t *testing.T) {
 	}
 
 	caPEM := "-----BEGIN CERTIFICATE-----\nFAKE CA PEM FOR TEST\n-----END CERTIFICATE-----\n"
-	tlsResolver := func(_ context.Context, namespace, name string, port int32) *proxy.BackendTLSConfig {
+	tlsResolver := func(_ context.Context, namespace, name string, port int32, _ bool) *proxy.BackendTLSConfig {
 		if namespace == "default" && name == "tls-svc" && port == 8443 {
 			return &proxy.BackendTLSConfig{
 				CABundlePEM:     caPEM,
@@ -3512,7 +3555,7 @@ func TestConvertHTTPRoutes_GatewayClientCert_AttachedWhenBackendTLSPolicyPresent
 		},
 	}
 
-	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+	tlsResolver := func(_ context.Context, _, _ string, _ int32, _ bool) *proxy.BackendTLSConfig {
 		return &proxy.BackendTLSConfig{CABundlePEM: "CA", ServerName: "svc.default"}
 	}
 	gatewayCertResolver := func(_ context.Context, _, _ ktypes.NamespacedName, _ gatewayv1.Kind) *proxy.ClientCertConfig {
@@ -3540,7 +3583,7 @@ func TestConvertHTTPRoutes_GatewayClientCert_AliasingResolverDoesNotCrossContami
 	// if the converter mutated the returned struct in place. The fix is the
 	// shallow-clone path inside attachGatewayClientCert; this test pins it.
 	sharedTLS := &proxy.BackendTLSConfig{CABundlePEM: "shared-CA", ServerName: "shared-sni"}
-	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+	tlsResolver := func(_ context.Context, _, _ string, _ int32, _ bool) *proxy.BackendTLSConfig {
 		return sharedTLS
 	}
 
@@ -3605,7 +3648,7 @@ func TestConvertHTTPRoutes_GatewayClientCert_FirstParentWins(t *testing.T) {
 	certA := &proxy.ClientCertConfig{CertPEM: []byte("CERT-A"), KeyPEM: []byte("KEY-A")}
 	certB := &proxy.ClientCertConfig{CertPEM: []byte("CERT-B"), KeyPEM: []byte("KEY-B")}
 
-	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+	tlsResolver := func(_ context.Context, _, _ string, _ int32, _ bool) *proxy.BackendTLSConfig {
 		return &proxy.BackendTLSConfig{CABundlePEM: "CA", ServerName: "svc"}
 	}
 

@@ -90,7 +90,7 @@ func TestConvertGRPCRoutes_AppProtocolTLS_WithPolicy_NoDiagnostic(t *testing.T) 
 	t.Parallel()
 
 	protocolResolver := func(_ context.Context, _, _ string, _ int32) string { return "https" }
-	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+	tlsResolver := func(_ context.Context, _, _ string, _ int32, _ bool) *proxy.BackendTLSConfig {
 		return &proxy.BackendTLSConfig{CABundlePEM: "ca", ServerName: "echo-svc"}
 	}
 
