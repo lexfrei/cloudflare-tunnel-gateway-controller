@@ -16,7 +16,7 @@
 | LS-12 | MUST | CTRL | MET | internal/routebinding/binding.go:169 (HostnamesIntersect gates binding); internal/routebinding/hostname.go:14 | Route accepted only when listener and route hostnames intersect (NoMatchingListenerHostname otherwise). |
 | LS-13 | MUST | N/A | NA | docs/gateway-api/limitations.md:165,203 | Longest-SNI cert selection: no in-cluster TLS handshake; edge terminates TLS. |
 | LS-14 | MAY | CTRL | MET | internal/routebinding/listenerset.go:101 ValidateBindingForListenerSet via evaluateListenerBinding (namespace+kind) | AllowedRoutes namespaces+kinds honoured per ListenerSet entry. |
-| LS-15 | MUST | CTRL | MET | internal/proxy/converter.go:99 sortRoutesByPrecedence + internal/proxy/router.go:510 computePriority/sortRulesByPrecedence | Most-specific by match type (priority score), then oldest creationTimestamp, then namespace/name. |
+| LS-15 | MUST | CTRL | MET | internal/proxy/converter.go `sortRoutesByPrecedence` + internal/proxy/router.go `rankMatch`/`sortByPrecedence` | Most-specific match by Route type, then oldest creationTimestamp, then namespace/name. |
 | LS-19 | MUST | CTRL | MET | internal/controller/listenerset_controller.go:527,535 uses ListenerSetConditionAccepted/Programmed + ListenerSetReason* constants | Top-level conditions stamped with the spec's ListenerSet condition/reason constants. |
 | LS-20 | MUST | CTRL | MET | internal/routebinding/kind.go:108 FilterSupportedKinds; listenerset_controller.go:589 | SupportedKinds reflects implementation-supported kinds (HTTPRoute/GRPCRoute) for the entry. |
 | LS-21 | MUST NOT | CTRL | MET | internal/routebinding/kind.go:130-137 (only supported kinds appended) | Unsupported specified kinds excluded from SupportedKinds list. |

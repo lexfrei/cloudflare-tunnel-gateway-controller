@@ -108,6 +108,17 @@ type RouteMatch struct {
 	Headers     []HeaderMatch     `json:"headers,omitempty"`
 	QueryParams []QueryParamMatch `json:"queryParams,omitempty"`
 	Method      string            `json:"method,omitempty"`
+	// GRPCMethod is set on a match converted from a GRPCRouteMatch method
+	// match. Path already carries the condition; the router ranks the match
+	// by these lengths, as GRPCRouteRule.Matches orders gRPC matches.
+	GRPCMethod *GRPCMethodName `json:"grpcMethod,omitempty"`
+}
+
+// GRPCMethodName is the service and method a GRPCRouteMatch names, either of
+// which may be empty.
+type GRPCMethodName struct {
+	Service string `json:"service,omitempty"`
+	Method  string `json:"method,omitempty"`
 }
 
 // PathMatchType defines how path matching is performed.

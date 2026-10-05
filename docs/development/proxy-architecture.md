@@ -85,19 +85,22 @@ sequenceDiagram
 
 The router uses `atomic.Pointer[routingTable]` for lock-free reads during config updates:
 
-- **Exact hosts**: `map[string][]*compiledRule` for O(1) hostname lookup
+- **Exact hosts**: `map[string][]matchEntry` for O(1) hostname lookup; each rule contributes one entry per match, sorted by precedence
 - **Wildcard hosts**: `[]wildcardEntry` for `*.example.com` patterns
 - **Default rules**: Fallback rules without hostname
 - **Listener owners**: per Gateway, its listener hostnames ordered most specific first; a rule carrying listener attachments is skipped for a host whose owning listener it is not attached through (listener isolation, `internal/proxy/isolation.go`)
 
 ### Precedence (Gateway API spec)
 
-1. Longest hostname (exact before wildcard)
-2. Path type: Exact > Regex > Prefix
-3. Longest path value
+Hostname selects the bucket (exact before wildcard, longest wildcard first). Within a bucket each match is ranked on its own, comparing one criterion at a time (`matchRank` in `internal/proxy/router.go`):
+
+1. GRPCRoute: characters in the service, then in the method (zero for HTTPRoute matches)
+2. Path type, HTTPRoute matches only: Exact > Regex > Prefix
+3. Longest path value, HTTPRoute matches only
 4. Method present
 5. Most header matches
 6. Most query parameter matches
+7. Ties: lower flattened rule index — oldest route, then `{namespace}/{name}`, then rule order
 
 ## Config Push
 

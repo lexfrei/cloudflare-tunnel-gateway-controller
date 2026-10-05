@@ -184,7 +184,7 @@ func (cm *CompiledMatch) Match(r *http.Request) bool {
 }
 
 // CompileMatch compiles a RouteMatch into a CompiledMatch with precompiled regex patterns.
-func CompileMatch(match RouteMatch) (*CompiledMatch, error) {
+func CompileMatch(match *RouteMatch) (*CompiledMatch, error) {
 	var matchers []RequestMatcher
 
 	if match.Path != nil {

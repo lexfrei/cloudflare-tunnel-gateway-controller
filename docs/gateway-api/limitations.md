@@ -409,13 +409,17 @@ For very large deployments:
 
 ## Route Conflict Resolution
 
-A request first selects a hostname bucket — exact hostname over wildcard over the default (no-hostname) bucket — skipping routes that [listener isolation](#listener-isolation) excludes for the request's host, and then the matching rules within that bucket are ordered by match specificity, highest first:
+A request first selects a hostname bucket — exact hostname over wildcard over the default (no-hostname) bucket — skipping routes that [listener isolation](#listener-isolation) excludes for the request's host. Within that bucket every match is ranked on its own, not as part of its rule: a rule's other matches never lift or lower the one that fired. HTTPRoute matches are ordered as the spec lists the criteria, each one deciding only when every criterion before it ties:
 
-1. Path match type: exact, then regex, then prefix
+1. Path match type: exact, then regex, then prefix (where regex sits is implementation-specific)
 2. Longer path value before shorter
-3. Then method, header-count, and query-count specificity
+3. A method match
+4. More header matches
+5. More query parameter matches
 
-The most specific match wins, and the controller does not merge rules from different routes. Hostname only selects the bucket; it is **not** a precedence tiebreaker among matching rules. When two equally-specific rules from different Routes still tie, the cross-Route tiebreak is applied per the Gateway API spec (`httproute_types.go:192-197`): the oldest Route by creationTimestamp wins, then the Route first alphabetically by `{namespace}/{name}`. The within-Route fallback is the first matching rule in list order.
+GRPCRoute matches are ordered by the characters in the matched service, then in the matched method, then by header-match count. The match type (exact or regular expression) is not a criterion. Where an HTTPRoute and a GRPCRoute share a hostname bucket, which happens only across Gateways served by the same data plane, a GRPCRoute match naming a service or method ranks above every HTTPRoute match; the spec defines no order between the two kinds.
+
+The most specific match wins, and the controller does not merge rules from different routes. Hostname only selects the bucket; it is **not** a precedence tiebreaker among matching rules. When two equally-specific matches from different Routes still tie, the cross-Route tiebreak is applied per the Gateway API spec: the oldest Route by creationTimestamp wins, then the Route first alphabetically by `{namespace}/{name}`. The within-Route fallback is the first matching rule in list order.
 
 ### Example Conflict
 

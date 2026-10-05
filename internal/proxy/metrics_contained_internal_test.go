@@ -252,7 +252,7 @@ func TestRouter_MirrorFiltersInheritHandlerSettings(t *testing.T) {
 	rules := router.table.Load().defaultRules
 	require.Len(t, rules, 1)
 
-	for _, filter := range []Filter{rules[0].filters[0], rules[0].backendFilters[0][0]} {
+	for _, filter := range []Filter{rules[0].compiled.filters[0], rules[0].compiled.backendFilters[0][0]} {
 		compiled, ok := filter.(*requestMirror)
 		require.True(t, ok)
 		assert.Equal(t, int64(7), compiled.limit)
@@ -282,7 +282,7 @@ func TestRouter_MirrorFiltersWithoutHandlerKeepDefaults(t *testing.T) {
 	rules := router.table.Load().defaultRules
 	require.Len(t, rules, 1)
 
-	compiled, ok := rules[0].filters[0].(*requestMirror)
+	compiled, ok := rules[0].compiled.filters[0].(*requestMirror)
 	require.True(t, ok)
 	assert.Equal(t, int64(mirrorMaxLiveDispatches), compiled.maxLive())
 	assert.Nil(t, compiled.metrics)

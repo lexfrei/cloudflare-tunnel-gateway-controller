@@ -198,6 +198,10 @@ func convertGRPCMatch(match gatewayv1.GRPCRouteMatch) (RouteMatch, bool) {
 
 	if path := grpcMethodToPath(match.Method); path != nil {
 		proxyMatch.Path = path
+		proxyMatch.GRPCMethod = &GRPCMethodName{
+			Service: derefString(match.Method.Service),
+			Method:  derefString(match.Method.Method),
+		}
 	}
 
 	for _, header := range match.Headers {

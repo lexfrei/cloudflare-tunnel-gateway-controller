@@ -292,7 +292,7 @@ func TestCompileMatch(t *testing.T) {
 	t.Run("empty match matches everything", func(t *testing.T) {
 		t.Parallel()
 
-		compiled, err := proxy.CompileMatch(proxy.RouteMatch{})
+		compiled, err := proxy.CompileMatch(&proxy.RouteMatch{})
 		require.NoError(t, err)
 
 		req := &http.Request{
@@ -306,7 +306,7 @@ func TestCompileMatch(t *testing.T) {
 	t.Run("all conditions ANDed", func(t *testing.T) {
 		t.Parallel()
 
-		compiled, err := proxy.CompileMatch(proxy.RouteMatch{
+		compiled, err := proxy.CompileMatch(&proxy.RouteMatch{
 			Path:   &proxy.PathMatch{Type: proxy.PathMatchExact, Value: "/api"},
 			Method: http.MethodGet,
 			Headers: []proxy.HeaderMatch{
@@ -351,7 +351,7 @@ func TestCompileMatch(t *testing.T) {
 	t.Run("invalid regex returns error", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := proxy.CompileMatch(proxy.RouteMatch{
+		_, err := proxy.CompileMatch(&proxy.RouteMatch{
 			Path: &proxy.PathMatch{Type: proxy.PathMatchRegularExpression, Value: "[invalid"},
 		})
 		require.Error(t, err)
