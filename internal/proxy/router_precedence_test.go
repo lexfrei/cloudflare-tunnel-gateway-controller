@@ -405,6 +405,29 @@ func TestRouter_GRPCRouteMatchPrecedence(t *testing.T) {
 			},
 			want: "a-r0",
 		},
+		{
+			name: "an empty match beside a specific one matches every request",
+			routes: []precedenceRoute[match]{
+				{namespace: "ns", name: "a", rules: [][]match{{{}, grpcMethod(grpcExact(), "x.Y", "Z")}}},
+			},
+			want: "a-r0",
+		},
+		{
+			name: "a specific match beats an older route's empty match",
+			routes: []precedenceRoute[match]{
+				{namespace: "ns", name: "a", rules: [][]match{{{}, grpcMethod(grpcExact(), "x.Y", "Z")}}},
+				{namespace: "ns", name: "b", age: time.Hour, rules: [][]match{{grpcMethod(grpcExact(), "", "Get")}}},
+			},
+			want: "b-r0",
+		},
+		{
+			name: "an empty match ties a rule without matches: the oldest route wins",
+			routes: []precedenceRoute[match]{
+				{namespace: "ns", name: "a", age: time.Hour, rules: [][]match{{{}, grpcMethod(grpcExact(), "x.Y", "Z")}}},
+				{namespace: "ns", name: "z", rules: [][]match{{}}},
+			},
+			want: "z-r0",
+		},
 	}
 
 	for _, tt := range tests {

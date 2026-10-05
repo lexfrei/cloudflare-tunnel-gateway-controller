@@ -1066,12 +1066,10 @@ func TestConvertGRPCRoutes_NoMatchesMatchesAll(t *testing.T) {
 	assert.Equal(t, proxy.BackendProtocolH2C, cfg.Rules[0].Backends[0].Protocol)
 }
 
-// TestConvertGRPCRoutes_EmptyMatchMixedWithSpecificIsDropped pins the
-// deliberate handling of a nonsensical rule that mixes a match-all (empty)
-// match with a specific one in the same matches[] array: the empty match is
-// dropped, so the rule keeps only the specific constraint rather than being
-// promoted to a catch-all that would shadow other routes.
-func TestConvertGRPCRoutes_EmptyMatchMixedWithSpecificIsDropped(t *testing.T) {
+// TestConvertGRPCRoutes_EmptyMatchMixedWithSpecificMatchesAll pins that an
+// empty match beside a specific one survives as an unconstrained match, so
+// the rule matches every request on its hostnames.
+func TestConvertGRPCRoutes_EmptyMatchMixedWithSpecificMatchesAll(t *testing.T) {
 	t.Parallel()
 
 	svc := "svc.Foo"
@@ -1083,7 +1081,7 @@ func TestConvertGRPCRoutes_EmptyMatchMixedWithSpecificIsDropped(t *testing.T) {
 				Rules: []gatewayv1.GRPCRouteRule{
 					{
 						Matches: []gatewayv1.GRPCRouteMatch{
-							{}, // match-all: nil method, no headers
+							{},
 							{Method: &gatewayv1.GRPCMethodMatch{Type: grpcExact(), Service: &svc, Method: &method}},
 						},
 						BackendRefs: []gatewayv1.GRPCBackendRef{grpcBackendRef("foo-svc", 9000, 1)},
@@ -1096,9 +1094,10 @@ func TestConvertGRPCRoutes_EmptyMatchMixedWithSpecificIsDropped(t *testing.T) {
 	cfg := proxy.ConvertGRPCRoutes(context.Background(), routes, "cluster.local", nil, nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
-	require.Len(t, cfg.Rules[0].Matches, 1, "empty match dropped; only the specific match survives")
-	require.NotNil(t, cfg.Rules[0].Matches[0].Path)
-	assert.Equal(t, "/svc.Foo/Bar", cfg.Rules[0].Matches[0].Path.Value)
+	require.Len(t, cfg.Rules[0].Matches, 2)
+	assert.Equal(t, proxy.RouteMatch{}, cfg.Rules[0].Matches[0])
+	require.NotNil(t, cfg.Rules[0].Matches[1].Path)
+	assert.Equal(t, "/svc.Foo/Bar", cfg.Rules[0].Matches[1].Path.Value)
 }
 
 // TestConvertRoutes_BackendTLSEquivalentAcrossRouteKinds pins the spec
