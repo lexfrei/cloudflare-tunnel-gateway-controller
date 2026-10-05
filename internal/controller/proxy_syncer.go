@@ -781,12 +781,7 @@ func newBackendRefValidator(validator *referencegrant.Validator, fromKind string
 
 		allowed, err := validator.IsReferenceAllowed(ctx, fromRef, toRef)
 		if err != nil {
-			slog.Warn("failed to validate cross-namespace reference",
-				"error", err,
-				"from_namespace", fromNamespace,
-				"to_namespace", toNamespace,
-				"service", string(ref.Name),
-			)
+			noteGrantReadError(ctx, fromNamespace, err)
 
 			return false
 		}
@@ -840,6 +835,10 @@ func (s *ProxySyncer) syncPartition(
 
 	prep := s.preparePush(ctx, configVersion, key, authToken, endpoints, resolved, routes, grpcRoutes,
 		failedRefs, grpcFailedRefs, certParents)
+	if prep.undecided != nil {
+		return prep.diagnostics, prep.undecided
+	}
+
 	if prep.skip {
 		logger.Debug("proxy config unchanged; skipping push",
 			"partition", key, "endpoints", len(resolved), "rules", len(prep.cfg.Rules))
@@ -892,6 +891,9 @@ type preparedPush struct {
 	cfgHash     string
 	diagnostics []proxy.RouteDiagnostic
 	skip        bool
+	// undecided, when set, says why the config must not be pushed: a backend
+	// reference in it could not be evaluated.
+	undecided error
 }
 
 // preparePush builds the partition's config under syncMu and reports whether the
@@ -922,6 +924,7 @@ func (s *ProxySyncer) preparePush(
 	logger.Info("syncing proxy config",
 		"partition", key, "httpRoutes", len(routes), "grpcRoutes", len(grpcRoutes))
 
+	ctx, grantErrs := withGrantReadErrors(ctx)
 	cfg := s.buildProxyConfig(ctx, routes, grpcRoutes, failedRefs, grpcFailedRefs, certParents)
 
 	// Replace the converter's build-time version with the one the caller
@@ -940,6 +943,12 @@ func (s *ProxySyncer) preparePush(
 	diagnostics := cfg.Diagnostics
 
 	logger.Info("resolved endpoints", "partition", key, "original", len(endpoints), "resolved", len(resolved))
+
+	if err := grantErrs.err(); err != nil || partitionRefsUndecided(routes, grpcRoutes, failedRefs, grpcFailedRefs) {
+		grantErrs.markUndecided(diagnostics)
+
+		return preparedPush{cfg: cfg, diagnostics: diagnostics, undecided: errors.CombineErrors(errBackendRefsUndecided, err)}
+	}
 
 	// Steady-state skip: when the rebuilt config is identical to the last
 	// successful push and the replica set is unchanged, every endpoint already

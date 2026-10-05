@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/api/v1alpha1"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
@@ -349,6 +350,7 @@ func partitionSyncSyncerFor(t *testing.T, api *recordingTunnelAPI, objects []run
 	require.NoError(t, gatewayv1.Install(scheme))
 	require.NoError(t, v1alpha1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, gatewayv1beta1.Install(scheme))
 
 	builder := fake.NewClientBuilder().WithScheme(scheme)
 	for _, obj := range objects {

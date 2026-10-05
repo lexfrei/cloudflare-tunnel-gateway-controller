@@ -195,7 +195,7 @@ func TestSyncAllRoutes_ReplicaAppliesTheVersionTheSyncReserved(t *testing.T) {
 	}
 
 	_, lostRace := pushPartitionConfigs(ctx, slog.Default(), &params, syncResult)
-	require.False(t, lostRace, "a single push against a fresh replica cannot lose a race")
+	require.False(t, lostRace.lostRace, "a single push against a fresh replica cannot lose a race")
 
 	appliedVersion, _ := replica.snapshot()
 	assert.Equal(t, syncResult.ConfigVersion, appliedVersion,
