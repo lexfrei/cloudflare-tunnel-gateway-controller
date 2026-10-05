@@ -390,7 +390,7 @@ func writeRuleUnavailable(writer http.ResponseWriter, req *http.Request, rule *R
 	return true
 }
 
-// writeUnavailable answers a request the proxy will not forward. GRPCRoute
+// writeUnavailable answers a request the proxy will not or could not forward. GRPCRoute
 // requires UNAVAILABLE where HTTPRoute requires an HTTP error status, and a
 // gRPC client cannot read an HTTP status (it sees Unknown), so a gRPC request
 // gets a trailers-only UNAVAILABLE whatever the configured status, also on an
@@ -1309,8 +1309,12 @@ func matchAnyURISan(leaf *x509.Certificate, expected []string) bool {
 // when a slow backend doesn't send response headers in time -- the
 // returned error is not a wrapped context.DeadlineExceeded, just an
 // internal *timeoutError that satisfies a Timeout() bool interface).
-// Returns 502 Bad Gateway otherwise.
-func errorHandler(writer http.ResponseWriter, _ *http.Request, err error) {
+// Returns 502 Bad Gateway otherwise. A gRPC request gets UNAVAILABLE for
+// both: the gRPC HTTP-to-status mapping
+// (https://github.com/grpc/grpc/blob/master/doc/http-grpc-status-mapping.md)
+// sends 502 and 504 there, and a proxy-side timeout is not the client's own
+// deadline, so DEADLINE_EXCEEDED would misreport it.
+func errorHandler(writer http.ResponseWriter, req *http.Request, err error) {
 	if err == nil {
 		return
 	}
@@ -1321,7 +1325,7 @@ func errorHandler(writer http.ResponseWriter, _ *http.Request, err error) {
 	}
 
 	if errors.Is(err, context.DeadlineExceeded) {
-		http.Error(writer, "gateway timeout", http.StatusGatewayTimeout)
+		writeUnavailable(writer, req, http.StatusGatewayTimeout, "gateway timeout")
 
 		return
 	}
@@ -1333,12 +1337,12 @@ func errorHandler(writer http.ResponseWriter, _ *http.Request, err error) {
 	// Every backend path, HTTP/1.1 and HTTP/2 alike, lands here.
 	var timeoutErr interface{ Timeout() bool }
 	if errors.As(err, &timeoutErr) && timeoutErr.Timeout() {
-		http.Error(writer, "gateway timeout", http.StatusGatewayTimeout)
+		writeUnavailable(writer, req, http.StatusGatewayTimeout, "gateway timeout")
 
 		return
 	}
 
-	http.Error(writer, "bad gateway", http.StatusBadGateway)
+	writeUnavailable(writer, req, http.StatusBadGateway, "bad gateway")
 }
 
 // shouldUseWebSocketUpgradePath combines the two predicates that
