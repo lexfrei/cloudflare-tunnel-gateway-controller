@@ -10,6 +10,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/logging"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 )
 
@@ -85,6 +86,11 @@ type BackendRefError struct {
 	// specific proxy backend. Empty means the local cluster domain (the default
 	// for a Service); a ServiceImport sets it to the clusterset domain.
 	Domain string
+	// Undecided reports that the reference could not be evaluated, for
+	// example because its ReferenceGrants could not be read. It carries no
+	// Reason: the status writer keeps the route's previous ResolvedRefs
+	// verdict, and the sync is retried.
+	Undecided bool
 }
 
 // BuildResult contains the build output including rules and any failed references.
@@ -104,57 +110,60 @@ func (b *Builder) Build(ctx context.Context, routes []gatewayv1.HTTPRoute) Build
 	return b.generic.Build(ctx, routes)
 }
 
-// validateCrossNamespaceRef validates cross-namespace backend references using ReferenceGrant.
-// toGroup/toKind identify the backend resource the grant must permit (e.g. core
-// Service, or multicluster.x-k8s.io ServiceImport), so the check is keyed on the
-// actual backend kind rather than always Service.
-// Returns true if the reference is allowed, false otherwise.
-func validateCrossNamespaceRef(
-	ctx context.Context,
-	validator *referencegrant.Validator,
-	logger *slog.Logger,
-	routeKind, namespace, routeName, svcNamespace, svcName string,
-	toGroup, toKind string,
-) bool {
-	if validator == nil {
-		return true // No validator means validation is disabled
+// crossNamespaceRefError checks a cross-namespace backend reference against
+// the ReferenceGrants in the backend's namespace. toGroup/toKind identify the
+// backend resource the grant must permit (e.g. core Service, or
+// multicluster.x-k8s.io ServiceImport), so the check is keyed on the actual
+// backend kind rather than always Service. It returns nil when the reference
+// is allowed, RefNotPermitted when no grant allows it, and an undecided error
+// when the grants could not be read.
+func crossNamespaceRefError(ctx context.Context, params *serviceResolveParams, toGroup, toKind string) *BackendRefError {
+	if params.validator == nil {
+		return nil // No validator means validation is disabled
 	}
 
 	fromRef := referencegrant.Reference{
 		Group:     gatewayv1.GroupName,
-		Kind:      routeKind,
-		Namespace: namespace,
-		Name:      routeName,
+		Kind:      params.routeKind,
+		Namespace: params.routeNS,
+		Name:      params.routeName,
 	}
 
 	toRef := referencegrant.Reference{
 		Group:     toGroup,
 		Kind:      toKind,
-		Namespace: svcNamespace,
-		Name:      svcName,
+		Namespace: params.svcNS,
+		Name:      params.svcName,
 	}
 
-	allowed, err := validator.IsReferenceAllowed(ctx, fromRef, toRef)
-	if err != nil {
-		logger.Info("route configuration partially applied",
-			"route", fmt.Sprintf("%s/%s", namespace, routeName),
-			"reason", "failed to validate cross-namespace reference",
-			"target", fmt.Sprintf("%s/%s", svcNamespace, svcName),
-			"error", err.Error(),
-		)
+	route := fmt.Sprintf("%s/%s", params.routeNS, params.routeName)
+	target := fmt.Sprintf("%s/%s", params.svcNS, params.svcName)
 
-		return false
+	allowed, err := params.validator.IsReferenceAllowed(ctx, fromRef, toRef)
+	if err != nil {
+		level := logging.RepeatsFromContext(ctx).Level("grants "+route+" "+target, err.Error(), slog.LevelError)
+		params.logger.Log(ctx, level, "cross-namespace backend reference not evaluated; keeping its previous verdict and retrying",
+			"route", route, "target", target, "error", err.Error())
+
+		return &BackendRefError{
+			RouteNamespace: params.routeNS,
+			RouteName:      params.routeName,
+			BackendName:    params.svcName,
+			BackendNS:      params.svcNS,
+			Message:        fmt.Sprintf("ReferenceGrants for %s could not be read", target),
+			Undecided:      true,
+		}
 	}
 
 	if !allowed {
-		logger.Info("route configuration partially applied",
-			"route", fmt.Sprintf("%s/%s", namespace, routeName),
+		params.logger.Info("route configuration partially applied",
+			"route", route,
 			"reason", "cross-namespace backend reference not permitted by ReferenceGrant",
-			"target", fmt.Sprintf("%s/%s", svcNamespace, svcName),
+			"target", target,
 		)
 
-		return false
+		return crossNamespaceDeniedError(params)
 	}
 
-	return true
+	return nil
 }
