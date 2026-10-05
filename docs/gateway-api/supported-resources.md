@@ -215,10 +215,10 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | `Accepted` | `False` | `DataPlaneQuotaExceeded` | The namespace is at its cap of dedicated data planes (`Programmed=False, NoResources`) |
 | `Accepted` | `False` | `UnsupportedAddress` | `spec.addresses` holds an address type other than `Hostname` |
 | `Accepted` | `False` | `Invalid` | `spec.tls.frontend` is set ([client certificate validation](limitations.md#client-certificate-validation-spectlsfrontend-is-refused)) |
-| `Programmed` | `True` | `Programmed` | Gateway configured. On the shared plane it is set whenever the Gateway is not refused for its configuration and `spec.addresses` asks for no other hostname, even with `Accepted=False, ListenersNotValid`; a dedicated plane needs a ready proxy replica ([details](limitations.md#programmed-on-the-shared-plane-does-not-track-the-proxy)) |
+| `Programmed` | `True` | `Programmed` | Gateway configured. On the shared plane it is set whenever the Gateway is accepted, or has no valid listener of its own but an attached ListenerSet, and `spec.addresses` asks for no other hostname; a dedicated plane also needs a ready proxy replica ([details](limitations.md#programmed-on-the-shared-plane-does-not-track-the-proxy)) |
 | `Programmed` | `False` | `Pending` | The dedicated data plane has no ready proxy replica yet |
 | `Programmed` | `False` | `AddressNotUsable` | `spec.addresses` requests a hostname other than the tunnel CNAME; the Gateway stays `Accepted` and is served at the CNAME |
-| `Programmed` | `False` | `Invalid` / `NoResources` | The Gateway is refused for its configuration, with one of the `Accepted=False` reasons above other than `ListenersNotValid` (`NoResources` for the data-plane cap) |
+| `Programmed` | `False` | `Invalid` / `NoResources` | The Gateway is `Accepted=False` for any of the reasons above (`NoResources` for the data-plane cap); with `ListenersNotValid` only while no ListenerSet is attached |
 | `ResolvedRefs` | `False` | `InvalidClientCertificateRef` / `RefNotPermitted` | `spec.tls.backend.clientCertificateRef` cannot be used, or crosses namespaces without a ReferenceGrant |
 
 ### Gateway Listener Conditions

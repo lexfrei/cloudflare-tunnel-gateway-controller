@@ -205,7 +205,7 @@ spec:
 | `Accepted` | `False` | `InvalidParameters` | The Gateway's configuration cannot be resolved: the GatewayClass `parametersRef` chain is invalid or names a GatewayClassConfig or Secret that does not exist, the per-Gateway `parametersRef` is invalid, no proxy image is configured, or the Gateway claims a Cloudflare Tunnel it does not own. A read that fails for any other reason, `Forbidden` included, is retried and leaves the status and address unchanged |
 | `Accepted` | `False` | `DataPlaneQuotaExceeded` | The Gateway's namespace already holds as many dedicated data planes as `maxDataPlanesPerNamespace` allows. Implementation-specific reason; the oldest Gateways by creation timestamp keep their planes |
 | `Programmed` | `True` | `Programmed` | Gateway configured in Cloudflare |
-| `Programmed` | `False` | `Invalid` | The Gateway's configuration cannot be resolved, or it was refused the tunnel it claimed (see the `Accepted` reason above) |
+| `Programmed` | `False` | `Invalid` | The Gateway is not accepted: its configuration cannot be resolved, it was refused the tunnel it claimed, or it has no valid listener of its own and no attached ListenerSet (see the `Accepted` reason above) |
 | `Programmed` | `False` | `NoResources` | The Gateway's namespace is at its dedicated data-plane cap, so no plane was scheduled for it |
 
 A Gateway whose `allowedListeners.namespaces.selector` does not parse refuses every ListenerSet. No Gateway condition reports it, because the Gateway's own listeners keep serving and the Gateway API defines no condition for it. The Gateway gets a Warning Event with reason `InvalidAllowedListeners` instead, and each ListenerSet reports `Accepted: False` with reason `NotAllowed`. Neither quotes the selector.

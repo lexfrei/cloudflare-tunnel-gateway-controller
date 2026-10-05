@@ -155,7 +155,7 @@ spec:
 | `Conflicted` | `False` | `NoConflicts` | Entry has no conflicts |
 | `ResolvedRefs` | `True` | `ResolvedRefs` | Cert refs (if any) resolved |
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace cert ref denied by missing ReferenceGrant |
-| `ResolvedRefs` | `False` | `InvalidCertificateRef` | Cert Secret missing, wrong type, or missing data |
+| `ResolvedRefs` | `False` | `InvalidCertificateRef` | An allowed cert ref names a kind other than Secret, or the Secret is missing, has the wrong type, or lacks data |
 
 ## AttachedRoutes
 

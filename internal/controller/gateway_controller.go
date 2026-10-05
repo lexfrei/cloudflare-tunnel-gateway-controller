@@ -840,12 +840,25 @@ func (r *GatewayReconciler) applyTopLevelGatewayConditions(
 			requested, tunnelHostname))
 	}
 
+	// Accepted judges only the Gateway's own listeners, while an attached
+	// ListenerSet's entries are served as listeners of this Gateway; the
+	// count was written earlier in the same status pass.
+	if accepted.Status == metav1.ConditionFalse && !hasAttachedListenerSets(gateway) {
+		programmed.Status = metav1.ConditionFalse
+		programmed.Reason = string(gatewayv1.GatewayReasonInvalid)
+		programmed.Message = accepted.Message
+	}
+
 	applyGatewayConditions(&gateway.Status.Conditions, []metav1.Condition{
 		accepted,
 		programmed,
 	}, buildClientCertResolvedRefsCondition(gateway.Generation, now, clientCertErr))
 
 	return transientClientCertError(clientCertErr)
+}
+
+func hasAttachedListenerSets(gateway *gatewayv1.Gateway) bool {
+	return gateway.Status.AttachedListenerSets != nil && *gateway.Status.AttachedListenerSets > 0
 }
 
 // unusableHostnameAddress returns the first Hostname value in spec.addresses
@@ -1779,7 +1792,9 @@ func (r *GatewayReconciler) gatewayConfigToGateways(ctx context.Context, obj cli
 
 // referenceGrantToGateways maps ReferenceGrant events to Gateway reconcile requests.
 // When a ReferenceGrant changes, we need to re-reconcile all Gateways that might
-// reference Secrets in the ReferenceGrant's namespace.
+// reference certificates in the ReferenceGrant's namespace. A grant to any kind
+// counts: one to a kind other than Secret moves a certificate reference of that
+// kind from RefNotPermitted to InvalidCertificateRef.
 func (r *GatewayReconciler) referenceGrantToGateways(
 	ctx context.Context,
 	obj client.Object,
@@ -1789,22 +1804,7 @@ func (r *GatewayReconciler) referenceGrantToGateways(
 		return nil
 	}
 
-	// Check if this ReferenceGrant allows Gateway access to Secrets
-	allowsGatewayToSecrets := false
-
-	for _, from := range grant.Spec.From {
-		if from.Group == gatewayv1.GroupName && from.Kind == kindGateway {
-			for _, to := range grant.Spec.To {
-				if isCoreSecret(string(to.Group), string(to.Kind)) {
-					allowsGatewayToSecrets = true
-
-					break
-				}
-			}
-		}
-	}
-
-	if !allowsGatewayToSecrets {
+	if !grantFromKind(grant, kindGateway) {
 		return nil
 	}
 
@@ -2159,45 +2159,23 @@ func (r *GatewayReconciler) validateSingleCertRef(
 	gateway *gatewayv1.Gateway,
 	ref gatewayv1.SecretObjectReference,
 ) (metav1.ConditionStatus, string, string, error) {
-	// Default to Secret in core v1
-	refKind := kindSecret
-	if ref.Kind != nil {
-		refKind = string(*ref.Kind)
-	}
+	refNamespace, verdict, err := classifyCertRef(gateway.Namespace, ref, func(targetNamespace string) (bool, error) {
+		return r.checkSecretReferenceGrant(ctx, gateway, targetNamespace, ref)
+	})
 
-	refGroup := ""
-	if ref.Group != nil {
-		refGroup = string(*ref.Group)
-	}
-
-	// Only support core/v1 Secrets
-	if !isCoreSecret(refGroup, refKind) {
+	switch {
+	case err != nil:
+		return "", "", "", err
+	case verdict == certRefNotPermitted:
+		return metav1.ConditionFalse,
+			string(gatewayv1.ListenerReasonRefNotPermitted),
+			fmt.Sprintf("Cross-namespace reference to %s/%s not permitted", refNamespace, ref.Name), nil
+	case verdict == certRefUnsupportedKind:
 		return metav1.ConditionFalse,
 			string(gatewayv1.ListenerReasonInvalidCertificateRef),
-			fmt.Sprintf("Unsupported certificate ref kind: %s/%s", refGroup, refKind), nil
+			unsupportedCertRefMessage(&ref), nil
 	}
 
-	// Determine namespace
-	refNamespace := gateway.Namespace
-	if ref.Namespace != nil {
-		refNamespace = string(*ref.Namespace)
-	}
-
-	// Check cross-namespace access
-	if refNamespace != gateway.Namespace {
-		allowed, err := r.checkSecretReferenceGrant(ctx, gateway, refNamespace, ref)
-		if err != nil {
-			return "", "", "", err
-		}
-
-		if !allowed {
-			return metav1.ConditionFalse,
-				string(gatewayv1.ListenerReasonRefNotPermitted),
-				fmt.Sprintf("Cross-namespace reference to %s/%s not permitted", refNamespace, ref.Name), nil
-		}
-	}
-
-	// Check Secret exists and has correct type
 	return r.validateSecretExists(ctx, refNamespace, ref)
 }
 
