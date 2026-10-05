@@ -158,7 +158,7 @@ func TestBackendTLSPolicyUpdateStatus_ForeignConditionInOwnAncestor(t *testing.T
 
 	key := types.NamespacedName{Namespace: "ns", Name: "p"}
 	require.NoError(t, reconciler.updateStatus(context.Background(), key,
-		[]gatewayv1.Gateway{gateway}, []metav1.Condition{accepted}, 1))
+		uniformAncestors([]gatewayv1.Gateway{gateway}, []metav1.Condition{accepted}), 1))
 
 	var stored gatewayv1.BackendTLSPolicy
 	require.NoError(t, fakeClient.Get(context.Background(), key, &stored))

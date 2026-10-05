@@ -5,7 +5,6 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"sort"
 
 	"github.com/cockroachdb/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -13,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -20,10 +20,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/coregroup"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/parentref"
-	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
 
 // configMapCAKey is the well-known key inside a ConfigMap that holds the PEM
@@ -97,74 +97,6 @@ func getConfigMap(ctx context.Context, c client.Client, key client.ObjectKey) (*
 	return &configMap, nil
 }
 
-// routeReferencesAnyService reports whether the HTTPRoute references any of
-// the named Services (in the targetNamespace) as a backend. Service-only refs
-// are considered (group "" or "core", kind "" or "Service"). The backendRef's
-// namespace is checked too: a route with backendRef
-// {Name: "svc", Namespace: "other-ns"} MUST NOT match a policy targeting "svc"
-// in targetNamespace, because the policy applies to its own-namespace Service
-// only (LocalPolicyTargetReferenceWithSectionName carries no Namespace field
-// per the BackendTLSPolicy spec).
-func routeReferencesAnyService(route *gatewayv1.HTTPRoute, targets map[string]struct{}, targetNamespace string) bool {
-	if len(targets) == 0 {
-		return false
-	}
-
-	for ruleIdx := range route.Spec.Rules {
-		for refIdx := range route.Spec.Rules[ruleIdx].BackendRefs {
-			ref := &route.Spec.Rules[ruleIdx].BackendRefs[refIdx].BackendRef
-			if backendRefMatchesTargetSet(ref.BackendObjectReference, route.Namespace, targets, targetNamespace) {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-// grpcRouteReferencesAnyService is the GRPCRoute counterpart of
-// routeReferencesAnyService — same namespace-aware contract.
-func grpcRouteReferencesAnyService(route *gatewayv1.GRPCRoute, targets map[string]struct{}, targetNamespace string) bool {
-	if len(targets) == 0 {
-		return false
-	}
-
-	for ruleIdx := range route.Spec.Rules {
-		for refIdx := range route.Spec.Rules[ruleIdx].BackendRefs {
-			ref := &route.Spec.Rules[ruleIdx].BackendRefs[refIdx].BackendRef
-			if backendRefMatchesTargetSet(ref.BackendObjectReference, route.Namespace, targets, targetNamespace) {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-// backendRefMatchesTargetSet reports whether the supplied backend object
-// reference points at one of the Services in targets AND lives in
-// targetNamespace. The route's own namespace is used as the default
-// when the ref omits Namespace (per spec). Non-Service kinds are
-// skipped via IsServiceBackendRef.
-func backendRefMatchesTargetSet(ref gatewayv1.BackendObjectReference, routeNamespace string, targets map[string]struct{}, targetNamespace string) bool {
-	if !proxy.IsServiceBackendRef(ref) {
-		return false
-	}
-
-	refNamespace := routeNamespace
-	if ref.Namespace != nil {
-		refNamespace = string(*ref.Namespace)
-	}
-
-	if refNamespace != targetNamespace {
-		return false
-	}
-
-	_, hit := targets[string(ref.Name)]
-
-	return hit
-}
-
 // parentReferenceToKey resolves an HTTPRoute parentRef into a ClusterObjectKey,
 // using the route's own namespace when the ref omits the namespace field.
 func parentReferenceToKey(parentRef gatewayv1.ParentReference, routeNamespace string) client.ObjectKey {
@@ -194,20 +126,6 @@ func parentRefIsGateway(parentRef gatewayv1.ParentReference) bool {
 	return true
 }
 
-// collectGatewayParentKeys folds every Gateway-shaped parentRef into the
-// supplied key set, using the route's own namespace when the ref omits
-// the namespace field. Non-Gateway parents are skipped explicitly per
-// parentRefIsGateway.
-func collectGatewayParentKeys(set map[client.ObjectKey]struct{}, parentRefs []gatewayv1.ParentReference, routeNamespace string) {
-	for _, parentRef := range parentRefs {
-		if !parentRefIsGateway(parentRef) {
-			continue
-		}
-
-		set[parentReferenceToKey(parentRef, routeNamespace)] = struct{}{}
-	}
-}
-
 // BackendTLSPolicyReconciler maintains the status of BackendTLSPolicy
 // resources: validates the CA references, computes Accepted and ResolvedRefs
 // conditions, and writes them under each affected Gateway as a policy ancestor.
@@ -216,6 +134,10 @@ type BackendTLSPolicyReconciler struct {
 
 	Scheme         *runtime.Scheme
 	ControllerName string
+
+	// Recorder emits the Events that tell a Gateway it was left out of a full
+	// Status.Ancestors. Nil is a no-op (unit tests).
+	Recorder events.EventRecorder
 }
 
 // Reconcile validates a BackendTLSPolicy against the cluster's current state
@@ -233,19 +155,29 @@ func (r *BackendTLSPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, errors.Wrap(err, "failed to get BackendTLSPolicy")
 	}
 
-	gateways, err := r.gatewaysForPolicy(ctx, &policy)
+	gateways, matches, err := r.policyAncestorGateways(ctx, &policy)
 	if err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to enumerate ancestor gateways")
 	}
 
-	if len(gateways) == 0 {
-		// No Gateway from our class references the target — nothing to claim.
-		return ctrl.Result{}, nil
-	}
+	var ancestors []policyAncestor
 
-	conditions, err := r.computeConditions(ctx, &policy)
-	if err != nil {
-		return ctrl.Result{}, errors.Wrap(err, "failed to evaluate BackendTLSPolicy conditions")
+	if len(gateways) > 0 {
+		conditions, err := r.computeConditions(ctx, &policy)
+		if err != nil {
+			return ctrl.Result{}, errors.Wrap(err, "failed to evaluate BackendTLSPolicy conditions")
+		}
+
+		ancestors = make([]policyAncestor, 0, len(gateways))
+
+		for idx := range gateways {
+			ancestor := policyAncestor{gateway: gateways[idx], conditions: conditions}
+			if matches[client.ObjectKeyFromObject(&gateways[idx])] == backendTargetUnsupported {
+				ancestor.conditions = targetNotFoundConditions(&policy, conditions)
+			}
+
+			ancestors = append(ancestors, ancestor)
+		}
 	}
 
 	logger.Info("reconciling BackendTLSPolicy",
@@ -254,7 +186,7 @@ func (r *BackendTLSPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		"gateways", len(gateways),
 	)
 
-	if err := r.updateStatus(ctx, req.NamespacedName, gateways, conditions, policy.Generation); err != nil {
+	if err := r.updateStatus(ctx, req.NamespacedName, ancestors, policy.Generation); err != nil {
 		return ctrl.Result{}, errors.Wrap(err, "failed to update BackendTLSPolicy status")
 	}
 
@@ -264,9 +196,12 @@ func (r *BackendTLSPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 // computeConditions evaluates the policy spec and returns the two conditions
 // to expose (Accepted and ResolvedRefs) per Gateway API semantics.
 //
-//   - CA reference invalid or unresolvable: Accepted=False, Reason=NoValidCACertificate;
-//     ResolvedRefs=False, Reason=InvalidCACertificateRef (or InvalidKind for
-//     Group/Kind mismatches).
+//   - Every CA reference invalid or unresolvable: Accepted=False,
+//     Reason=NoValidCACertificate; ResolvedRefs=False, Reason=InvalidCACertificateRef
+//     (or InvalidKind for Group/Kind mismatches).
+//   - Some CA references invalid: ResolvedRefs=False as above, and Accepted
+//     evaluated as if only the valid references were listed — the proxy
+//     trusts the valid ones.
 //   - Conflict with an older peer policy on at least one shared (Service,
 //     SectionName) target: Accepted=False, Reason=Conflicted; ResolvedRefs
 //     stays True because the policy's own refs are valid.
@@ -299,12 +234,13 @@ func (r *BackendTLSPolicyReconciler) computeConditions(
 		return wellKnownUnsupportedConditions(policy.Generation, *policy.Spec.Validation.WellKnownCACertificates), nil
 	}
 
-	if err := r.validateCARefs(ctx, policy); err != nil {
-		if errors.Is(err, errBackendTLSCARefUnreadable) {
-			return nil, err
-		}
+	valid, invalid, err := r.validateCARefs(ctx, policy)
+	if err != nil {
+		return nil, err
+	}
 
-		return caInvalidConditions(policy.Generation, err), nil
+	if valid == 0 {
+		return caInvalidConditions(policy.Generation, errors.Join(invalid...)), nil
 	}
 
 	winner, err := r.conflictWinnerFor(ctx, policy)
@@ -312,11 +248,16 @@ func (r *BackendTLSPolicyReconciler) computeConditions(
 		return nil, err
 	}
 
+	conditions := acceptedConditions(policy.Generation)
 	if winner != nil {
-		return conflictedConditions(policy.Generation, winner), nil
+		conditions = conflictedConditions(policy.Generation, winner)
 	}
 
-	return acceptedConditions(policy.Generation), nil
+	if len(invalid) > 0 {
+		conditions[1] = caInvalidConditions(policy.Generation, errors.Join(invalid...))[1]
+	}
+
+	return conditions, nil
 }
 
 // conflictedConditions returns the Accepted=False/Reason=Conflicted +
@@ -390,34 +331,18 @@ func (r *BackendTLSPolicyReconciler) conflictWinnerFor(
 	return winner, nil
 }
 
-// normalizePolicyTargets canonicalises a policy's Service-shaped
-// TargetRefs to a deduplicated set of (Name, SectionName) keys.
-// Non-Service kinds are skipped (BackendTLSPolicy's Standard channel
-// only supports Service targets today). SectionName comparison is
-// literal — a policy without SectionName covers ALL ports of the
-// Service, but per GEP-713 it does NOT collide with a separate policy
-// that scopes itself to a specific named port (different scopes ⇒ no
-// conflict).
-//
-// Mismatch with the runtime resolver, by design: selectPolicyForServicePort
-// (internal/controller/proxy_syncer.go) resolves SectionName against the
-// actual Service port-name via a Service Get and matches when
-// SectionName == port-name, or when a Service ref's Service is not in the
-// cache. So a scoped (SectionName="https") and an
-// unscoped policy on a Service with a port named "https" both reach the
-// resolver for that port at runtime, where the older one wins. This
-// status-side mapper deliberately treats those as different scopes per
-// the spec, even though the proxy-side resolver sees the overlap. A
-// future maintainer reconciling the two layers (either by consulting
-// port names here, or by rephrasing the runtime selection to skip the
-// unscoped policy when a scoped one matches) should treat both call
-// sites as a pair.
+// normalizePolicyTargets canonicalises a policy's core Service TargetRefs to
+// a deduplicated set of (Name, SectionName) keys; other targets are not
+// attached and so cannot conflict. SectionName comparison is literal — a
+// policy without SectionName covers ALL ports of the Service, but per GEP-713
+// it does NOT collide with a separate policy that scopes itself to a specific
+// named port (different scopes ⇒ no conflict, both Accepted). At runtime
+// selectPolicyForServicePort lets the scoped policy govern its named port.
 func normalizePolicyTargets(policy *gatewayv1.BackendTLSPolicy) map[targetKey]struct{} {
 	keys := map[targetKey]struct{}{}
 
 	for _, target := range policy.Spec.TargetRefs {
-		kind := string(target.Kind)
-		if kind != "" && kind != serviceKind {
+		if !isServiceTargetRef(target.LocalPolicyTargetReference) {
 			continue
 		}
 
@@ -540,152 +465,79 @@ func acceptedConditions(generation int64) []metav1.Condition {
 	}
 }
 
-// validateCARefs returns an error describing the first invalid CA reference,
-// or nil when every reference resolves to a ConfigMap whose "ca.crt" key
-// contains at least one parseable PEM CERTIFICATE block. Only same-namespace
-// ConfigMap refs are supported (Core).
+// validateCARefs counts the CA references that resolve to a ConfigMap whose
+// "ca.crt" key holds at least one parseable PEM CERTIFICATE block, and returns
+// an error per invalid reference. Only same-namespace ConfigMap refs are
+// supported (Core). A ConfigMap that cannot be read for a reason other than
+// NotFound is returned as the last error (wrapping errBackendTLSCARefUnreadable), since
+// its validity is unknown.
 func (r *BackendTLSPolicyReconciler) validateCARefs(
 	ctx context.Context,
 	policy *gatewayv1.BackendTLSPolicy,
-) error {
+) (int, []error, error) {
 	refs := policy.Spec.Validation.CACertificateRefs
 	if len(refs) == 0 {
-		return errBackendTLSNoCARef
+		return 0, []error{errBackendTLSNoCARef}, nil
 	}
 
+	valid := 0
+
+	var invalid []error
+
 	for _, ref := range refs {
-		group := string(ref.Group)
-		if !coregroup.Is(group) {
-			return fmt.Errorf("%w: %q", errBackendTLSUnsupportedGroup, group)
+		refErr := r.validateCARef(ctx, policy.Namespace, ref)
+		if errors.Is(refErr, errBackendTLSCARefUnreadable) {
+			return 0, nil, refErr
 		}
 
-		if string(ref.Kind) != configMapKind {
-			return fmt.Errorf("%w: %q", errBackendTLSUnsupportedKind, ref.Kind)
+		if refErr != nil {
+			invalid = append(invalid, refErr)
+
+			continue
 		}
 
-		key := client.ObjectKey{Namespace: policy.Namespace, Name: string(ref.Name)}
+		valid++
+	}
 
-		configMap, err := getConfigMap(ctx, r.Client, key)
-		if err != nil {
-			if !apierrors.IsNotFound(err) {
-				return fmt.Errorf("%w: %w", errBackendTLSCARefUnreadable, err)
-			}
+	return valid, invalid, nil
+}
 
-			return err
+func (r *BackendTLSPolicyReconciler) validateCARef(
+	ctx context.Context,
+	namespace string,
+	ref gatewayv1.LocalObjectReference,
+) error {
+	group := string(ref.Group)
+	if !coregroup.Is(group) {
+		return fmt.Errorf("%w: %q", errBackendTLSUnsupportedGroup, group)
+	}
+
+	if string(ref.Kind) != configMapKind {
+		return fmt.Errorf("%w: %q", errBackendTLSUnsupportedKind, ref.Kind)
+	}
+
+	key := client.ObjectKey{Namespace: namespace, Name: string(ref.Name)}
+
+	configMap, err := getConfigMap(ctx, r.Client, key)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("%w: %w", errBackendTLSCARefUnreadable, err)
 		}
 
-		bundle := configMap.Data[configMapCAKey]
-		if bundle == "" {
-			return fmt.Errorf("%w: %s/%s key %q is empty or missing",
-				errBackendTLSCAKeyMissing, key.Namespace, key.Name, configMapCAKey)
-		}
+		return err
+	}
 
-		if _, err := parseCABundle(bundle); err != nil {
-			return fmt.Errorf("ConfigMap %s/%s: %w", key.Namespace, key.Name, err)
-		}
+	bundle := configMap.Data[configMapCAKey]
+	if bundle == "" {
+		return fmt.Errorf("%w: %s/%s key %q is empty or missing",
+			errBackendTLSCAKeyMissing, key.Namespace, key.Name, configMapCAKey)
+	}
+
+	if _, err := parseCABundle(bundle); err != nil {
+		return fmt.Errorf("ConfigMap %s/%s: %w", key.Namespace, key.Name, err)
 	}
 
 	return nil
-}
-
-// gatewaysForPolicy returns the Gateways managed by this controller that
-// front any HTTPRoute referencing the policy's target Service. We carry that
-// list into Status.Ancestors as the policy's parent context.
-func (r *BackendTLSPolicyReconciler) gatewaysForPolicy(
-	ctx context.Context,
-	policy *gatewayv1.BackendTLSPolicy,
-) ([]gatewayv1.Gateway, error) {
-	if len(policy.Spec.TargetRefs) == 0 {
-		return nil, nil
-	}
-
-	targetServices := make(map[string]struct{}, len(policy.Spec.TargetRefs))
-
-	for _, target := range policy.Spec.TargetRefs {
-		kind := string(target.Kind)
-		if kind != "" && kind != serviceKind {
-			continue
-		}
-
-		targetServices[string(target.Name)] = struct{}{}
-	}
-
-	var httpRoutes gatewayv1.HTTPRouteList
-	if err := r.List(ctx, &httpRoutes, client.InNamespace(policy.Namespace)); err != nil {
-		return nil, fmt.Errorf("list httproutes: %w", err)
-	}
-
-	var grpcRoutes gatewayv1.GRPCRouteList
-	if err := r.List(ctx, &grpcRoutes, client.InNamespace(policy.Namespace)); err != nil {
-		return nil, fmt.Errorf("list grpcroutes: %w", err)
-	}
-
-	gatewayKeys := collectGatewayKeys(httpRoutes.Items, grpcRoutes.Items, targetServices, policy.Namespace)
-
-	gateways := make([]gatewayv1.Gateway, 0, len(gatewayKeys))
-
-	for _, key := range gatewayKeys {
-		var gateway gatewayv1.Gateway
-		if err := r.Get(ctx, key, &gateway); err != nil {
-			continue
-		}
-
-		managed, err := r.gatewayManagedByUs(ctx, &gateway)
-		if err != nil || !managed {
-			continue
-		}
-
-		gateways = append(gateways, gateway)
-	}
-
-	return gateways, nil
-}
-
-// collectGatewayKeys returns the deterministic, sorted set of Gateway keys
-// reached by HTTPRoutes and GRPCRoutes that reference any of the target
-// services. Sorting by {namespace, name} keeps Status.Ancestors stable
-// across reconciles, which matters once a policy fronts more than 16
-// Gateways and updateStatus has to truncate.
-func collectGatewayKeys(
-	httpRoutes []gatewayv1.HTTPRoute,
-	grpcRoutes []gatewayv1.GRPCRoute,
-	targetServices map[string]struct{},
-	targetNamespace string,
-) []client.ObjectKey {
-	gatewayKeySet := map[client.ObjectKey]struct{}{}
-
-	for routeIdx := range httpRoutes {
-		route := &httpRoutes[routeIdx]
-		if !routeReferencesAnyService(route, targetServices, targetNamespace) {
-			continue
-		}
-
-		collectGatewayParentKeys(gatewayKeySet, route.Spec.ParentRefs, route.Namespace)
-	}
-
-	for routeIdx := range grpcRoutes {
-		route := &grpcRoutes[routeIdx]
-		if !grpcRouteReferencesAnyService(route, targetServices, targetNamespace) {
-			continue
-		}
-
-		collectGatewayParentKeys(gatewayKeySet, route.Spec.ParentRefs, route.Namespace)
-	}
-
-	gatewayKeys := make([]client.ObjectKey, 0, len(gatewayKeySet))
-	for key := range gatewayKeySet {
-		gatewayKeys = append(gatewayKeys, key)
-	}
-
-	sort.Slice(gatewayKeys, func(left, right int) bool {
-		if gatewayKeys[left].Namespace != gatewayKeys[right].Namespace {
-			return gatewayKeys[left].Namespace < gatewayKeys[right].Namespace
-		}
-
-		return gatewayKeys[left].Name < gatewayKeys[right].Name
-	})
-
-	return gatewayKeys
 }
 
 // gatewayManagedByUs reports whether the Gateway's GatewayClass binds to this
@@ -705,21 +557,26 @@ func (r *BackendTLSPolicyReconciler) gatewayManagedByUs(ctx context.Context, gat
 	return string(gatewayClass.Spec.ControllerName) == r.ControllerName, nil
 }
 
-// updateStatus replaces this controller's entries in Status.Ancestors with one
-// entry per managed Gateway, carrying the supplied conditions. Other
-// controllers' entries are preserved. meta.SetStatusCondition is used to
+// updateStatus replaces this controller's entries in Status.Ancestors with
+// the supplied ones; with none, it removes this controller's entries.
+// Other controllers' entries are preserved. meta.SetStatusCondition is used to
 // merge each condition into the existing ancestor (when present), preserving
-// LastTransitionTime when neither Status, Reason, nor Message changed.
+// LastTransitionTime unless Status changed. Each Gateway left out because the
+// list is full gets a Warning Event.
 func (r *BackendTLSPolicyReconciler) updateStatus(
 	ctx context.Context,
 	policyKey client.ObjectKey,
-	gateways []gatewayv1.Gateway,
-	conditions []metav1.Condition,
+	ancestors []policyAncestor,
 	reconciledGen int64,
 ) error {
-	//nolint:wrapcheck // retry wrapper handles errors internally
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		var fresh gatewayv1.BackendTLSPolicy
+	var (
+		dropped []policyAncestor
+		fresh   gatewayv1.BackendTLSPolicy
+	)
+
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		dropped = nil
+
 		if err := r.Get(ctx, policyKey, &fresh); err != nil {
 			if apierrors.IsNotFound(err) {
 				return nil
@@ -732,29 +589,11 @@ func (r *BackendTLSPolicyReconciler) updateStatus(
 		// other controllers' entries (preserved). stale=true means a newer
 		// reconcile already advanced our status, so we MUST NOT overwrite it.
 		existing, otherControllerEntries, stale := r.partitionAncestors(&fresh, reconciledGen)
-		if stale {
+		if stale || len(existing) == 0 && len(ancestors) == 0 {
 			return nil
 		}
 
-		ourEntries := make([]gatewayv1.PolicyAncestorStatus, 0, len(gateways))
-
-		for gwIdx := range gateways {
-			gateway := &gateways[gwIdx]
-			ancestorRef := gatewayAncestorRef(gateway)
-
-			key := client.ObjectKey{Namespace: gateway.Namespace, Name: gateway.Name}
-			merged := append([]metav1.Condition(nil), existing[key]...)
-
-			for _, condition := range conditions {
-				meta.SetStatusCondition(&merged, condition)
-			}
-
-			ourEntries = append(ourEntries, gatewayv1.PolicyAncestorStatus{
-				AncestorRef:    ancestorRef,
-				ControllerName: gatewayv1.GatewayController(r.ControllerName),
-				Conditions:     merged,
-			})
-		}
+		ourEntries := r.mergeAncestorEntries(existing, ancestors)
 
 		// Reserve the full slot count for other controllers' entries first;
 		// only OUR entries get truncated when the combined set exceeds the
@@ -763,6 +602,7 @@ func (r *BackendTLSPolicyReconciler) updateStatus(
 		available := max(policyAncestorStatusMaxCount-len(otherControllerEntries), 0)
 
 		if len(ourEntries) > available {
+			dropped = ancestors[available:]
 			ourEntries = ourEntries[:available]
 		}
 
@@ -770,9 +610,63 @@ func (r *BackendTLSPolicyReconciler) updateStatus(
 		combined = append(combined, ourEntries...)
 		fresh.Status.Ancestors = combined
 
-		return r.Status().Update(ctx, &fresh) //nolint:wrapcheck // unwrapped to participate in retry
+		return r.Status().Update(ctx, &fresh)
 	})
+	if err != nil {
+		return err //nolint:wrapcheck // the caller wraps
+	}
+
+	r.warnDroppedAncestors(&fresh, dropped)
+
+	return nil
 }
+
+// mergeAncestorEntries builds this controller's PolicyAncestorStatus entries,
+// merging each ancestor's conditions into its previous ones.
+func (r *BackendTLSPolicyReconciler) mergeAncestorEntries(
+	existing map[client.ObjectKey][]metav1.Condition,
+	ancestors []policyAncestor,
+) []gatewayv1.PolicyAncestorStatus {
+	entries := make([]gatewayv1.PolicyAncestorStatus, 0, len(ancestors))
+
+	for idx := range ancestors {
+		gateway := &ancestors[idx].gateway
+		merged := append([]metav1.Condition(nil), existing[client.ObjectKeyFromObject(gateway)]...)
+
+		for _, condition := range ancestors[idx].conditions {
+			meta.SetStatusCondition(&merged, condition)
+		}
+
+		entries = append(entries, gatewayv1.PolicyAncestorStatus{
+			AncestorRef:    gatewayAncestorRef(gateway),
+			ControllerName: gatewayv1.GatewayController(r.ControllerName),
+			Conditions:     merged,
+		})
+	}
+
+	return entries
+}
+
+// warnDroppedAncestors tells each Gateway left out of a full Status.Ancestors
+// that the policy cannot be represented for it. The Gateway API names no
+// condition for this, so it is an Event on the Gateway.
+func (r *BackendTLSPolicyReconciler) warnDroppedAncestors(policy *gatewayv1.BackendTLSPolicy, dropped []policyAncestor) {
+	if r.Recorder == nil {
+		return
+	}
+
+	for idx := range dropped {
+		r.Recorder.Eventf(&dropped[idx].gateway, policy, corev1.EventTypeWarning,
+			eventReasonPolicyAncestorsFull, eventActionRecordPolicyStatus,
+			"BackendTLSPolicy %s/%s already lists %d ancestors, the most its status holds; it has no status entry for this Gateway",
+			policy.Namespace, policy.Name, policyAncestorStatusMaxCount)
+	}
+}
+
+const (
+	eventReasonPolicyAncestorsFull = "PolicyAncestorsFull"
+	eventActionRecordPolicyStatus  = "RecordPolicyStatus"
+)
 
 // partitionAncestors splits the policy's current ancestors into this
 // controller's previous conditions (keyed by Gateway, so SetStatusCondition can
@@ -864,6 +758,7 @@ func setupStatusReconcilers(mgr ctrl.Manager, controllerName string) error {
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
 		ControllerName: controllerName,
+		Recorder:       mgr.GetEventRecorder("backendtlspolicy-controller"),
 	}
 
 	if err := backendTLSPolicyReconciler.SetupWithManager(mgr); err != nil {
@@ -874,7 +769,10 @@ func setupStatusReconcilers(mgr ctrl.Manager, controllerName string) error {
 }
 
 // SetupWithManager wires the reconciler with watches for BackendTLSPolicy,
-// HTTPRoutes (target-service membership), and ConfigMaps (CA bundle source).
+// HTTPRoutes and GRPCRoutes (target membership), ListenerSets (which Gateway
+// a route attached to one reaches), ReferenceGrants (whether a
+// route in another namespace may use the target), and ConfigMaps (CA bundle
+// source).
 // The ConfigMap watch is what lets policy status flip from
 // NoValidCACertificate to Accepted when an absent CA ConfigMap is later
 // created (or back, when its ca.crt key is emptied).
@@ -903,6 +801,14 @@ func (r *BackendTLSPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&corev1.ConfigMap{},
 			handler.EnqueueRequestsFromMapFunc(r.policiesForConfigMapChange),
+		).
+		Watches(
+			&gatewayv1.ListenerSet{},
+			handler.EnqueueRequestsFromMapFunc(r.policiesForListenerSetChange),
+		).
+		Watches(
+			&gatewayv1beta1.ReferenceGrant{},
+			handler.EnqueueRequestsFromMapFunc(r.policiesForReferenceGrantChange),
 		).
 		Complete(r)
 	if err != nil {
@@ -1040,96 +946,126 @@ func policyReferencesConfigMap(policy *gatewayv1.BackendTLSPolicy, configMapName
 	return false
 }
 
-// policiesForRouteChange enqueues only the BackendTLSPolicies in the route's
-// namespace whose TargetRefs intersect the route's backendRefs. A change to a
-// route that doesn't touch a policy's target Service should not bump that
-// policy's status (saves the reconciler from doing full work on every
-// unrelated route edit in busy namespaces).
+// policiesForRouteChange enqueues the BackendTLSPolicies whose TargetRefs
+// name one of the HTTPRoute's backends, in every namespace those backends
+// point into. A change to a route that doesn't touch a policy's target should
+// not bump that policy's status.
 func (r *BackendTLSPolicyReconciler) policiesForRouteChange(ctx context.Context, obj client.Object) []reconcile.Request {
 	route, ok := obj.(*gatewayv1.HTTPRoute)
 	if !ok {
 		return nil
 	}
 
-	var policies gatewayv1.BackendTLSPolicyList
-	if err := r.List(ctx, &policies, client.InNamespace(route.Namespace)); err != nil {
-		log.FromContext(ctx).Error(err, "list BackendTLSPolicies for HTTPRoute change failed; enqueue skipped, next reconcile from another source recovers",
-			"namespace", route.Namespace, "route", route.Name)
-
-		return nil
-	}
-
-	requests := make([]reconcile.Request, 0, len(policies.Items))
-
-	for policyIdx := range policies.Items {
-		policy := &policies.Items[policyIdx]
-		if !policyTargetsAnyRouteBackend(policy, route) {
-			continue
-		}
-
-		requests = append(requests, reconcile.Request{
-			Namespace: policy.Namespace, Name: policy.Name,
-		})
-	}
-
-	return requests
-}
-
-// policyTargetsAnyRouteBackend reports whether the policy's TargetRefs include
-// at least one Service that the route also references as a backend. Used by
-// policiesForRouteChange to skip irrelevant policies on every HTTPRoute edit.
-func policyTargetsAnyRouteBackend(policy *gatewayv1.BackendTLSPolicy, route *gatewayv1.HTTPRoute) bool {
-	return routeReferencesAnyService(route, policyTargetServiceNames(policy), policy.Namespace)
+	return r.policiesForBackends(ctx, route.Namespace, httpRouteBackends(route))
 }
 
 // policiesForGRPCRouteChange is the GRPCRoute counterpart of
-// policiesForRouteChange — enqueues only the BackendTLSPolicies whose
-// TargetRefs intersect the GRPCRoute's backendRefs. Without this watch
-// a GRPCRoute referencing a Service freshly targeted by a policy would
-// not re-enqueue the policy and the Ancestor list would remain stale.
+// policiesForRouteChange.
 func (r *BackendTLSPolicyReconciler) policiesForGRPCRouteChange(ctx context.Context, obj client.Object) []reconcile.Request {
 	route, ok := obj.(*gatewayv1.GRPCRoute)
 	if !ok {
 		return nil
 	}
 
-	var policies gatewayv1.BackendTLSPolicyList
-	if err := r.List(ctx, &policies, client.InNamespace(route.Namespace)); err != nil {
-		log.FromContext(ctx).Error(err, "list BackendTLSPolicies for GRPCRoute change failed; enqueue skipped, next reconcile from another source recovers",
-			"namespace", route.Namespace, "route", route.Name)
+	return r.policiesForBackends(ctx, route.Namespace, grpcRouteBackends(route))
+}
 
-		return nil
+func (r *BackendTLSPolicyReconciler) policiesForBackends(
+	ctx context.Context,
+	routeNamespace string,
+	backends []gatewayv1.BackendObjectReference,
+) []reconcile.Request {
+	namespaces := map[string]struct{}{}
+	for _, ref := range backends {
+		namespaces[backendRefNamespace(ref, routeNamespace)] = struct{}{}
 	}
 
-	requests := make([]reconcile.Request, 0, len(policies.Items))
+	var requests []reconcile.Request
 
-	for policyIdx := range policies.Items {
-		policy := &policies.Items[policyIdx]
-		if !grpcRouteReferencesAnyService(route, policyTargetServiceNames(policy), policy.Namespace) {
+	for namespace := range namespaces {
+		var policies gatewayv1.BackendTLSPolicyList
+		if err := r.List(ctx, &policies, client.InNamespace(namespace)); err != nil {
+			log.FromContext(ctx).Error(err, "list BackendTLSPolicies for route change failed; enqueue skipped, next reconcile from another source recovers",
+				"namespace", namespace)
+
 			continue
 		}
 
-		requests = append(requests, reconcile.Request{
-			Namespace: policy.Namespace, Name: policy.Name,
-		})
+		for policyIdx := range policies.Items {
+			policy := &policies.Items[policyIdx]
+			if policyMatchesAnyBackend(policy, backends, routeNamespace) {
+				requests = append(requests, reconcile.Request{
+					NamespacedName: client.ObjectKeyFromObject(policy),
+				})
+			}
+		}
 	}
 
 	return requests
 }
 
-// policyTargetServiceNames returns the Service names targeted by a
-// policy. Shared by the HTTPRoute and GRPCRoute backend-overlap checks.
-func policyTargetServiceNames(policy *gatewayv1.BackendTLSPolicy) map[string]struct{} {
-	targets := map[string]struct{}{}
-
-	for _, target := range policy.Spec.TargetRefs {
-		kind := string(target.Kind)
-		if kind != "" && kind != serviceKind {
-			continue
-		}
-
-		targets[string(target.Name)] = struct{}{}
+// policiesForListenerSetChange enqueues the policies on the backends of every
+// route attached to the ListenerSet: moving it to another Gateway changes the
+// policies' ancestors without changing the routes' status.
+func (r *BackendTLSPolicyReconciler) policiesForListenerSetChange(ctx context.Context, obj client.Object) []reconcile.Request {
+	listenerSet, ok := obj.(*gatewayv1.ListenerSet)
+	if !ok {
+		return nil
 	}
 
-	return targets
+	var httpRoutes gatewayv1.HTTPRouteList
+
+	var grpcRoutes gatewayv1.GRPCRouteList
+
+	if err := r.List(ctx, &httpRoutes); err != nil {
+		log.FromContext(ctx).Error(err, "list HTTPRoutes for ListenerSet change failed; enqueue skipped")
+
+		return nil
+	}
+
+	if err := r.List(ctx, &grpcRoutes); err != nil {
+		log.FromContext(ctx).Error(err, "list GRPCRoutes for ListenerSet change failed; enqueue skipped")
+
+		return nil
+	}
+
+	var requests []reconcile.Request
+
+	for idx := range httpRoutes.Items {
+		route := &httpRoutes.Items[idx]
+		if routeTargetsListenerSet(HTTPRouteWrapper{route}, listenerSet) {
+			requests = append(requests, r.policiesForBackends(ctx, route.Namespace, httpRouteBackends(route))...)
+		}
+	}
+
+	for idx := range grpcRoutes.Items {
+		route := &grpcRoutes.Items[idx]
+		if routeTargetsListenerSet(GRPCRouteWrapper{route}, listenerSet) {
+			requests = append(requests, r.policiesForBackends(ctx, route.Namespace, grpcRouteBackends(route))...)
+		}
+	}
+
+	return requests
+}
+
+// policiesForReferenceGrantChange enqueues every BackendTLSPolicy in the
+// grant's namespace: a grant decides whether a route in another namespace may
+// use a Service there, and so whether that route's Gateways are ancestors.
+func (r *BackendTLSPolicyReconciler) policiesForReferenceGrantChange(ctx context.Context, obj client.Object) []reconcile.Request {
+	var policies gatewayv1.BackendTLSPolicyList
+	if err := r.List(ctx, &policies, client.InNamespace(obj.GetNamespace())); err != nil {
+		log.FromContext(ctx).Error(err, "list BackendTLSPolicies for ReferenceGrant change failed; enqueue skipped",
+			"namespace", obj.GetNamespace())
+
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, len(policies.Items))
+	for policyIdx := range policies.Items {
+		requests = append(requests, reconcile.Request{
+			NamespacedName: client.ObjectKeyFromObject(&policies.Items[policyIdx]),
+		})
+	}
+
+	return requests
 }

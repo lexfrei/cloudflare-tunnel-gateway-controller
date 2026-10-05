@@ -387,7 +387,7 @@ func applyGRPCBackendTransport(
 	// dialing cleartext h2c, the same as the HTTP path. gRPC is HTTP/2 by
 	// definition, so every other appProtocol value (unset, h2c, or unrecognised)
 	// keeps the h2c default below — the correct gRPC transport regardless.
-	if appProto := lookupAppProtocol(ctx, protocolResolver, svcNamespace, serviceName, port); isTLSAppProtocol(appProto) {
+	if appProto := lookupAppProtocol(ctx, serviceProtocolResolver(protocolResolver, isService), svcNamespace, serviceName, port); isTLSAppProtocol(appProto) {
 		// tlsAttached is false here (past the result.TLS != nil return), so
 		// unpolicedTLSAppProtocol always records the ResolvedRefs / UnsupportedProtocol
 		// diagnostic and reports fail-closed; call it for that side-effect and set

@@ -121,7 +121,7 @@ A `backendRef` may target one of the following kinds (applies to both HTTPRoute 
 | Group | Kind | Supported | Notes |
 | --- | --- | --- | --- |
 | _(core)_ | `Service` | Yes | Default when group/kind are unset; all Service types above |
-| `multicluster.x-k8s.io` | `ServiceImport` | Yes | Multi-Cluster Services API; resolved via `clusterset.local` DNS, port validated against `spec.ports` |
+| `multicluster.x-k8s.io` | `ServiceImport` | Yes | Multi-Cluster Services API; resolved via `clusterset.local` DNS, port validated against `spec.ports`. Dialed plaintext: a `BackendTLSPolicy` and a port `appProtocol` apply to core Services only, so a same-named local Service lends it neither — see [Backend mTLS](limitations.md#backend-mtls-backendtlspolicy) |
 | `cf.k8s.lex.la` | `ExternalBackend` | Yes | Out-of-cluster HTTP(S) URL; see [ExternalBackend](external-backend.md) |
 | _(any other)_ | _(any other)_ | No | `ResolvedRefs=False, InvalidKind` |
 
