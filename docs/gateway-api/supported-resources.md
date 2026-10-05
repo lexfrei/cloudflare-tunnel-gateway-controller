@@ -26,7 +26,7 @@ This document details the feature support matrix for each Gateway API resource t
 
 ## Gateway
 
-The Gateway resource is fully processed. Listeners are used for route binding, status reporting, and validation. TLS termination is handled by Cloudflare edge, but TLS certificate references are validated (including ReferenceGrant checks).
+The Gateway resource is fully processed. Listeners are used for route binding, status reporting, and validation. TLS termination is handled by the Cloudflare edge: `HTTPS` listeners are served, and their certificate references are validated (including ReferenceGrant checks), but clients get the edge certificate.
 
 | Field | Supported | Notes |
 | --- | --- | --- |
@@ -36,7 +36,7 @@ The Gateway resource is fully processed. Listeners are used for route binding, s
 | `spec.listeners[].port` | Yes | Used for route binding when route specifies a port, and as the redirect port of a scheme-less `RequestRedirect` ([redirect port](limitations.md#redirect-port)) |
 | `spec.listeners[].protocol` | Yes | Used for route kind filtering (HTTP/HTTPS allow HTTPRoute/GRPCRoute) |
 | `spec.listeners[].hostname` | Yes | Routes must have intersecting hostnames; a host is served only by routes on the most specific listener that matches it ([listener isolation](limitations.md#listener-isolation)) |
-| `spec.listeners[].tls` | Yes | CertificateRefs validated with ReferenceGrant support |
+| `spec.listeners[].tls` | Yes | `certificateRefs` validated with ReferenceGrant support, never served: clients get the Cloudflare edge certificate |
 | `spec.listeners[].allowedRoutes` | Yes | Namespace (Same/All/Selector) and kind filtering. A kind's `group` defaults to `gateway.networking.k8s.io` only when omitted; an explicit `""` is the core group, which serves no route kinds, so that entry is reported as `InvalidRouteKinds` and admits nothing |
 | `spec.tls.backend.clientCertificateRef` | Yes | `kubernetes.io/tls` Secret only; same-namespace or via ReferenceGrant; presented during backend TLS handshake **only** when the target Service has a BackendTLSPolicy (no client cert is sent over plaintext) |
 | `spec.tls.frontend` | No | Refused: a Gateway that sets it is `Accepted=False, Reason=Invalid` and none of its routes is served, because clients complete TLS with the Cloudflare edge ([client certificate validation](limitations.md#client-certificate-validation-spectlsfrontend-is-refused)) |
@@ -46,7 +46,7 @@ The Gateway resource is fully processed. Listeners are used for route binding, s
 
 !!! info "TLS Termination"
 
-    Cloudflare Tunnel terminates TLS at Cloudflare's edge network. TLS certificate references on listeners are validated (existence, ReferenceGrant for cross-namespace refs), but the actual TLS termination is handled by Cloudflare, not by the controller. The listener `port` and `protocol` fields are used for Gateway API route binding semantics, not for configuring network listeners.
+    Cloudflare Tunnel terminates TLS at Cloudflare's edge network. TLS certificate references on listeners are validated (a valid TLS `Secret`, ReferenceGrant for cross-namespace refs), but the actual TLS termination is handled by Cloudflare, not by the controller, and clients get the edge certificate rather than the listener's. The listener `port` and `protocol` fields are used for Gateway API route binding semantics, not for configuring network listeners.
 
 ## HTTPRoute
 
@@ -211,7 +211,15 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Gateway accepted by controller |
 | `Accepted` | `True` or `False` | `ListenersNotValid` | One or more own listeners are invalid (they conflict and carry `Conflicted=True`, use an unsupported protocol, or have an `allowedRoutes.namespaces.selector` that is missing or does not parse); `False` only when no listener is valid. The message names the conflicted listeners and the accepted ones |
-| `Programmed` | `True` | `Programmed` | Gateway configured in Cloudflare |
+| `Accepted` | `False` | `InvalidParameters` | The configuration the Gateway depends on cannot be used: its GatewayClass `parametersRef` or `GatewayClassConfig` is missing or invalid, the managed GatewayClasses disagree on `parametersRef`, its `spec.infrastructure.parametersRef` cannot be resolved, a dedicated data plane has no proxy image, or its connector token claims a tunnel another Gateway holds or Cloudflare does not confirm. The message names the cause |
+| `Accepted` | `False` | `DataPlaneQuotaExceeded` | The namespace is at its cap of dedicated data planes (`Programmed=False, NoResources`) |
+| `Accepted` | `False` | `UnsupportedAddress` | `spec.addresses` holds an address type other than `Hostname` |
+| `Accepted` | `False` | `Invalid` | `spec.tls.frontend` is set ([client certificate validation](limitations.md#client-certificate-validation-spectlsfrontend-is-refused)) |
+| `Programmed` | `True` | `Programmed` | Gateway configured. On the shared plane it is set whenever the Gateway is not refused for its configuration and `spec.addresses` asks for no other hostname, even with `Accepted=False, ListenersNotValid`; a dedicated plane needs a ready proxy replica ([details](limitations.md#programmed-on-the-shared-plane-does-not-track-the-proxy)) |
+| `Programmed` | `False` | `Pending` | The dedicated data plane has no ready proxy replica yet |
+| `Programmed` | `False` | `AddressNotUsable` | `spec.addresses` requests a hostname other than the tunnel CNAME; the Gateway stays `Accepted` and is served at the CNAME |
+| `Programmed` | `False` | `Invalid` / `NoResources` | The Gateway is refused for its configuration, with one of the `Accepted=False` reasons above other than `ListenersNotValid` (`NoResources` for the data-plane cap) |
+| `ResolvedRefs` | `False` | `InvalidClientCertificateRef` / `RefNotPermitted` | `spec.tls.backend.clientCertificateRef` cannot be used, or crosses namespaces without a ReferenceGrant |
 
 ### Gateway Listener Conditions
 
