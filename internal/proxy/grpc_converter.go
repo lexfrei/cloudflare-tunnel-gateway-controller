@@ -39,7 +39,7 @@ const grpcSegmentPattern = "[^/]+"
 // protocolResolver reads the backend Service port's appProtocol. gRPC is HTTP/2
 // by definition, so the only meaningful appProtocol axis here is TLS-vs-cleartext:
 // a TLS appProtocol (https / HTTPS / kubernetes.io/wss) with no BackendTLSPolicy
-// fails the backend closed (HTTP 502, ResolvedRefs=False / UnsupportedProtocol),
+// fails the backend closed (gRPC UNAVAILABLE, ResolvedRefs=False / UnsupportedProtocol),
 // mirroring the HTTP path, instead of silently dialing cleartext h2c. Every other
 // value (nil resolver, unset, kubernetes.io/h2c, or unrecognised) keeps the h2c
 // default — the correct gRPC transport regardless.
@@ -127,7 +127,7 @@ func convertGRPCRouteRule(
 // carried as HTTP/2 headers, so the header-modifier code applies unchanged.
 // RequestMirror (extended) and ExtensionRef (implementation-specific) are not
 // served yet: per the Gateway API spec an unsupported filter MUST NOT be
-// silently dropped, so they fail closed (matched requests receive HTTP 500) and
+// silently dropped, so they fail closed (matched requests receive UNAVAILABLE) and
 // the route status carries the UnsupportedValue. scope controls whether a
 // fail-closed filter takes the whole rule down or only the backend fraction.
 func convertGRPCFilter(filter *gatewayv1.GRPCRouteFilter, scope string, sink *diagSink) (*RouteFilter, bool) {
@@ -175,7 +175,7 @@ func applyGRPCBackendFilters(result *BackendRef, filters []gatewayv1.GRPCRouteFi
 // consequence (UNAVAILABLE for matched requests), and the supported alternatives.
 func unsupportedGRPCFilterMessage(scope, filterType string) string {
 	return fmt.Sprintf(
-		"GRPCRoute filter type %q on this %s is not supported; matching requests receive HTTP 500. "+
+		"GRPCRoute filter type %q on this %s is not supported; matching requests receive gRPC status UNAVAILABLE. "+
 			"Remove the filter or replace it with a supported type "+
 			"(RequestHeaderModifier, ResponseHeaderModifier).",
 		filterType, scope,
@@ -370,7 +370,7 @@ func convertGRPCExternalBackendRef(
 // wire and ALPN negotiates HTTP/2; with no policy the backend is dialed cleartext
 // h2c — unless the Service port declares a TLS appProtocol (https / HTTPS /
 // kubernetes.io/wss), in which case the operator asked for TLS but there is no CA
-// to verify the backend, so the backend fails closed (HTTP 502, ResolvedRefs=False
+// to verify the backend, so the backend fails closed (gRPC UNAVAILABLE, ResolvedRefs=False
 // / UnsupportedProtocol) rather than being silently dialed cleartext. Mirrors the
 // HTTP path (convertBackendRef → unpolicedTLSAppProtocol). Extracted from
 // convertGRPCBackendRef to keep it within the funlen budget.
@@ -405,10 +405,10 @@ func applyGRPCBackendTransport(
 		// tlsAttached is false here (past the result.TLS != nil return), so
 		// unpolicedTLSAppProtocol always records the ResolvedRefs / UnsupportedProtocol
 		// diagnostic and reports fail-closed; call it for that side-effect and set
-		// the 502 unconditionally.
+		// the 500 unconditionally.
 		unpolicedTLSAppProtocol(false, svcNamespace, serviceName, port, appProto, sink)
 
-		result.UnavailableStatus = http.StatusBadGateway
+		result.UnavailableStatus = http.StatusInternalServerError
 
 		return
 	}
