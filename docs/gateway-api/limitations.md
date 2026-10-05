@@ -104,7 +104,7 @@ A consequence of the shared tunnel: two Gateways of the same class share one edg
 
 ## Routes attached to another implementation's Gateway
 
-A route may carry parentRefs to this controller's Gateway and to one owned by another Gateway API implementation at the same time, which is the normal shape of a migration. A Gateway whose `GatewayClass.spec.controllerName` names a different controller contributes nothing to what this data plane serves: its listeners lend neither their hostname to the route's served set nor their protocol to a scheme-less `RequestRedirect`. The same applies to a `ListenerSet`, judged by its parent Gateway. A Gateway whose class is missing or cannot be read at that moment is not treated as foreign, so a route bound to this controller's own Gateway keeps inheriting its listener's hostname. A parent that cannot be evaluated at that moment lends no hostname either: its Gateway, its ListenerSet or the ListenerSet's parent Gateway cannot be read, or the ListenerSet's namespace cannot be read for the parent Gateway's `allowedListeners` selector. Likewise a listener that admits routes by namespace selector lends no hostname while the route's namespace cannot be read, though the parent's other listeners still lend theirs. A route that another parent or listener lends hostnames to serves only those, and a route that no other parent or listener lends a hostname to is left out of the proxy configuration, instead of being served with the hostnames it declares, or under every Host when it declares none. The route is marked `cf.k8s.lex.la/ProxyConfigPushed=False` with reason `ParentNotEvaluated`, and the controller retries the sync until the parent can be evaluated, unless the route declares hostnames and its other parents or listeners already cover all of them.
+A route may carry parentRefs to this controller's Gateway and to one owned by another Gateway API implementation at the same time, which is the normal shape of a migration. A Gateway whose `GatewayClass.spec.controllerName` names a different controller contributes nothing to what this data plane serves: its listeners lend no hostname to the route's served set. The same applies to a `ListenerSet`, judged by its parent Gateway. A Gateway whose class is missing or cannot be read at that moment is not treated as foreign, so a route bound to this controller's own Gateway keeps inheriting its listener's hostname. A parent that cannot be evaluated at that moment lends no hostname either: its Gateway, its ListenerSet or the ListenerSet's parent Gateway cannot be read, or the ListenerSet's namespace cannot be read for the parent Gateway's `allowedListeners` selector. Likewise a listener that admits routes by namespace selector lends no hostname while the route's namespace cannot be read, though the parent's other listeners still lend theirs. A route that another parent or listener lends hostnames to serves only those, and a route that no other parent or listener lends a hostname to is left out of the proxy configuration, instead of being served with the hostnames it declares, or under every Host when it declares none. The route is marked `cf.k8s.lex.la/ProxyConfigPushed=False` with reason `ParentNotEvaluated`, and the controller retries the sync until the parent can be evaluated, unless the route declares hostnames and its other parents or listeners already cover all of them.
 
 ## The tunnel ingress document only feeds the dashboard
 
@@ -153,7 +153,7 @@ Clients complete TLS with the Cloudflare edge, and the tunnel does not carry the
 - Routes attached to it, directly or through a ListenerSet, report `Accepted=False` with `Reason=NoMatchingParent` for that parent and are not served through it.
 - Its ListenerSets report `Accepted=False` with `Reason=ParentNotAccepted`.
 
-The refusal covers the whole Gateway, not only its `HTTPS` listeners: the edge accepts HTTPS for every hostname whatever the listener protocol, so no listener on the Gateway could honour the setting. Removing `spec.tls.frontend` restores the Gateway and its routes.
+The refusal covers the whole Gateway, not only its `HTTPS` listeners: the edge terminates every client's TLS, so no listener on the Gateway sees a client certificate and none could honour the setting. Removing `spec.tls.frontend` restores the Gateway and its routes.
 
 To require client certificates, enforce them at the Cloudflare edge before requests reach the tunnel, for example with Cloudflare's client-certificate (mTLS) or Access policies; check which of them your Cloudflare plan includes.
 
@@ -165,10 +165,10 @@ Gateway listeners follow Gateway API specification. Some fields are ignored beca
 
 | Field | Status | Notes |
 |-------|--------|-------|
-| `port` | Ignored for routing | Requests arrive on the ports the Cloudflare edge serves; the listener port only sets the redirect port of a `RequestRedirect` that leaves `scheme` empty, when the edge serves it ([Redirect port](#redirect-port)) |
+| `port` | Supported | A request is served only by routes on a listener with the port it arrived on, as named in `Host`; the port is not an access boundary ([Listener ports and schemes](#listener-ports-and-schemes)) |
 | `protocol` | Validated | Only `HTTP` and `HTTPS` listeners are served (they carry HTTPRoute / GRPCRoute). A `TCP`, `TLS`, or `UDP` listener has no data plane here and is marked `Accepted=False, Reason=UnsupportedProtocol` (and not Programmed) on its listener status |
 | `hostname` | Supported | Routes must have intersecting hostnames; see [Listener isolation](#listener-isolation) |
-| `tls` | Ignored | Cloudflare manages TLS |
+| `tls` | Validated | `certificateRefs` are checked (including ReferenceGrant for cross-namespace refs) and reported on listener status, but never served: Cloudflare terminates TLS with its own certificates |
 | `allowedRoutes` | Supported | Namespace (Same/All/Selector) and kind filtering |
 
 This is because Cloudflare Tunnel terminates TLS at Cloudflare's edge, not in the cluster. However, `hostname` and `allowedRoutes` are validated per Gateway API specification. The same `Accepted=False, Reason=UnsupportedProtocol` listener verdict applies to ListenerSet entries.
@@ -177,9 +177,19 @@ This is because Cloudflare Tunnel terminates TLS at Cloudflare's edge, not in th
 
 A request belongs to the most specific listener of a Gateway whose hostname matches it, and only routes attached to that listener can answer it. With listeners `*.example.com` and `foo.example.com`, a request for `foo.example.com` is served only by routes attached to `foo.example.com`; a route attached to `*.example.com` answers `bar.example.com` but not `foo.example.com`, even when it lists `foo.example.com` in its own `hostnames`. A listener without a hostname gets only the hosts no other listener matches. An exact hostname is more specific than any wildcard, and a wildcard with more labels is more specific than one with fewer. ListenerSet entries count as listeners of their parent Gateway. A listener that is not `Accepted` admits no route and owns nothing: a conflicted listener, one with an unsupported protocol, and one whose namespace selector does not parse. A listener that is `Accepted` owns its hostname even while no route is attached to it, so those requests get a 404.
 
-Listener ports are not compared. The tunnel does not tell the proxy which port or scheme a request arrived on, so isolation is computed across all listeners of a Gateway. Two listeners with the same hostname on different ports are equally specific, and routes on either one answer that hostname.
+Only listeners on the port the request arrived on take part, so two listeners with the same hostname on different ports each own that hostname on their own port ([Listener ports and schemes](#listener-ports-and-schemes)).
 
 Isolation is per Gateway. A route attached to several Gateways on the same data plane answers a host when any of them gives the host to a listener the route is attached through.
+
+### Listener ports and schemes
+
+The proxy matches a request to a listener by the port it arrived on. The Cloudflare edge keeps a port other than the scheme's default in `Host` (`app.example.com:8443`) and sets `X-Forwarded-Proto` to the scheme the client used, overwriting any value the client sent, so a request without a port in `Host` arrived on 80 for `http` and 443 for `https`. A request on a port no listener of the Gateway has gets a 404, like a host no listener matches.
+
+The edge passes `Host` on as the client sent it and carries the port the client connected to nowhere else, so the port named in `Host` is the one the proxy matches. A client that names a different port in `Host` than the one it connected to, such as `app.example.com:8443` on a connection to 443, is served by the listener on the port it names. This deviates from the Gateway API, which ignores the port in `Host` and matches the listener by the connection's port; browsers and other clients that write `Host` from the URL are unaffected.
+
+So a route attached only to an `HTTPS` listener on 443 does not answer plain HTTP, and a route attached only to an `HTTP` listener on 80 does not answer HTTPS. A zone with [Always Use HTTPS](https://developers.cloudflare.com/ssl/edge-certificates/additional-options/always-use-https/) on, or clients that start on `https://`, need a listener on 443. Give a Gateway both an `HTTP` listener on 80 and an `HTTPS` listener on 443 to serve both schemes.
+
+The edge proxies a [fixed set of ports](https://developers.cloudflare.com/fundamentals/reference/network-ports/): 80, 8080, 8880, 2052, 2082, 2086 and 2095 for HTTP, and 443, 2053, 2083, 2087, 2096 and 8443 for HTTPS. Browsers and other clients that write `Host` from the URL reach a listener on any other port only by naming that port in `Host` by hand, which the edge passes on: it forwards a `Host` naming any port, `:9000` or `:22` included, to the tunnel. A listener port therefore separates traffic but is not an access boundary; keep a route that must not be reachable off the Gateway rather than on a port the edge does not proxy.
 
 ### `spec.addresses` is not honoured
 
@@ -288,7 +298,7 @@ The L7 proxy supports Gateway API `BackendTLSPolicy` for proxy → backend TLS, 
 | Conflict resolution across multiple policies on the same target | Yes | Oldest-creationTimestamp wins, alphabetical name on tie. Losers are stamped `Accepted=False, Reason=Conflicted, Message="conflicts with BackendTLSPolicy <ns/name>"` per GEP-713; the upstream `BackendTLSPolicyConflictResolution` conformance subtest passes. Distinct `SectionName` scopes do not conflict (a policy targeting all Service ports and another scoped to a specific named port are different scopes). When a losing policy also has an invalid CA, `Reason=InvalidCACertificateRef` / `NoValidCACertificate` dominates over `Conflicted` — the actionable CA error surfaces first |
 | Cross-namespace CA refs | No | Same-namespace only |
 | `GatewayBackendClientCertificate` (mutual TLS) | Yes | The Gateway's `spec.tls.backend.clientCertificateRef` (Standard channel) loads a `kubernetes.io/tls` Secret and the proxy presents the keypair during backend TLS handshakes. Cross-namespace refs require ReferenceGrant. The client cert is attached **only** when the target Service has a `BackendTLSPolicy` — sending a cert over plaintext is meaningless. A route's backends present the certificate of a parent Gateway that accepted the route and whose data plane serves it. The shared plane serves the Gateways without a dedicated data plane, and a dedicated plane serves its own Gateway; planes that share a tunnel serve each other's Gateways as well, since they carry each other's routes. When several parents qualify, the first of them in `parentRefs` order with a resolvable client cert wins; foreign-controller parents and parents without a cert are skipped, not blocking. A `ListenerSet` parent stands for its parent Gateway, so a route attached through a `ListenerSet` presents that Gateway's certificate under the same rule. The conformance test does not exercise this multi-parent edge case; the project's own end-to-end suite does |
-| HTTPS-listener Re-encrypt (frontend TLS termination + backend TLS) | No | Cloudflare terminates TLS at the edge, so frontend `protocol: HTTPS` listeners have no in-cluster TLS-termination data plane and re-encrypt is structurally unsupported (see [Gateway Listener Configuration](#gateway-listener-configuration)). The upstream `BackendTLSPolicy` parent test is skipped for the same reason |
+| HTTPS-listener Re-encrypt (frontend TLS termination + backend TLS) | No | Cloudflare terminates TLS at the edge, so a `protocol: HTTPS` listener serves the edge's HTTPS traffic without terminating TLS in the cluster, and re-encrypt behind an in-cluster termination is structurally unsupported (see [Gateway Listener Configuration](#gateway-listener-configuration)). The upstream `BackendTLSPolicy` parent test is skipped for the same reason |
 
 Policy status (`Accepted` / `ResolvedRefs`) is maintained per-Gateway-ancestor. Edits to the CA `ConfigMap` (creation, content patch, or deletion) re-trigger status reconciliation. The `Status.Ancestors` slice is capped at the spec's limit of 16 entries; entries are sorted deterministically by `{namespace, name}` so the truncated set stays stable across reconciles. `LastTransitionTime` is maintained via `meta.SetStatusCondition`, so it only flips when `Status` actually changes; `Reason` and `Message` updates leave it alone.
 
@@ -326,7 +336,7 @@ The toggle is dashboard-only: there is no zone-settings API for it (`PATCH /sett
 
 A rotation of the `Secret` referenced by `Gateway.spec.tls.backend.clientCertificateRef` enqueues the affected routes directly — `ConfigMapper.MapSecretToRequests` matches credentials and Gateway-level client-cert Secrets, including cross-namespace refs guarded by a matching `ReferenceGrant` (`from: Gateway`, `to: Secret`). On the resulting reconcile the new keypair is loaded by `loadGatewayClientCertPEM`, the converter stamps it onto every affected `BackendTLSConfig`, and the per-cert transport-pool hash on the proxy evicts the stale transport. The next request to that backend handshakes with the rotated keypair.
 
-Frontend listener `certificateRefs` are not in scope — Cloudflare terminates TLS at the edge, so frontend `protocol: HTTPS` listeners have no in-cluster TLS-termination data plane and are structurally unsupported (see [Gateway Listener Configuration](#gateway-listener-configuration)).
+Frontend listener `certificateRefs` are not in scope — Cloudflare terminates TLS at the edge, so a `protocol: HTTPS` listener serves the edge's HTTPS traffic but no TLS is terminated in the cluster with its certificates (see [Gateway Listener Configuration](#gateway-listener-configuration)).
 
 ### RequestMirror filter honours BackendTLSPolicy
 
@@ -409,7 +419,7 @@ For very large deployments:
 
 ## Route Conflict Resolution
 
-A request first selects a hostname bucket — exact hostname over wildcard over the default (no-hostname) bucket — skipping routes that [listener isolation](#listener-isolation) excludes for the request's host, and then the matching rules within that bucket are ordered by match specificity, highest first:
+A request first selects a hostname bucket — exact hostname over wildcard over the default (no-hostname) bucket — skipping routes that [listener isolation](#listener-isolation) excludes for the request's host and port, and then the matching rules within that bucket are ordered by match specificity, highest first:
 
 1. Path match type: exact, then regex, then prefix
 2. Longer path value before shorter
@@ -491,9 +501,7 @@ GEP-713 recommends that implementations surface a policy's effect by writing a c
 
 An explicit `port` in a `RequestRedirect` filter is always honoured. When the filter sets a `scheme` but no `port`, `Location` carries no port, because both schemes the CRD allows (`http`, `https`) have well-known ports; the spec's fallback to the listener port for a scheme without one is therefore unreachable and not implemented.
 
-When the filter sets neither, the redirect takes the port of the listener the route is attached to, as the spec requires, and leaves it out of `Location` when it is the scheme's well-known port (80 for `http`, 443 for `https`). The proxy cannot tell which listener a request arrived on, so for a route accepted by several listeners of the chosen scheme the well-known port wins, then the lowest one. The choice is made once per route, for all of its hostnames.
-
-Clients reach a listener only through the Cloudflare edge, which accepts a [fixed set of ports](https://developers.cloudflare.com/fundamentals/reference/network-ports/) per scheme. A listener port outside that set is therefore not written into `Location`, which deviates from the spec's MUST: no request can have arrived on that port, and a redirect to it would fail. To get the listener port into redirects, give the listener a port the edge serves for its scheme. To keep a scheme-less redirect off the listener port, set `scheme` (which carries no port) or `port` on the filter.
+When the filter sets neither, the redirect keeps the scheme and the port of the request, which is the port of the listener that served it ([Listener ports and schemes](#listener-ports-and-schemes)), and leaves the port out of `Location` when it is the scheme's well-known one (80 for `http`, 443 for `https`).
 
 ## Metrics and Observability
 
