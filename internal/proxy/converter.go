@@ -1606,14 +1606,12 @@ func applyRuleTiming(rule *gatewayv1.HTTPRouteRule, proxyRule *RouteRule, sink *
 			proxyRule.Retry = retry
 		}
 
+		// Attempts is a maximum, so the capped rule is still fully valid and
+		// PartiallyInvalid MUST NOT be set; an Event reports the cap instead.
 		if retry != nil && retry.Attempts > MaxRetryAttempts {
-			sink.add(
-				DiagnosticAccepted,
-				string(gatewayv1.RouteReasonUnsupportedValue),
+			sink.event(EventTypeWarning,
 				fmt.Sprintf("The rule's retry attempts (%d) exceed the proxy's limit; the rule retries at most %d times.",
-					retry.Attempts, MaxRetryAttempts),
-				false,
-			)
+					retry.Attempts, MaxRetryAttempts))
 			retry.Attempts = MaxRetryAttempts
 		}
 	}
