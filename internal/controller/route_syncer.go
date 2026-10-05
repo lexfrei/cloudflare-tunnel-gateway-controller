@@ -383,11 +383,11 @@ func syncAndUpdateStatusCommon(ctx context.Context, params *syncUpdateParams) (c
 	// would go dark along with the data plane itself.
 	var (
 		diagnostics []proxy.RouteDiagnostic
-		lostRace    bool
+		pushed      pushOutcome
 	)
 
 	if params.pushProxy && params.proxySyncer != nil && len(params.proxyEndpoints) > 0 && syncResult != nil {
-		diagnostics, lostRace = pushPartitionConfigs(ctx, logger, params, syncResult)
+		diagnostics, pushed = pushPartitionConfigs(ctx, logger, params, syncResult)
 	}
 
 	// Fold in collision diagnostics (cross-namespace tunnel sharing, #488):
@@ -417,20 +417,35 @@ func syncAndUpdateStatusCommon(ctx context.Context, params *syncUpdateParams) (c
 		params.onSyncError(syncErr)
 	}
 
-	return syncOutcome(result, lostRace, diagnostics, syncErr, statusUpdateErr)
+	return syncOutcome(result, pushed, diagnostics, syncErr, statusUpdateErr)
+}
+
+// pushOutcome is what a sync's proxy push leaves for the reconcile result.
+type pushOutcome struct {
+	// lostRace reports a partition push abandoned as a lost stale-version race.
+	lostRace bool
+	// undecided reports a partition not pushed because a backend reference
+	// in it could not be evaluated.
+	undecided bool
 }
 
 // syncOutcome folds a sync's push outcome into what the reconcile returns: a
-// lost push race and a route parent that could not be evaluated each request
-// a requeue, a sync error propagates unless a requeue interval is already set,
-// and a status update error propagates last.
+// lost push race, a partition left unpushed on an undecided reference and a
+// route parent that could not be evaluated each request a requeue, a sync
+// error propagates unless a requeue interval is already set, and a status
+// update error propagates last.
 func syncOutcome(
 	result ctrl.Result,
-	lostRace bool,
+	pushed pushOutcome,
 	diagnostics []proxy.RouteDiagnostic,
 	syncErr, statusUpdateErr error,
 ) (ctrl.Result, error) {
-	result = withLostRacePushRequeue(result, lostRace)
+	result = withLostRacePushRequeue(result, pushed.lostRace)
+
+	if pushed.undecided && (result.RequeueAfter == 0 || result.RequeueAfter > apiErrorRequeueDelay) {
+		result.RequeueAfter = apiErrorRequeueDelay
+		result.Priority = new(priorityRoute)
+	}
 
 	if syncErr != nil {
 		if result.RequeueAfter > 0 {
@@ -601,7 +616,7 @@ func pushPartitionConfigs(
 	logger *slog.Logger,
 	params *syncUpdateParams,
 	syncResult *SyncResult,
-) ([]proxy.RouteDiagnostic, bool) {
+) ([]proxy.RouteDiagnostic, pushOutcome) {
 	// The push belongs to the sync that built syncResult, so a failure it logs
 	// is lowered while it repeats across syncs, as the binding pass lowers it.
 	ctx = logging.WithRepeats(ctx, params.routeSyncer.logRepeats)
@@ -610,7 +625,7 @@ func pushPartitionConfigs(
 	if len(partitions) == 0 {
 		logger.Info("skipping proxy push: sync produced no partition split (early error)")
 
-		return nil, false
+		return nil, pushOutcome{}
 	}
 
 	// Same-tunnel partitions must push identical (unioned) configs: the edge
@@ -633,7 +648,7 @@ func pushPartitionConfigs(
 
 	var pushErrs []error
 
-	lostRace := false
+	var outcome pushOutcome
 
 	// Aggregate single-threaded in ORIGINAL partition order so diagnostics, the
 	// keep set, and metrics stay deterministic regardless of push completion order.
@@ -646,21 +661,9 @@ func pushPartitionConfigs(
 		diagnostics = append(diagnostics, withPartition(results[i].diags, partition.Key)...)
 
 		if results[i].err != nil {
-			logger.Error("proxy sync failed (non-blocking)", "partition", partition.Key, "error", results[i].err)
-			params.routeSyncer.Metrics.RecordSyncError(ctx, "proxy_push")
-
 			pushErrs = append(pushErrs, errors.Wrapf(results[i].err, "pushing partition %s", partition.Key))
-
-			if errors.Is(results[i].err, proxy.ErrLostConfigPushRace) {
-				lostRace = true
-			}
-
-			// Surface a SUSTAINED push failure on the partition's own routes
-			// once it crosses the no-flap threshold (#487). Attribute to the
-			// pre-union originals, not the unioned slice above.
-			if params.proxySyncer.pushFailureStreak(partition.Key) >= pushFailureSurfaceThreshold {
-				diagnostics = append(diagnostics, proxyPushFailureDiagnostics(&syncResult.Partitions[i], results[i].err)...)
-			}
+			diagnostics = append(diagnostics, partitionPushFailure(ctx, logger, params,
+				&syncResult.Partitions[i], partition.Key, results[i].err, &outcome)...)
 		}
 	}
 
@@ -670,7 +673,45 @@ func pushPartitionConfigs(
 
 	params.proxySyncer.RetainPartitions(keep)
 
-	return diagnostics, lostRace
+	return diagnostics, outcome
+}
+
+// partitionPushFailure logs one partition's failed push, records it in
+// outcome, and returns the diagnostics it surfaces on the routes of original,
+// the partition before the same-tunnel union.
+func partitionPushFailure(
+	ctx context.Context,
+	logger *slog.Logger,
+	params *syncUpdateParams,
+	original *routePartition,
+	key string,
+	err error,
+	outcome *pushOutcome,
+) []proxy.RouteDiagnostic {
+	if errors.Is(err, errBackendRefsUndecided) {
+		outcome.undecided = true
+
+		level := params.routeSyncer.logRepeats.Level("undecided "+key, err.Error(), slog.LevelError)
+		logger.Log(ctx, level, "proxy config not pushed; the data plane keeps its current config and the sync is retried",
+			"partition", key, "error", err)
+
+		return nil
+	}
+
+	logger.Error("proxy sync failed (non-blocking)", "partition", key, "error", err)
+	params.routeSyncer.Metrics.RecordSyncError(ctx, "proxy_push")
+
+	if errors.Is(err, proxy.ErrLostConfigPushRace) {
+		outcome.lostRace = true
+	}
+
+	// Surface a SUSTAINED push failure on the partition's own routes once it
+	// crosses the no-flap threshold (#487).
+	if params.proxySyncer.pushFailureStreak(key) >= pushFailureSurfaceThreshold {
+		return proxyPushFailureDiagnostics(original, err)
+	}
+
+	return nil
 }
 
 // lostRacePushRequeueDelay is how soon a sync is re-run after a partition push
@@ -1178,10 +1219,12 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 
 // leftForRetry reports work a sync left that no watched event brings back: a
 // Gateway whose config failed to resolve transiently, an abandoned tunnel
-// whose emptying write failed, or a route parent that could not be evaluated.
+// whose emptying write failed, a route parent that could not be evaluated, or
+// a backend reference whose ReferenceGrants could not be read.
 func leftForRetry(syncResult *SyncResult, outcome *tunnelGroupsOutcome) bool {
 	return len(syncResult.TransientBrokenKeys) > 0 || outcome.emptyingPending ||
-		anyUnevaluated(syncResult.HTTPRouteBindings) || anyUnevaluated(syncResult.GRPCRouteBindings)
+		anyUnevaluated(syncResult.HTTPRouteBindings) || anyUnevaluated(syncResult.GRPCRouteBindings) ||
+		refsUndecided(syncResult.HTTPFailedRefs, nil) || refsUndecided(syncResult.GRPCFailedRefs, nil)
 }
 
 // anyUnevaluated reports whether any route has a parent recorded as Pending
@@ -1781,6 +1824,9 @@ func (s *RouteSyncer) syncTunnelGroup(
 	group *tunnelGroup,
 ) tunnelGroupResult {
 	httpRoutes, grpcRoutes := groupRoutes(group)
+
+	// A grant read failure the builders log is lowered while it repeats.
+	ctx = logging.WithRepeats(ctx, s.logRepeats)
 
 	httpBuild := s.httpBuilder.Build(ctx, httpRoutes)
 	grpcBuild := s.grpcBuilder.Build(ctx, grpcRoutes)

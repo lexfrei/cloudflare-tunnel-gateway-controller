@@ -145,7 +145,7 @@ func resolveValidatedBackend(
 		}
 	}
 
-	if resolver.metrics != nil {
+	if resolver.metrics != nil && (backendErr == nil || !backendErr.Undecided) {
 		kind := strings.ToLower(strings.TrimSuffix(routeKind, "Route"))
 
 		if backendErr != nil {
@@ -163,8 +163,8 @@ func resolveValidatedBackend(
 func resolveServiceURL(ctx context.Context, params *serviceResolveParams) (string, *BackendRefError) {
 	// Validate cross-namespace references with ReferenceGrant
 	if params.routeNS != params.svcNS {
-		if !validateCrossNamespaceRef(ctx, params.validator, params.logger, params.routeKind, params.routeNS, params.routeName, params.svcNS, params.svcName, backendGroupCore, backendKindService) {
-			return "", crossNamespaceDeniedError(params)
+		if refErr := crossNamespaceRefError(ctx, params, backendGroupCore, backendKindService); refErr != nil {
+			return "", refErr
 		}
 	}
 
@@ -231,8 +231,8 @@ func crossNamespaceDeniedError(params *serviceResolveParams) *BackendRefError {
 // With a nil client (validation disabled) it builds the URL without the lookup.
 func resolveServiceImportURL(ctx context.Context, params *serviceResolveParams) (string, *BackendRefError) {
 	if params.routeNS != params.svcNS {
-		if !validateCrossNamespaceRef(ctx, params.validator, params.logger, params.routeKind, params.routeNS, params.routeName, params.svcNS, params.svcName, backendGroupServiceImport, backendKindServiceImport) {
-			return "", crossNamespaceDeniedError(params)
+		if refErr := crossNamespaceRefError(ctx, params, backendGroupServiceImport, backendKindServiceImport); refErr != nil {
+			return "", refErr
 		}
 	}
 
@@ -297,8 +297,8 @@ func serviceImportNotFoundError(params *serviceResolveParams, message string) *B
 // resolves its own copy via the converter sentinel.
 func resolveExternalBackendURL(ctx context.Context, params *serviceResolveParams) (string, *BackendRefError) {
 	if params.routeNS != params.svcNS {
-		if !validateCrossNamespaceRef(ctx, params.validator, params.logger, params.routeKind, params.routeNS, params.routeName, params.svcNS, params.svcName, backendGroupExternal, backendKindExternal) {
-			return "", crossNamespaceDeniedError(params)
+		if refErr := crossNamespaceRefError(ctx, params, backendGroupExternal, backendKindExternal); refErr != nil {
+			return "", refErr
 		}
 	}
 

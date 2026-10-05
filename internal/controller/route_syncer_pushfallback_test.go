@@ -27,7 +27,7 @@ import (
 
 // firstOf discards pushPartitionConfigs' lost-race flag where a test only
 // inspects diagnostics.
-func firstOf(diags []proxy.RouteDiagnostic, _ bool) []proxy.RouteDiagnostic {
+func firstOf(diags []proxy.RouteDiagnostic, _ pushOutcome) []proxy.RouteDiagnostic {
 	return diags
 }
 
@@ -80,7 +80,7 @@ func TestPushPartitionConfigs_LostRaceReportsRequeueSignal(t *testing.T) {
 	syncResult := &SyncResult{Partitions: []routePartition{{Key: sharedPartitionKey}}}
 
 	_, lostRace := pushPartitionConfigs(context.Background(), slog.Default(), &params, syncResult)
-	assert.True(t, lostRace, "an abandoned lost-race push must request a requeue")
+	assert.True(t, lostRace.lostRace, "an abandoned lost-race push must request a requeue")
 
 	// A plain failure (500) is NOT a lost race: the existing failure handling
 	// (skip-key invalidation + reconcile-path requeue semantics) covers it.
@@ -93,7 +93,7 @@ func TestPushPartitionConfigs_LostRaceReportsRequeueSignal(t *testing.T) {
 	params.proxyEndpoints = []string{failing.URL + "/config"}
 
 	_, lostRace = pushPartitionConfigs(context.Background(), slog.Default(), &params, syncResult)
-	assert.False(t, lostRace, "a plain push failure must not claim the lost-race requeue")
+	assert.False(t, lostRace.lostRace, "a plain push failure must not claim the lost-race requeue")
 }
 
 // TestWithLostRacePushRequeue pins the requeue mapping: a lost race forces a
@@ -949,7 +949,7 @@ func TestSyncOutcome(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			result, err := syncOutcome(ctrl.Result{}, tt.lostRace, tt.diagnostics, tt.syncErr, tt.statusErr)
+			result, err := syncOutcome(ctrl.Result{}, pushOutcome{lostRace: tt.lostRace}, tt.diagnostics, tt.syncErr, tt.statusErr)
 			assert.Equal(t, tt.wantRequeue, result.RequeueAfter)
 			assert.ErrorIs(t, err, tt.wantErr)
 

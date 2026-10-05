@@ -55,16 +55,9 @@ func (v *gatewayListenerView) conflictReason(
 // merged view annotates with a conflict reason, or nil when there are none. It
 // feeds the Gateway-level ListenersNotValid condition (gateway_types.go:187),
 // whose message SHOULD indicate which listeners are conflicted
-// (gateway_types.go:188). A view that cannot be built is treated as
-// conflict-free — a transient build error must not flip a Gateway to
-// ListenersNotValid; the next reconcile retries.
-func gatewayConflictedListeners(
-	ctx context.Context,
-	views *listenerViewCache,
-	gateway *gatewayv1.Gateway,
-) map[gatewayv1.SectionName]bool {
-	view, err := views.forGateway(ctx, gateway)
-	if err != nil || view == nil || view.merged == nil {
+// (gateway_types.go:188).
+func gatewayConflictedListeners(view *gatewayListenerView) map[gatewayv1.SectionName]bool {
+	if view == nil || view.merged == nil {
 		return nil
 	}
 

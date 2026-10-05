@@ -157,6 +157,7 @@ func updateRouteParentStatuses(
 			ours = append(ours, priorEntryFor(priorOwn, ref, accessor.obj.GetNamespace())...)
 		case parentStatus != nil:
 			parentStatus.Conditions = mergeOwnParentConditions(priorOwn, parentStatus)
+			keepPriorResolvedRefs(priorOwn, parentStatus)
 			ours = append(ours, *parentStatus)
 		}
 	}
@@ -229,6 +230,39 @@ func mergeOwnParentConditions(priorOwn []gatewayv1.RouteParentStatus, desired *g
 	}
 
 	return desired.Conditions
+}
+
+// keepPriorResolvedRefs copies the prior entry's ResolvedRefs condition into
+// a freshly built entry that carries none, which buildParentStatus leaves out
+// only when a reference could not be evaluated.
+func keepPriorResolvedRefs(priorOwn []gatewayv1.RouteParentStatus, desired *gatewayv1.RouteParentStatus) {
+	conditionType := string(gatewayv1.RouteConditionResolvedRefs)
+	if meta.FindStatusCondition(desired.Conditions, conditionType) != nil {
+		return
+	}
+
+	for i := range priorOwn {
+		if !parentRefIdentityEqual(priorOwn[i].ParentRef, desired.ParentRef) {
+			continue
+		}
+
+		// Right after Accepted, where buildParentStatus puts it, so keeping
+		// the condition does not reorder the entry.
+		if prior := meta.FindStatusCondition(priorOwn[i].Conditions, conditionType); prior != nil {
+			desired.Conditions = slices.Insert(desired.Conditions, 1, *prior)
+		}
+
+		return
+	}
+}
+
+// refsUndecided reports whether a backend reference of the route could not be
+// evaluated, by the ingress builder or by the proxy converter.
+func refsUndecided(failedRefs []ingress.BackendRefError, diagnostics []proxy.RouteDiagnostic) bool {
+	return slices.ContainsFunc(failedRefs, func(ref ingress.BackendRefError) bool { return ref.Undecided }) ||
+		slices.ContainsFunc(diagnostics, func(diag proxy.RouteDiagnostic) bool {
+			return diag.Target == proxy.DiagnosticResolvedRefs && diag.Reason == routeReasonRefsUndecided
+		})
 }
 
 // parentRefIdentityEqual reports whether two parentRef entries, as normalized
@@ -377,9 +411,12 @@ func buildParentStatus(
 
 	accepted := buildAcceptedCondition(generation, now, bindingInfo, refIdx, syncErr, acceptedOverride)
 
-	conditions := []metav1.Condition{
-		accepted,
-		buildResolvedRefsCondition(generation, now, failedRefs, diagnostics),
+	conditions := []metav1.Condition{accepted}
+
+	// A reference that could not be evaluated decides nothing: the writer
+	// keeps the previous ResolvedRefs condition.
+	if !refsUndecided(failedRefs, diagnostics) {
+		conditions = append(conditions, buildResolvedRefsCondition(generation, now, failedRefs, diagnostics))
 	}
 
 	// PartiallyInvalid is only meaningful when the route is otherwise accepted —
@@ -856,6 +893,10 @@ const (
 	// its other parents lend, and is left out of its data plane's config when
 	// none lends one.
 	routeReasonParentNotEvaluated = "ParentNotEvaluated"
+	// routeReasonRefsUndecided marks a ResolvedRefs diagnostic for a reference
+	// whose ReferenceGrants could not be read. It never reaches a condition:
+	// the status writer keeps the previous ResolvedRefs verdict instead.
+	routeReasonRefsUndecided = "RefsUndecided"
 	// routeConditionTunnelShared is set True when this route's per-Gateway data
 	// plane shares one Cloudflare Tunnel with another dedicated Gateway (#488).
 	// Across namespaces that requires the operator's allowSharedTunnels opt-in,
@@ -950,12 +991,12 @@ func buildFailedRefsMessage(failedRefs []ingress.BackendRefError) string {
 
 	msgBuilder.WriteString("Backend references not permitted: ")
 
-	for i, failedRef := range failedRefs {
+	for i := range failedRefs {
 		if i > 0 {
 			msgBuilder.WriteString(", ")
 		}
 
-		msgBuilder.WriteString(failedRef.BackendNS + "/" + failedRef.BackendName)
+		msgBuilder.WriteString(failedRefs[i].BackendNS + "/" + failedRefs[i].BackendName)
 	}
 
 	return msgBuilder.String()
@@ -1006,9 +1047,9 @@ func updateRoutesStatus(
 func filterFailedRefs(allFailedRefs []ingress.BackendRefError, routeNamespace, routeName string) []ingress.BackendRefError {
 	var result []ingress.BackendRefError
 
-	for _, failedRef := range allFailedRefs {
-		if failedRef.RouteNamespace == routeNamespace && failedRef.RouteName == routeName {
-			result = append(result, failedRef)
+	for i := range allFailedRefs {
+		if allFailedRefs[i].RouteNamespace == routeNamespace && allFailedRefs[i].RouteName == routeName {
+			result = append(result, allFailedRefs[i])
 		}
 	}
 

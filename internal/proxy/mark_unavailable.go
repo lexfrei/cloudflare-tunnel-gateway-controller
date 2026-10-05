@@ -4,10 +4,10 @@ import "net/url"
 
 // MarkUnavailableBackends sets UnavailableStatus on every backend in cfg whose
 // resolved service host:port matches (namespace, name, port), leaving the
-// backend in the weighted pool. The controller calls this for each invalid
-// backendRef (a nonexistent Service) so the proxy returns status — 500 per the
-// Gateway API spec — for that backend's traffic fraction instead of dialing a
-// dead address and surfacing a 502.
+// backend in the weighted pool. The controller calls this for a fact about the
+// Service itself, such as having no ready endpoints, so the proxy returns
+// status for that backend's traffic fraction instead of dialing a dead address
+// and surfacing a 502.
 //
 // Matching is on the URL host (name.namespace.svc.<clusterDomain>:port), which
 // is scheme-agnostic: a port-443 backend emitted as https:// still matches. The
@@ -23,12 +23,51 @@ func MarkUnavailableBackends(cfg *Config, clusterDomain, namespace, name string,
 		return
 	}
 
-	target := ServiceBackendHost(clusterDomain, namespace, name, port)
+	markMatchingBackends(cfg, ServiceBackendHost(clusterDomain, namespace, name, port), status, func(int) bool { return true })
+}
+
+// MarkUnavailableRouteBackends is MarkUnavailableBackends limited to the rules
+// cfg.Provenance attributes to route, matched on kind, namespace and name. It
+// is for a verdict about one route's reference, such as a missing
+// ReferenceGrant, which says nothing about another route using the same
+// Service. A config whose provenance does not line up with its rules is marked
+// whole, as MarkUnavailableBackends would.
+func MarkUnavailableRouteBackends(
+	cfg *Config,
+	route *RuleProvenance,
+	clusterDomain, namespace, name string,
+	port int32,
+	status int,
+) {
+	if cfg == nil {
+		return
+	}
+
+	aligned := len(cfg.Provenance) == len(cfg.Rules)
+
+	markMatchingBackends(cfg, ServiceBackendHost(clusterDomain, namespace, name, port), status, func(ruleIdx int) bool {
+		if !aligned {
+			return true
+		}
+
+		source := &cfg.Provenance[ruleIdx]
+
+		return source.Kind == route.Kind && source.Namespace == route.Namespace && source.Name == route.Name
+	})
+}
+
+// markMatchingBackends sets status on every not-yet-marked backend whose URL
+// host is target, in the rules inRule accepts.
+func markMatchingBackends(cfg *Config, target string, status int, inRule func(ruleIdx int) bool) {
 	if target == "" {
 		return
 	}
 
 	for ruleIdx := range cfg.Rules {
+		if !inRule(ruleIdx) {
+			continue
+		}
+
 		backends := cfg.Rules[ruleIdx].Backends
 		for backendIdx := range backends {
 			if backends[backendIdx].UnavailableStatus != 0 {

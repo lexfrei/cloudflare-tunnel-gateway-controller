@@ -401,14 +401,15 @@ type Route interface {
 	GetParentRefs() []gatewayv1.ParentReference
 	GetParentStatuses() []gatewayv1.RouteParentStatus
 	GetRouteKind() gatewayv1.Kind
-	// GetCrossNamespaceBackendNamespaces returns namespaces referenced by backends
-	// that differ from the route's own namespace.
+	// GetCrossNamespaceBackendNamespaces returns namespaces referenced by backends,
+	// RequestMirror targets included, that differ from the route's own namespace.
 	GetCrossNamespaceBackendNamespaces() []string
-	// ReferencesService reports whether any backendRef on this route resolves
-	// to the Service identified by (namespace, name).
+	// ReferencesService reports whether any backendRef or RequestMirror target
+	// on this route resolves to the Service identified by (namespace, name).
 	ReferencesService(namespace, name string) bool
-	// ReferencesExternalBackend reports whether any backendRef on this route
-	// resolves to the ExternalBackend identified by (namespace, name).
+	// ReferencesExternalBackend reports whether any backendRef or RequestMirror
+	// target on this route resolves to the ExternalBackend identified by
+	// (namespace, name).
 	ReferencesExternalBackend(namespace, name string) bool
 }
 
@@ -543,8 +544,8 @@ func FindRoutesForReferenceGrant(
 // backendRefMatchesService reports whether a Gateway API backendRef points at
 // the Service identified by (svcNamespace, svcName). routeNamespace is the
 // fallback used when the backendRef omits an explicit namespace.
-func backendRefMatchesService(ref *gatewayv1.BackendRef, routeNamespace, svcNamespace, svcName string) bool {
-	if !proxy.IsServiceBackendRef(ref.BackendObjectReference) {
+func backendRefMatchesService(ref *gatewayv1.BackendObjectReference, routeNamespace, svcNamespace, svcName string) bool {
+	if !proxy.IsServiceBackendRef(*ref) {
 		return false
 	}
 
@@ -559,8 +560,8 @@ func backendRefMatchesService(ref *gatewayv1.BackendRef, routeNamespace, svcName
 // backendRefMatchesExternalBackend reports whether a backendRef points at the
 // ExternalBackend identified by (ebNamespace, ebName). routeNamespace is the
 // fallback used when the backendRef omits an explicit namespace.
-func backendRefMatchesExternalBackend(ref *gatewayv1.BackendRef, routeNamespace, ebNamespace, ebName string) bool {
-	if !proxy.IsExternalBackendRef(ref.BackendObjectReference) {
+func backendRefMatchesExternalBackend(ref *gatewayv1.BackendObjectReference, routeNamespace, ebNamespace, ebName string) bool {
+	if !proxy.IsExternalBackendRef(*ref) {
 		return false
 	}
 
@@ -574,7 +575,7 @@ func backendRefMatchesExternalBackend(ref *gatewayv1.BackendRef, routeNamespace,
 
 // extractCrossNamespaceBackends returns unique namespaces from backend refs
 // that differ from the route's own namespace.
-func extractCrossNamespaceBackends(routeNamespace string, refs []gatewayv1.BackendRef) []string {
+func extractCrossNamespaceBackends(routeNamespace string, refs []gatewayv1.BackendObjectReference) []string {
 	var namespaces []string
 
 	seen := make(map[string]bool)
@@ -597,50 +598,51 @@ type HTTPRouteWrapper struct {
 	*gatewayv1.HTTPRoute
 }
 
-// GetCrossNamespaceBackendNamespaces returns namespaces of backends in other namespaces.
-func (w HTTPRouteWrapper) GetCrossNamespaceBackendNamespaces() []string {
-	totalRefs := 0
-	for _, rule := range w.Spec.Rules {
-		totalRefs += len(rule.BackendRefs)
-	}
+// backendObjectRefs returns every object this HTTPRoute sends traffic to:
+// rule backendRefs and RequestMirror targets, on rules and on backendRefs.
+func (w HTTPRouteWrapper) backendObjectRefs() []gatewayv1.BackendObjectReference {
+	var refs []gatewayv1.BackendObjectReference
 
-	refs := make([]gatewayv1.BackendRef, 0, totalRefs)
-
-	for _, rule := range w.Spec.Rules {
-		for i := range rule.BackendRefs {
-			refs = append(refs, rule.BackendRefs[i].BackendRef)
+	addMirrors := func(filters []gatewayv1.HTTPRouteFilter) {
+		for i := range filters {
+			if filters[i].RequestMirror != nil {
+				refs = append(refs, filters[i].RequestMirror.BackendRef)
+			}
 		}
 	}
 
-	return extractCrossNamespaceBackends(w.Namespace, refs)
+	for ruleIdx := range w.Spec.Rules {
+		rule := &w.Spec.Rules[ruleIdx]
+		addMirrors(rule.Filters)
+
+		for refIdx := range rule.BackendRefs {
+			refs = append(refs, rule.BackendRefs[refIdx].BackendObjectReference)
+			addMirrors(rule.BackendRefs[refIdx].Filters)
+		}
+	}
+
+	return refs
+}
+
+// GetCrossNamespaceBackendNamespaces returns namespaces of backends in other namespaces.
+func (w HTTPRouteWrapper) GetCrossNamespaceBackendNamespaces() []string {
+	return extractCrossNamespaceBackends(w.Namespace, w.backendObjectRefs())
 }
 
 // ReferencesService reports whether this HTTPRoute has any Service backendRef
-// matching (namespace, name).
+// or RequestMirror target matching (namespace, name).
 func (w HTTPRouteWrapper) ReferencesService(namespace, name string) bool {
-	for ruleIdx := range w.Spec.Rules {
-		for refIdx := range w.Spec.Rules[ruleIdx].BackendRefs {
-			if backendRefMatchesService(&w.Spec.Rules[ruleIdx].BackendRefs[refIdx].BackendRef, w.Namespace, namespace, name) {
-				return true
-			}
-		}
-	}
-
-	return false
+	return slices.ContainsFunc(w.backendObjectRefs(), func(ref gatewayv1.BackendObjectReference) bool {
+		return backendRefMatchesService(&ref, w.Namespace, namespace, name)
+	})
 }
 
 // ReferencesExternalBackend reports whether this HTTPRoute has any
-// ExternalBackend backendRef matching (namespace, name).
+// ExternalBackend backendRef or RequestMirror target matching (namespace, name).
 func (w HTTPRouteWrapper) ReferencesExternalBackend(namespace, name string) bool {
-	for ruleIdx := range w.Spec.Rules {
-		for refIdx := range w.Spec.Rules[ruleIdx].BackendRefs {
-			if backendRefMatchesExternalBackend(&w.Spec.Rules[ruleIdx].BackendRefs[refIdx].BackendRef, w.Namespace, namespace, name) {
-				return true
-			}
-		}
-	}
-
-	return false
+	return slices.ContainsFunc(w.backendObjectRefs(), func(ref gatewayv1.BackendObjectReference) bool {
+		return backendRefMatchesExternalBackend(&ref, w.Namespace, namespace, name)
+	})
 }
 
 // GRPCRouteWrapper wraps GRPCRoute to implement Route.
@@ -655,11 +657,11 @@ func (w GRPCRouteWrapper) GetCrossNamespaceBackendNamespaces() []string {
 		totalRefs += len(rule.BackendRefs)
 	}
 
-	refs := make([]gatewayv1.BackendRef, 0, totalRefs)
+	refs := make([]gatewayv1.BackendObjectReference, 0, totalRefs)
 
 	for _, rule := range w.Spec.Rules {
 		for i := range rule.BackendRefs {
-			refs = append(refs, rule.BackendRefs[i].BackendRef)
+			refs = append(refs, rule.BackendRefs[i].BackendObjectReference)
 		}
 	}
 
@@ -671,7 +673,7 @@ func (w GRPCRouteWrapper) GetCrossNamespaceBackendNamespaces() []string {
 func (w GRPCRouteWrapper) ReferencesService(namespace, name string) bool {
 	for ruleIdx := range w.Spec.Rules {
 		for refIdx := range w.Spec.Rules[ruleIdx].BackendRefs {
-			if backendRefMatchesService(&w.Spec.Rules[ruleIdx].BackendRefs[refIdx].BackendRef, w.Namespace, namespace, name) {
+			if backendRefMatchesService(&w.Spec.Rules[ruleIdx].BackendRefs[refIdx].BackendObjectReference, w.Namespace, namespace, name) {
 				return true
 			}
 		}
@@ -685,7 +687,7 @@ func (w GRPCRouteWrapper) ReferencesService(namespace, name string) bool {
 func (w GRPCRouteWrapper) ReferencesExternalBackend(namespace, name string) bool {
 	for ruleIdx := range w.Spec.Rules {
 		for refIdx := range w.Spec.Rules[ruleIdx].BackendRefs {
-			if backendRefMatchesExternalBackend(&w.Spec.Rules[ruleIdx].BackendRefs[refIdx].BackendRef, w.Namespace, namespace, name) {
+			if backendRefMatchesExternalBackend(&w.Spec.Rules[ruleIdx].BackendRefs[refIdx].BackendObjectReference, w.Namespace, namespace, name) {
 				return true
 			}
 		}

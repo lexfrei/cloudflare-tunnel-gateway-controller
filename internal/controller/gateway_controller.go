@@ -709,7 +709,7 @@ func (r *GatewayReconciler) updateStatus(
 ) error {
 	gatewayKey := types.NamespacedName{Name: gateway.Name, Namespace: gateway.Namespace}
 
-	var countErr, mergeErr error
+	var countErr, mergeErr, certErr error
 
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Get fresh copy of the gateway to avoid conflict errors
@@ -730,12 +730,14 @@ func (r *GatewayReconciler) updateStatus(
 
 		views := newListenerViewCache(r.Client, r.ViewStore)
 
-		var attachedCount int
-
-		attachedCount, mergeErr = summariseAttachedListenerSets(ctx, r.Client, &freshGateway, views)
-		if mergeErr == nil {
-			freshGateway.Status.AttachedListenerSets = clampedInt32Pointer(attachedCount)
+		// Written without the merged view, the Gateway's own conflicted
+		// listeners would lose Conflicted=True; skip the write and retry.
+		gwView, err := views.forGateway(ctx, &freshGateway)
+		if err != nil {
+			return errors.Wrap(err, "building the merged listener view")
 		}
+
+		mergeErr = applyAttachedListenerSets(ctx, r.Client, &freshGateway, views)
 
 		freshGateway.Status.Addresses = []gatewayv1.GatewayStatusAddress{
 			{
@@ -744,12 +746,12 @@ func (r *GatewayReconciler) updateStatus(
 			},
 		}
 
-		r.applyTopLevelGatewayConditions(ctx, &freshGateway, views, perGatewayMode, now)
+		certErr = r.applyTopLevelGatewayConditions(ctx, &freshGateway, gwView, perGatewayMode, now)
 
-		var listenerStatuses []gatewayv1.ListenerStatus
-
-		listenerStatuses, countErr = r.buildListenerStatuses(ctx, &freshGateway, views, now)
-		freshGateway.Status.Listeners = preserveGatewayListenerTransitions(freshGateway.Status.Listeners, listenerStatuses)
+		countErr, err = r.applyListenerStatuses(ctx, &freshGateway, gwView, now)
+		if err != nil {
+			return err
+		}
 
 		if apiequality.Semantic.DeepEqual(priorStatus, &freshGateway.Status) {
 			return nil
@@ -762,22 +764,23 @@ func (r *GatewayReconciler) updateStatus(
 		return nil
 	})
 
-	return errors.Wrap(errors.CombineErrors(err, errors.CombineErrors(countErr, mergeErr)), "updating gateway status")
+	return errors.Wrap(errors.Join(err, countErr, mergeErr, certErr), "updating gateway status")
 }
 
 // applyTopLevelGatewayConditions computes and writes the Gateway-level
 // Accepted, Programmed, and ResolvedRefs (client cert) conditions for the
-// happy path.
+// happy path. A client certificate that could not be read keeps its previous
+// ResolvedRefs condition and is returned as an error.
 func (r *GatewayReconciler) applyTopLevelGatewayConditions(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
-	views *listenerViewCache,
+	gwView *gatewayListenerView,
 	perGatewayMode bool,
 	now metav1.Time,
-) {
+) error {
 	_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, gateway, r.checkSecretReferenceGrant)
 
-	accepted := gatewayAcceptedCondition(ctx, views, gateway, now)
+	accepted := gatewayAcceptedCondition(gwView, gateway, now)
 
 	programmed := metav1.Condition{
 		Type:               string(gatewayv1.GatewayConditionProgrammed),
@@ -800,6 +803,79 @@ func (r *GatewayReconciler) applyTopLevelGatewayConditions(
 		accepted,
 		programmed,
 	}, buildClientCertResolvedRefsCondition(gateway.Generation, now, clientCertErr))
+
+	return transientClientCertError(clientCertErr)
+}
+
+// transientClientCertError returns err when it is a client certificate read
+// failure rather than a verdict on the reference, and nil otherwise.
+func transientClientCertError(err error) error {
+	if errors.Is(err, errGatewayClientCertTransientError) {
+		return err
+	}
+
+	return nil
+}
+
+// applyAttachedListenerSets writes the Gateway's attachedListenerSets count.
+// A count that could not be finished keeps the count already written and is
+// returned as an error.
+func applyAttachedListenerSets(
+	ctx context.Context,
+	cli client.Client,
+	gateway *gatewayv1.Gateway,
+	views *listenerViewCache,
+) error {
+	count, err := summariseAttachedListenerSets(ctx, cli, gateway, views)
+	if err != nil {
+		return err
+	}
+
+	gateway.Status.AttachedListenerSets = clampedInt32Pointer(count)
+
+	return nil
+}
+
+// applyListenerStatuses writes the Gateway's listener statuses. The first
+// error reports an attached-route count that could not be finished, which
+// keeps the counts already written; the second reports a status that could not
+// be built, and then nothing is written.
+func (r *GatewayReconciler) applyListenerStatuses(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+	gwView *gatewayListenerView,
+	now metav1.Time,
+) (error, error) {
+	attachedRoutes, countErr := r.attachedRouteCounts(ctx, gateway)
+
+	listenerStatuses, err := r.buildListenerStatuses(ctx, gateway, gwView, attachedRoutes, now)
+	if err != nil {
+		return countErr, err
+	}
+
+	gateway.Status.Listeners = preserveGatewayListenerTransitions(gateway.Status.Listeners, listenerStatuses)
+
+	return countErr, nil
+}
+
+// attachedRouteCounts counts the routes attached to each Gateway listener. A
+// count that could not be finished keeps the counts already written, and the
+// error is returned so the reconcile counts again.
+func (r *GatewayReconciler) attachedRouteCounts(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+) (map[gatewayv1.SectionName]int32, error) {
+	attachedRoutes, err := r.countAttachedRoutes(ctx, gateway)
+	if err == nil {
+		return attachedRoutes, nil
+	}
+
+	attachedRoutes = make(map[gatewayv1.SectionName]int32, len(gateway.Status.Listeners))
+	for i := range gateway.Status.Listeners {
+		attachedRoutes[gateway.Status.Listeners[i].Name] = gateway.Status.Listeners[i].AttachedRoutes
+	}
+
+	return attachedRoutes, err
 }
 
 // buildListenerStatuses builds one ListenerStatus per spec listener:
@@ -807,36 +883,30 @@ func (r *GatewayReconciler) applyTopLevelGatewayConditions(
 // / Conflicted condition set, plus the advisory PermissiveHostname condition.
 // Shared by the happy path and the config-error path — neither the listener's
 // own protocol/route-kind/TLS/conflict verdict nor its attached-route count
-// depends on whether the Gateway's tunnel configuration resolved.
+// depends on whether the Gateway's tunnel configuration resolved. gwView
+// annotates each conflicted Gateway-owned listener. A certificate reference
+// that could not be read returns an error and no statuses.
 func (r *GatewayReconciler) buildListenerStatuses(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
-	views *listenerViewCache,
+	gwView *gatewayListenerView,
+	attachedRoutes map[gatewayv1.SectionName]int32,
 	now metav1.Time,
 ) ([]gatewayv1.ListenerStatus, error) {
-	// A count that could not be finished keeps the counts already written; the
-	// error is returned so the reconcile counts again.
-	attachedRoutes, countErr := r.countAttachedRoutes(ctx, gateway)
-	if countErr != nil {
-		attachedRoutes = make(map[gatewayv1.SectionName]int32, len(gateway.Status.Listeners))
-		for i := range gateway.Status.Listeners {
-			attachedRoutes[gateway.Status.Listeners[i].Name] = gateway.Status.Listeners[i].AttachedRoutes
-		}
-	}
-
-	// The merged view (cached) annotates each conflicted Gateway-owned
-	// listener, used below to emit the per-listener Conflicted condition.
-	gwView, _ := views.forGateway(ctx, gateway)
-
 	listenerStatuses := make([]gatewayv1.ListenerStatus, 0, len(gateway.Spec.Listeners))
 
 	for i := range gateway.Spec.Listeners {
 		listener := &gateway.Spec.Listeners[i]
-		listenerStatuses = append(listenerStatuses,
-			r.buildOneListenerStatus(ctx, gateway, listener, gwView, attachedRoutes[listener.Name], now))
+
+		status, err := r.buildOneListenerStatus(ctx, gateway, listener, gwView, attachedRoutes[listener.Name], now)
+		if err != nil {
+			return nil, err
+		}
+
+		listenerStatuses = append(listenerStatuses, status)
 	}
 
-	return listenerStatuses, countErr
+	return listenerStatuses, nil
 }
 
 // buildListenerProgrammedCondition derives a listener's Programmed condition:
@@ -882,7 +952,7 @@ func (r *GatewayReconciler) buildOneListenerStatus(
 	gwView *gatewayListenerView,
 	attachedRoutes int32,
 	now metav1.Time,
-) gatewayv1.ListenerStatus {
+) (gatewayv1.ListenerStatus, error) {
 	// Validate route kinds - filter to only supported kinds
 	supportedKinds, hasValidKind, hasInvalidKind := routebinding.FilterSupportedKinds(
 		listener.AllowedRoutes,
@@ -890,9 +960,12 @@ func (r *GatewayReconciler) buildOneListenerStatus(
 	)
 
 	// Validate TLS certificate refs (if applicable)
-	tlsStatus, tlsReason, tlsMessage := r.validateTLSCertificateRefs(
+	tlsStatus, tlsReason, tlsMessage, err := r.validateTLSCertificateRefs(
 		ctx, gateway, listener,
 	)
+	if err != nil {
+		return gatewayv1.ListenerStatus{}, err
+	}
 
 	// Determine final ResolvedRefs condition
 	resolvedRefsCondition := r.buildResolvedRefsCondition(
@@ -942,7 +1015,7 @@ func (r *GatewayReconciler) buildOneListenerStatus(
 		SupportedKinds: supportedKinds,
 		AttachedRoutes: attachedRoutes,
 		Conditions:     conditions,
-	}
+	}, nil
 }
 
 // perGatewayProgrammedCondition derives Programmed for a Gateway with a
@@ -1015,6 +1088,8 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 ) error {
 	gatewayKey := types.NamespacedName{Name: gateway.Name, Namespace: gateway.Namespace}
 
+	var certErr error
+
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Get fresh copy of the gateway to avoid conflict errors
 		var freshGateway gatewayv1.Gateway
@@ -1063,6 +1138,7 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 		freshGateway.Status.AttachedListenerSets = clampedInt32Pointer(0)
 
 		_, _, clientCertErr := loadGatewayClientCertPEM(ctx, r.Client, &freshGateway, r.checkSecretReferenceGrant)
+		certErr = transientClientCertError(clientCertErr)
 
 		reasons := configErrorReasons(configErr)
 
@@ -1070,7 +1146,9 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 			configErrorGatewayConditions(freshGateway.Generation, now, errMsg, reasons),
 			buildClientCertResolvedRefsCondition(freshGateway.Generation, now, clientCertErr))
 
-		r.applyConfigErrorListenerStatuses(ctx, &freshGateway, now, errMsg, reasons.listener)
+		if err := r.applyConfigErrorListenerStatuses(ctx, &freshGateway, now, errMsg, reasons.listener); err != nil {
+			return err
+		}
 
 		if apiequality.Semantic.DeepEqual(priorStatus, &freshGateway.Status) {
 			return nil
@@ -1083,7 +1161,7 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 		return nil
 	})
 
-	return errors.Wrap(err, "failed to update gateway status after retries")
+	return errors.Wrap(errors.Join(err, certErr), "failed to update gateway status after retries")
 }
 
 // applyConfigErrorListenerStatuses writes the listener statuses of a Gateway
@@ -1093,19 +1171,34 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 // verdict is overridden: nothing is programmed without a resolved tunnel,
 // while a listener already unprogrammed for its own reason keeps that more
 // specific verdict. An attachedRoutes count that cannot finish keeps the counts
-// already written, and the config error's own requeue counts again.
+// already written, and the config error's own requeue counts again. A merged
+// view or certificate reference that cannot be read returns an error, so the
+// status is not written without the verdicts that depend on it.
 func (r *GatewayReconciler) applyConfigErrorListenerStatuses(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 	now metav1.Time,
 	errMsg, listenerReason string,
-) {
-	listenerStatuses, _ := r.buildListenerStatuses(ctx, gateway, newListenerViewCache(r.Client, r.ViewStore), now)
+) error {
+	gwView, err := newListenerViewCache(r.Client, r.ViewStore).forGateway(ctx, gateway)
+	if err != nil {
+		return errors.Wrap(err, "building the merged listener view")
+	}
+
+	attachedRoutes, _ := r.attachedRouteCounts(ctx, gateway)
+
+	listenerStatuses, err := r.buildListenerStatuses(ctx, gateway, gwView, attachedRoutes, now)
+	if err != nil {
+		return err
+	}
+
 	for i := range listenerStatuses {
 		overrideListenerProgrammedForConfigError(listenerStatuses[i].Conditions, gateway.Generation, now, errMsg, listenerReason)
 	}
 
 	gateway.Status.Listeners = preserveGatewayListenerTransitions(gateway.Status.Listeners, listenerStatuses)
+
+	return nil
 }
 
 // configErrorReasons picks the Accepted, Programmed and listener-Programmed
@@ -1909,8 +2002,7 @@ func gatewayInvalidListeners(
 // selector does not parse, and to Accepted=False when no listener is valid at
 // all (gateway_types.go).
 func gatewayAcceptedCondition(
-	ctx context.Context,
-	views *listenerViewCache,
+	gwView *gatewayListenerView,
 	gateway *gatewayv1.Gateway,
 	now metav1.Time,
 ) metav1.Condition {
@@ -1926,7 +2018,7 @@ func gatewayAcceptedCondition(
 	// Scoped to the Gateway's OWN listeners by design: an invalid listener
 	// contributed by an attached ListenerSet carries its verdict on the
 	// ListenerSet's own status, not on the parent Gateway's Accepted condition.
-	conflicted := gatewayConflictedListeners(ctx, views, gateway)
+	conflicted := gatewayConflictedListeners(gwView)
 	if anyInvalid, allInvalid, message := gatewayInvalidListeners(gateway.Spec.Listeners, conflicted); anyInvalid {
 		accepted.Reason = string(gatewayv1.GatewayReasonListenersNotValid)
 		accepted.Message = message
@@ -1970,31 +2062,32 @@ func permissiveHostnameCondition(generation int64, now metav1.Time) metav1.Condi
 }
 
 // validateTLSCertificateRefs validates TLS certificate references for a listener.
-// Returns the condition status, reason, and message for the ResolvedRefs condition.
+// Returns the condition status, reason, and message for the ResolvedRefs
+// condition, or an error when a ReferenceGrant or Secret could not be read.
 // Per Gateway API spec, TLS certificateRefs must point to valid Secrets of type
 // kubernetes.io/tls, and cross-namespace references require ReferenceGrant.
 func (r *GatewayReconciler) validateTLSCertificateRefs(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 	listener *gatewayv1.Listener,
-) (metav1.ConditionStatus, string, string) {
+) (metav1.ConditionStatus, string, string, error) {
 	// No TLS config - nothing to validate
 	if listener.TLS == nil || len(listener.TLS.CertificateRefs) == 0 {
 		return metav1.ConditionTrue,
 			string(gatewayv1.ListenerReasonResolvedRefs),
-			"References resolved"
+			"References resolved", nil
 	}
 
 	for _, ref := range listener.TLS.CertificateRefs {
-		status, reason, msg := r.validateSingleCertRef(ctx, gateway, ref)
-		if status == metav1.ConditionFalse {
-			return status, reason, msg
+		status, reason, msg, err := r.validateSingleCertRef(ctx, gateway, ref)
+		if err != nil || status == metav1.ConditionFalse {
+			return status, reason, msg, err
 		}
 	}
 
 	return metav1.ConditionTrue,
 		string(gatewayv1.ListenerReasonResolvedRefs),
-		msgReferencesResolved
+		msgReferencesResolved, nil
 }
 
 // validateSingleCertRef validates a single certificate reference.
@@ -2002,7 +2095,7 @@ func (r *GatewayReconciler) validateSingleCertRef(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 	ref gatewayv1.SecretObjectReference,
-) (metav1.ConditionStatus, string, string) {
+) (metav1.ConditionStatus, string, string, error) {
 	// Default to Secret in core v1
 	refKind := kindSecret
 	if ref.Kind != nil {
@@ -2018,7 +2111,7 @@ func (r *GatewayReconciler) validateSingleCertRef(
 	if !isCoreSecret(refGroup, refKind) {
 		return metav1.ConditionFalse,
 			string(gatewayv1.ListenerReasonInvalidCertificateRef),
-			fmt.Sprintf("Unsupported certificate ref kind: %s/%s", refGroup, refKind)
+			fmt.Sprintf("Unsupported certificate ref kind: %s/%s", refGroup, refKind), nil
 	}
 
 	// Determine namespace
@@ -2031,15 +2124,13 @@ func (r *GatewayReconciler) validateSingleCertRef(
 	if refNamespace != gateway.Namespace {
 		allowed, err := r.checkSecretReferenceGrant(ctx, gateway, refNamespace, ref)
 		if err != nil {
-			return metav1.ConditionFalse,
-				string(gatewayv1.ListenerReasonRefNotPermitted),
-				fmt.Sprintf("Failed to check ReferenceGrant: %v", err)
+			return "", "", "", err
 		}
 
 		if !allowed {
 			return metav1.ConditionFalse,
 				string(gatewayv1.ListenerReasonRefNotPermitted),
-				fmt.Sprintf("Cross-namespace reference to %s/%s not permitted", refNamespace, ref.Name)
+				fmt.Sprintf("Cross-namespace reference to %s/%s not permitted", refNamespace, ref.Name), nil
 		}
 	}
 
@@ -2052,7 +2143,7 @@ func (r *GatewayReconciler) validateSecretExists(
 	ctx context.Context,
 	namespace string,
 	ref gatewayv1.SecretObjectReference,
-) (metav1.ConditionStatus, string, string) {
+) (metav1.ConditionStatus, string, string, error) {
 	secret := &corev1.Secret{}
 
 	err := r.Get(ctx, types.NamespacedName{
@@ -2063,19 +2154,17 @@ func (r *GatewayReconciler) validateSecretExists(
 		if apierrors.IsNotFound(err) {
 			return metav1.ConditionFalse,
 				string(gatewayv1.ListenerReasonInvalidCertificateRef),
-				fmt.Sprintf("Secret %s/%s not found", namespace, ref.Name)
+				fmt.Sprintf("Secret %s/%s not found", namespace, ref.Name), nil
 		}
 
-		return metav1.ConditionFalse,
-			string(gatewayv1.ListenerReasonInvalidCertificateRef),
-			fmt.Sprintf("Failed to get secret: %v", err)
+		return "", "", "", errors.Wrapf(err, "getting Secret %s/%s", namespace, ref.Name)
 	}
 
 	// Validate Secret type
 	if secret.Type != corev1.SecretTypeTLS {
 		return metav1.ConditionFalse,
 			string(gatewayv1.ListenerReasonInvalidCertificateRef),
-			fmt.Sprintf("Secret %s/%s is not of type kubernetes.io/tls", namespace, ref.Name)
+			fmt.Sprintf("Secret %s/%s is not of type kubernetes.io/tls", namespace, ref.Name), nil
 	}
 
 	// Validate certificate data exists and is valid PEM
@@ -2083,14 +2172,14 @@ func (r *GatewayReconciler) validateSecretExists(
 	if !hasCert || len(certData) == 0 {
 		return metav1.ConditionFalse,
 			string(gatewayv1.ListenerReasonInvalidCertificateRef),
-			fmt.Sprintf("Secret %s/%s missing tls.crt data", namespace, ref.Name)
+			fmt.Sprintf("Secret %s/%s missing tls.crt data", namespace, ref.Name), nil
 	}
 
 	keyData, hasKey := secret.Data[corev1.TLSPrivateKeyKey]
 	if !hasKey || len(keyData) == 0 {
 		return metav1.ConditionFalse,
 			string(gatewayv1.ListenerReasonInvalidCertificateRef),
-			fmt.Sprintf("Secret %s/%s missing tls.key data", namespace, ref.Name)
+			fmt.Sprintf("Secret %s/%s missing tls.key data", namespace, ref.Name), nil
 	}
 
 	// Validate that certificate contains valid PEM data
@@ -2098,10 +2187,10 @@ func (r *GatewayReconciler) validateSecretExists(
 	if block == nil {
 		return metav1.ConditionFalse,
 			string(gatewayv1.ListenerReasonInvalidCertificateRef),
-			fmt.Sprintf("Secret %s/%s contains invalid certificate PEM data", namespace, ref.Name)
+			fmt.Sprintf("Secret %s/%s contains invalid certificate PEM data", namespace, ref.Name), nil
 	}
 
-	return metav1.ConditionTrue, "", ""
+	return metav1.ConditionTrue, "", "", nil
 }
 
 // buildResolvedRefsCondition creates the ResolvedRefs condition based on validation results.
@@ -2167,45 +2256,5 @@ func (r *GatewayReconciler) checkSecretReferenceGrant(
 	targetNamespace string,
 	ref gatewayv1.SecretObjectReference,
 ) (bool, error) {
-	var grants gatewayv1beta1.ReferenceGrantList
-	if err := r.List(ctx, &grants, client.InNamespace(targetNamespace)); err != nil {
-		return false, errors.Wrap(err, "failed to list ReferenceGrants")
-	}
-
-	for i := range grants.Items {
-		grant := &grants.Items[i]
-
-		if !r.grantAllowsGateway(grant, gateway.Namespace) {
-			continue
-		}
-
-		// Check To: must allow Secret with matching name
-		// Per Gateway API spec, if to.Name is nil or empty, it allows ALL secrets in namespace
-		for _, to := range grant.Spec.To {
-			if isCoreSecret(string(to.Group), string(to.Kind)) {
-				// nil or empty name means "all secrets in namespace"
-				if to.Name == nil || *to.Name == "" || string(*to.Name) == string(ref.Name) {
-					return true, nil
-				}
-			}
-		}
-	}
-
-	return false, nil
-}
-
-// grantAllowsGateway checks if a ReferenceGrant allows Gateway from the given namespace.
-func (r *GatewayReconciler) grantAllowsGateway(
-	grant *gatewayv1beta1.ReferenceGrant,
-	gatewayNamespace string,
-) bool {
-	for _, from := range grant.Spec.From {
-		if from.Group == gatewayv1.GroupName &&
-			from.Kind == kindGateway &&
-			string(from.Namespace) == gatewayNamespace {
-			return true
-		}
-	}
-
-	return false
+	return checkSecretReferenceGrantForGateway(ctx, r.Client, gateway, targetNamespace, ref)
 }

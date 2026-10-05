@@ -403,8 +403,7 @@ func gatewayManagedByController(ctx context.Context, c client.Client, gateway *g
 
 // gatewayClientCertGrantChecker adapts the package-level grant lookup into a
 // secretRefGrantChecker so the syncer can resolve cross-namespace refs without
-// depending on a GatewayReconciler instance. The lookup mirrors the
-// implementation on GatewayReconciler.checkSecretReferenceGrant verbatim.
+// depending on a GatewayReconciler instance.
 func gatewayClientCertGrantChecker(c client.Client) secretRefGrantChecker {
 	return func(
 		ctx context.Context,
@@ -782,12 +781,7 @@ func newBackendRefValidator(validator *referencegrant.Validator, fromKind string
 
 		allowed, err := validator.IsReferenceAllowed(ctx, fromRef, toRef)
 		if err != nil {
-			slog.Warn("failed to validate cross-namespace reference",
-				"error", err,
-				"from_namespace", fromNamespace,
-				"to_namespace", toNamespace,
-				"service", string(ref.Name),
-			)
+			noteGrantReadError(ctx, fromNamespace, err)
 
 			return false
 		}
@@ -841,6 +835,10 @@ func (s *ProxySyncer) syncPartition(
 
 	prep := s.preparePush(ctx, configVersion, key, authToken, endpoints, resolved, routes, grpcRoutes,
 		failedRefs, grpcFailedRefs, certParents)
+	if prep.undecided != nil {
+		return prep.diagnostics, prep.undecided
+	}
+
 	if prep.skip {
 		logger.Debug("proxy config unchanged; skipping push",
 			"partition", key, "endpoints", len(resolved), "rules", len(prep.cfg.Rules))
@@ -893,6 +891,9 @@ type preparedPush struct {
 	cfgHash     string
 	diagnostics []proxy.RouteDiagnostic
 	skip        bool
+	// undecided, when set, says why the config must not be pushed: a backend
+	// reference in it could not be evaluated.
+	undecided error
 }
 
 // preparePush builds the partition's config under syncMu and reports whether the
@@ -923,6 +924,7 @@ func (s *ProxySyncer) preparePush(
 	logger.Info("syncing proxy config",
 		"partition", key, "httpRoutes", len(routes), "grpcRoutes", len(grpcRoutes))
 
+	ctx, grantErrs := withGrantReadErrors(ctx)
 	cfg := s.buildProxyConfig(ctx, routes, grpcRoutes, failedRefs, grpcFailedRefs, certParents)
 
 	// Replace the converter's build-time version with the one the caller
@@ -941,6 +943,12 @@ func (s *ProxySyncer) preparePush(
 	diagnostics := cfg.Diagnostics
 
 	logger.Info("resolved endpoints", "partition", key, "original", len(endpoints), "resolved", len(resolved))
+
+	if err := grantErrs.err(); err != nil || partitionRefsUndecided(routes, grpcRoutes, failedRefs, grpcFailedRefs) {
+		grantErrs.markUndecided(diagnostics)
+
+		return preparedPush{cfg: cfg, diagnostics: diagnostics, undecided: errors.CombineErrors(errBackendRefsUndecided, err)}
+	}
 
 	// Steady-state skip: when the rebuilt config is identical to the last
 	// successful push and the replica set is unchanged, every endpoint already
@@ -1299,7 +1307,7 @@ func (s *ProxySyncer) buildProxyConfig(
 	// 500 for that backend's traffic fraction instead of dialing a dead address
 	// and surfacing a 502. The backend stays in the weighted pool so the
 	// fraction is preserved per the Gateway API spec.
-	markUnavailableBackends(cfg, s.clusterDomain, failedRefs)
+	markUnavailableBackends(cfg, s.clusterDomain, kindHTTPRouteDiag, failedRefs)
 
 	// Append GRPCRoute rules. gRPC method matching maps onto the same proxy
 	// path matcher; backends are dialed h2c unless a BackendTLSPolicy puts TLS on
@@ -1329,9 +1337,9 @@ func (s *ProxySyncer) buildProxyConfig(
 		cfg.Diagnostics = append(cfg.Diagnostics, undecided...)
 
 		// Mark invalid gRPC backendRefs the same way as HTTP. Matching is by
-		// service host:port across all rules, so no rule-offset bookkeeping is
-		// needed.
-		markUnavailableBackends(cfg, s.clusterDomain, grpcFailedRefs)
+		// service host:port within the referencing route's rules, found by
+		// provenance, so no rule-offset bookkeeping is needed.
+		markUnavailableBackends(cfg, s.clusterDomain, kindGRPCRouteDiag, grpcFailedRefs)
 	}
 
 	// Expand each headless Service (clusterIP: None) into one backend per ready
