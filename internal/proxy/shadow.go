@@ -53,20 +53,19 @@ type shadowKey struct {
 }
 
 // shadowClaimant is one rule's claim on a (hostname, match) pair, carrying
-// the data the router actually orders by: rule priority (max across the
-// rule's ORed matches — computePriority, the router's own function) and the
-// flattened index (the router's stable tiebreak).
+// the data the router actually orders by: the match's rank (rankMatch, the
+// router's own function) and the flattened index (the router's tiebreak).
 type shadowClaimant struct {
 	provenance RuleProvenance
-	priority   int
+	rank       matchRank
 	flatIdx    int
 }
 
 // beats reports whether c is served BEFORE other by the router: higher
-// priority first, then lower flattened index (sortRulesByPrecedence).
+// rank first, then lower flattened index (sortByPrecedence).
 func (c *shadowClaimant) beats(other *shadowClaimant) bool {
-	if c.priority != other.priority {
-		return c.priority > other.priority
+	if order := c.rank.compare(other.rank); order != 0 {
+		return order > 0
 	}
 
 	return c.flatIdx < other.flatIdx
@@ -74,16 +73,14 @@ func (c *shadowClaimant) beats(other *shadowClaimant) bool {
 
 // DetectShadowedRules flags every (hostname, match) pair that is EXACTLY
 // claimed by two routes, attributing winner and loser by the ROUTER's actual
-// ordering: rule priority descending (a rule's priority is the max across its
-// ORed matches), then flattened index — NOT flattening order alone. The
-// distinction matters: a newer route [prefix /, exact /admin] outranks an
-// older route [prefix /] because its exact arm lifts the whole rule, and its
-// "prefix /" arm then swallows the older route's traffic — the OLDER route is
-// the starved one. Exact pair equality is the zero-traffic case: the winning
-// rule matches every request the losing pair would, and the router serves the
-// winner first. Cross-bucket overlaps (wildcard vs exact hostname, prefix vs
-// exact path) are deliberately NOT flagged — the other rule still serves
-// traffic there.
+// ordering: match rank descending, then flattened index. Equal pairs differ in
+// rank only through RouteMatch.GRPCMethod, which the pair identity leaves out:
+// a GRPCRoute match against an HTTPRoute match on the same path, or two
+// GRPCRoute regex matches generating the same path. Exact pair equality is
+// the zero-traffic case: the winning rule matches every request the losing
+// pair would, and the router serves the winner first. Cross-bucket overlaps
+// (wildcard vs exact hostname, prefix vs exact path) are deliberately NOT
+// flagged — the other rule still serves traffic there.
 //
 // Returns one DiagnosticShadowed entry per shadowed pair, stamped with the
 // LOSING route's identity so the existing per-route status pipeline delivers
@@ -110,18 +107,15 @@ func DetectShadowedRules(cfg *Config) []RouteDiagnostic {
 
 	for ruleIdx := range cfg.Rules {
 		rule := &cfg.Rules[ruleIdx]
-		claimant := shadowClaimant{
-			provenance: cfg.Provenance[ruleIdx],
-			priority:   computePriority(rule),
-			flatIdx:    ruleIdx,
-		}
 		isolation := &compiledRule{listeners: compileRuleListeners(rule.Listeners)}
 
-		for _, key := range ruleShadowKeys(rule) {
+		for _, ranked := range ruleShadowKeys(rule) {
+			key := ranked.key
 			if !isolation.isolationAllows(&hostOwners{owners: owners, host: representativeHost(key.hostname)}) {
 				continue
 			}
 
+			claimant := shadowClaimant{provenance: cfg.Provenance[ruleIdx], rank: ranked.rank, flatIdx: ruleIdx}
 			claims = append(claims, shadowClaim{key: key, claimant: claimant})
 
 			incumbent, claimed := winners[key]
@@ -191,30 +185,43 @@ func shadowDiagnostics(claims []shadowClaim, winners map[shadowKey]shadowClaiman
 	return diags
 }
 
+type rankedShadowKey struct {
+	key  shadowKey
+	rank matchRank
+}
+
 // ruleShadowKeys expands a rule into its claimed (hostname, match) keys. A
 // rule with no hostnames claims the default bucket (""); a rule with no
 // matches claims the matches-everything key — both mirror the router's
 // behaviour exactly.
-func ruleShadowKeys(rule *RouteRule) []shadowKey {
+func ruleShadowKeys(rule *RouteRule) []rankedShadowKey {
 	hostnames := rule.Hostnames
 	if len(hostnames) == 0 {
 		hostnames = []string{""}
 	}
 
-	matchKeys := make([]string, 0, max(len(rule.Matches), 1))
+	type rankedMatch struct {
+		key  string
+		rank matchRank
+	}
+
+	matches := make([]rankedMatch, 0, max(len(rule.Matches), 1))
 	if len(rule.Matches) == 0 {
-		matchKeys = append(matchKeys, "catch-all")
+		matches = append(matches, rankedMatch{key: "catch-all"})
 	}
 
-	for _, match := range rule.Matches {
-		matchKeys = append(matchKeys, canonicalMatchKey(match))
+	for idx := range rule.Matches {
+		matches = append(matches, rankedMatch{key: canonicalMatchKey(&rule.Matches[idx]), rank: rankMatch(&rule.Matches[idx])})
 	}
 
-	keys := make([]shadowKey, 0, len(hostnames)*len(matchKeys))
+	keys := make([]rankedShadowKey, 0, len(hostnames)*len(matches))
 
 	for _, hostname := range hostnames {
-		for _, matchKey := range matchKeys {
-			keys = append(keys, shadowKey{hostname: strings.ToLower(hostname), matchKey: matchKey})
+		for _, match := range matches {
+			keys = append(keys, rankedShadowKey{
+				key:  shadowKey{hostname: strings.ToLower(hostname), matchKey: match.key},
+				rank: match.rank,
+			})
 		}
 	}
 
@@ -243,20 +250,23 @@ func representativeHost(hostname string) string {
 // identity: header and query-param lists are sorted (names lowercased — HTTP
 // header names are case-insensitive), so two spec-equal matches written in
 // different order collide as they should.
-func canonicalMatchKey(match RouteMatch) string {
+func canonicalMatchKey(match *RouteMatch) string {
 	// Full struct copy, then overwrite ONLY the normalized slices: an
 	// explicit field-by-field copy would silently exclude any future
 	// RouteMatch field from the identity, making matches that differ only in
 	// that field falsely collide.
-	norm := match
+	norm := *match
 	norm.Headers = normalizeHeaderMatches(match.Headers)
 	norm.QueryParams = normalizeQueryMatches(match.QueryParams)
+	// Ranking data only: Path carries the condition, and dropping it keeps an
+	// HTTPRoute match and a GRPCRoute match on the same path colliding.
+	norm.GRPCMethod = nil
 
 	encoded, err := json.Marshal(norm)
 	if err != nil {
 		// RouteMatch is plain data; Marshal cannot realistically fail. The
 		// fallback must still key by CONTENT so equal matches collide.
-		return unmarshalableMatchKey(norm)
+		return unmarshalableMatchKey(&norm)
 	}
 
 	return string(encoded)
@@ -265,10 +275,13 @@ func canonicalMatchKey(match RouteMatch) string {
 // unmarshalableMatchKey is the content-stable fallback for canonicalMatchKey
 // when json.Marshal fails. RouteMatch.Path is a pointer, so a bare %#v would
 // render its ADDRESS — making two spec-identical matches produce different keys
-// and silently miss the shadow collision. Dereference Path explicitly (the only
-// pointer field) and drop the pointer from the struct dump so the rest of the
-// fields (slices, strings) contribute their content.
-func unmarshalableMatchKey(norm RouteMatch) string {
+// and silently miss the shadow collision. Dereference Path explicitly (the
+// only pointer field canonicalMatchKey leaves set) and drop the pointer from
+// the struct dump so the rest of the fields (slices, strings) contribute
+// their content.
+func unmarshalableMatchKey(match *RouteMatch) string {
+	norm := *match
+
 	path := "nil"
 	if norm.Path != nil {
 		path = fmt.Sprintf("%#v", *norm.Path)
@@ -310,16 +323,16 @@ func normalizeQueryMatches(params []QueryParamMatch) []QueryParamMatch {
 	return norm
 }
 
-// shadowBasis names the criterion that decided the collision. A priority gap
-// means the winning RULE outranks the loser on Gateway API match specificity
-// (its most specific ORed match sets the whole rule's rank). Equal priorities
-// are decided by beats() PURELY on flattened index, so a timestamp/name reason
-// is reported only when it actually agrees with that order; otherwise the
-// honest answer is the generated-config order itself (e.g. HTTPRoute rules
-// precede GRPCRoute rules) — never a timestamp or name that did not decide it.
+// shadowBasis names the criterion that decided the collision. A rank gap
+// means the winning match outranks the loser on Gateway API match
+// specificity. Equal ranks are decided by beats() PURELY on flattened index,
+// so a timestamp/name reason is reported only when it actually agrees with
+// that order; otherwise the honest answer is the generated-config order
+// itself (e.g. HTTPRoute rules precede GRPCRoute rules) — never a timestamp
+// or name that did not decide it.
 func shadowBasis(winner, loser *shadowClaimant) string {
-	if winner.priority != loser.priority {
-		return "higher match specificity — the winning rule's most specific match ranks the whole rule above this one"
+	if winner.rank != loser.rank {
+		return "higher match specificity — the winning match ranks above this one"
 	}
 
 	// Cross-kind ties are decided by the flattening order: gRPC rules are

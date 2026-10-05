@@ -291,64 +291,139 @@ func TestDetectShadowedRules_PartialShadowEmitsPerPair(t *testing.T) {
 	assert.NotContains(t, diags[0].Message, "/v2")
 }
 
-// TestDetectShadowedRules_HigherPriorityLaterRuleWins pins winner attribution
-// against the ROUTER's actual ordering, not flattening order. The router ranks
-// a rule by the MAX priority across its ORed matches and serves a request with
-// the first rule (priority desc) whose ANY match hits. So an older route A
-// [prefix /] loses its traffic to a newer route B [prefix /, exact /admin]:
-// B's exact match lifts the whole rule above A, and B's "prefix /" arm
-// swallows every request A would have served. The diagnostic must land on A
-// (the starved route), naming B as the winner — flagging B would invert
-// winner and loser exactly when the observability matters.
-func TestDetectShadowedRules_HigherPriorityLaterRuleWins(t *testing.T) {
+// TestDetectShadowedRules_OtherArmDoesNotLiftTheCollidingMatch pins winner
+// attribution against the router's per-match ordering: a newer route B
+// [prefix /, exact /admin] does not outrank an older route A [prefix /] on
+// "prefix /", because B's exact arm ranks only itself. The pair goes to A by
+// age, so the diagnostic lands on B, and the router agrees.
+func TestDetectShadowedRules_OtherArmDoesNotLiftTheCollidingMatch(t *testing.T) {
 	t.Parallel()
 
 	cfg := &proxy.Config{
 		Rules: []proxy.RouteRule{
-			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{pathPrefixMatch("/")}},
+			{
+				Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{pathPrefixMatch("/")},
+				Backends: []proxy.BackendRef{{URL: "http://older:80", Weight: 1}},
+			},
 			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{
 				pathPrefixMatch("/"), pathExactMatch("/admin"),
-			}},
+			}, Backends: []proxy.BackendRef{{URL: "http://newer:80", Weight: 1}}},
 		},
 		Provenance: []proxy.RuleProvenance{
-			prov("HTTPRoute", "team-a", "older-starved", shadowT0, 0),
-			prov("HTTPRoute", "team-b", "newer-winner", shadowT1, 0),
+			prov("HTTPRoute", "team-a", "older", shadowT0, 0),
+			prov("HTTPRoute", "team-b", "newer", shadowT1, 0),
 		},
 	}
 
 	diags := proxy.DetectShadowedRules(cfg)
 	require.Len(t, diags, 1)
-	assert.Equal(t, "older-starved", diags[0].Name,
-		"the route the router actually starves must carry the diagnostic")
-	assert.Equal(t, "team-a", diags[0].Namespace)
-	assert.Contains(t, diags[0].Message, "HTTPRoute team-b/newer-winner",
-		"the winner named in the message must be the route the router serves")
+	assert.Equal(t, "newer", diags[0].Name)
+	assert.Equal(t, "team-b", diags[0].Namespace)
+	assert.Contains(t, diags[0].Message, "HTTPRoute team-a/older rule 0 (older creationTimestamp)")
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	for path, want := range map[string]string{"/": "http://older:80", "/admin": "http://newer:80"} {
+		result := routeHost(router, "app.example.com", path)
+		require.NotNil(t, result, path)
+		assert.Equal(t, want, result.Rule.Backends[0].URL, path)
+	}
+}
+
+func grpcExactPathMatch(service, method string) proxy.RouteMatch {
+	match := pathExactMatch("/" + service + "/" + method)
+	match.GRPCMethod = &proxy.GRPCMethodName{Service: service, Method: method}
+
+	return match
+}
+
+// TestDetectShadowedRules_GRPCMatchOutranksSameHTTPPath pins the one case
+// where equal pairs differ in rank: a GRPCRoute method match ranks above an
+// HTTPRoute match on the same path, so the newer gRPC rule serves the pair
+// and the older HTTP rule carries the diagnostic, as the router does.
+func TestDetectShadowedRules_GRPCMatchOutranksSameHTTPPath(t *testing.T) {
+	t.Parallel()
+
+	cfg := &proxy.Config{
+		Rules: []proxy.RouteRule{
+			{
+				Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{pathExactMatch("/foo.Bar/Get")},
+				Backends: []proxy.BackendRef{{URL: "http://http:80", Weight: 1}},
+			},
+			{
+				Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{grpcExactPathMatch("foo.Bar", "Get")},
+				Backends: []proxy.BackendRef{{URL: "http://grpc:80", Weight: 1}},
+			},
+		},
+		Provenance: []proxy.RuleProvenance{
+			prov("HTTPRoute", "ns", "http", shadowT0, 0),
+			prov("GRPCRoute", "ns", "grpc", shadowT1, 0),
+		},
+	}
+
+	diags := proxy.DetectShadowedRules(cfg)
+	require.Len(t, diags, 1)
+	assert.Equal(t, "HTTPRoute", diags[0].Kind)
+	assert.Contains(t, diags[0].Message, "GRPCRoute ns/grpc rule 0 (higher match specificity")
+
+	router := proxy.NewRouter()
+	require.NoError(t, router.UpdateConfig(cfg))
+
+	result := routeHost(router, "app.example.com", "/foo.Bar/Get")
+	require.NotNil(t, result)
+	assert.Equal(t, "http://grpc:80", result.Rule.Backends[0].URL)
+}
+
+// TestDetectShadowedRules_GRPCRankGapBetweenGRPCRoutes pins the rank-gap
+// reason as kind-neutral: two GRPCRoute regex matches can generate the same
+// path while naming a service differently, so a rank gap does not imply an
+// HTTPRoute on the losing side.
+func TestDetectShadowedRules_GRPCRankGapBetweenGRPCRoutes(t *testing.T) {
+	t.Parallel()
+
+	path := &proxy.PathMatch{Type: proxy.PathMatchRegularExpression, Value: "^/(?:[^/]+)/(?:Foo)$"}
+	cfg := &proxy.Config{
+		Rules: []proxy.RouteRule{
+			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{
+				{Path: path, GRPCMethod: &proxy.GRPCMethodName{Method: "Foo"}},
+			}},
+			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{
+				{Path: path, GRPCMethod: &proxy.GRPCMethodName{Service: "[^/]+", Method: "Foo"}},
+			}},
+		},
+		Provenance: []proxy.RuleProvenance{
+			prov("GRPCRoute", "ns", "method-only", shadowT0, 0),
+			prov("GRPCRoute", "ns", "with-service", shadowT1, 0),
+		},
+	}
+
+	diags := proxy.DetectShadowedRules(cfg)
+	require.Len(t, diags, 1)
+	assert.Equal(t, "method-only", diags[0].Name)
+	assert.Contains(t, diags[0].Message, "higher match specificity")
+	assert.NotContains(t, diags[0].Message, "HTTPRoute")
 }
 
 // TestDetectShadowedRules_ThreeWayCollisionNamesTheFinalWinner pins winner
 // attribution under ≥3 claimants on one pair: every loser's message must name
 // the route the router ACTUALLY serves ("matching requests are served by that
-// route"), which is only known after all claimants are seen. With claimants
-// low → mid → high (by priority, in flattening order), the low-priority
-// route's diagnostic must name the high-priority route — not the mid one it
-// happened to lose to first, which itself serves zero traffic on the pair.
+// route"), which is only known after all claimants are seen. The last claimant
+// outranks the first two, so the second must not be reported as losing to the
+// first, which itself serves zero traffic on the pair.
 func TestDetectShadowedRules_ThreeWayCollisionNamesTheFinalWinner(t *testing.T) {
 	t.Parallel()
 
 	cfg := &proxy.Config{
 		Rules: []proxy.RouteRule{
-			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{pathPrefixMatch("/")}},
-			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{
-				pathPrefixMatch("/"), pathPrefixMatch("/mid-priority-arm"),
-			}},
-			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{
-				pathPrefixMatch("/"), pathExactMatch("/high-priority-arm"),
-			}},
+			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{pathExactMatch("/foo.Bar/Get")}},
+			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{pathExactMatch("/foo.Bar/Get")}},
+			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{grpcExactPathMatch("foo.Bar", "Get")}},
 		},
 		Provenance: []proxy.RuleProvenance{
-			prov("HTTPRoute", "ns", "low", shadowT0, 0),
-			prov("HTTPRoute", "ns", "mid", shadowT1, 0),
-			prov("HTTPRoute", "ns", "high", shadowT1, 0),
+			prov("HTTPRoute", "ns", "first", shadowT0, 0),
+			prov("HTTPRoute", "ns", "second", shadowT1, 0),
+			prov("GRPCRoute", "ns", "winner", shadowT1, 0),
 		},
 	}
 
@@ -359,15 +434,15 @@ func TestDetectShadowedRules_ThreeWayCollisionNamesTheFinalWinner(t *testing.T) 
 		byLoser[diag.Name] = diag.Message
 	}
 
-	require.Contains(t, byLoser, "low")
-	require.Contains(t, byLoser, "mid")
-	assert.NotContains(t, byLoser, "high", "the final winner must not be flagged")
+	require.Contains(t, byLoser, "first")
+	require.Contains(t, byLoser, "second")
+	assert.NotContains(t, byLoser, "winner", "the final winner must not be flagged")
 
-	assert.Contains(t, byLoser["low"], "HTTPRoute ns/high",
+	assert.Contains(t, byLoser["second"], "GRPCRoute ns/winner",
 		"the loser's message must name the route that actually serves the pair")
-	assert.NotContains(t, byLoser["low"], "HTTPRoute ns/mid",
+	assert.NotContains(t, byLoser["second"], "HTTPRoute ns/first",
 		"naming an intermediate claimant that serves zero traffic misleads the operator")
-	assert.Contains(t, byLoser["mid"], "HTTPRoute ns/high")
+	assert.Contains(t, byLoser["first"], "GRPCRoute ns/winner")
 }
 
 // TestDetectShadowedRules_MultiHostnameCrossProduct pins the (hostname × match)

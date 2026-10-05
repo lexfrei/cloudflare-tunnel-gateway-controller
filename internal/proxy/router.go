@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"cmp"
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
@@ -14,49 +15,42 @@ import (
 	"github.com/cockroachdb/errors"
 )
 
-// Priority scoring constants for Gateway API rule precedence (GEP-1722).
-// Strict tier ordering: path type > path length > method > headers > queries.
-//
-// Each tier's per-unit value strictly dominates the total possible contribution
-// of all lower tiers combined. This ensures that 1 extra character of path
-// length always outranks any combination of method, header, and query matches.
-const (
-	priorityExactPath     = 1_000_000_000
-	priorityRegexPath     = 500_000_000
-	priorityPrefixPath    = 100_000_000
-	priorityPathLength    = 10_000
-	priorityMethod        = 100
-	priorityPerHeader     = 10
-	priorityPerQueryParam = 1
-)
-
 // compiledRule is a pre-compiled routing rule ready for request matching.
 type compiledRule struct {
 	matches        []*CompiledMatch
 	rule           *RouteRule
 	filters        []Filter
 	backendFilters [][]Filter // per-backend compiled filters (indexed by backend position)
-	priority       int
-	ruleIndex      int // original rule index for tiebreaking (earlier rules win)
+	ruleIndex      int        // original rule index for tiebreaking (earlier rules win)
 	listeners      map[string]map[string]struct{}
 	// closedErr is the first filter compile error that made failClosed answer
 	// HTTP 500 for all or part of the rule; nil when every filter compiled.
 	closedErr error
 }
 
+// matchEntry is one of a rule's ORed matches, ranked on its own because the
+// spec orders matches, not rules. A rule without matches is a single entry
+// whose nil matcher matches every request.
+type matchEntry struct {
+	compiled *compiledRule
+	matcher  *CompiledMatch
+	matchIdx int
+	rank     matchRank
+}
+
 // routingTable holds the compiled routing state for lock-free reads.
 type routingTable struct {
-	exactHosts    map[string][]*compiledRule
+	exactHosts    map[string][]matchEntry
 	wildcardHosts []wildcardEntry
-	defaultRules  []*compiledRule
+	defaultRules  []matchEntry
 	owners        listenerOwners
 	version       int64
 }
 
-// wildcardEntry maps a wildcard suffix to its compiled rules.
+// wildcardEntry maps a wildcard suffix to its match entries.
 type wildcardEntry struct {
 	suffix string
-	rules  []*compiledRule
+	rules  []matchEntry
 }
 
 // transportPruner is implemented by Handler to prune stale transport entries.
@@ -109,7 +103,7 @@ func NewRouter() *Router {
 		firstConfigCh: make(chan *Config, 1),
 	}
 	router.table.Store(&routingTable{
-		exactHosts: make(map[string][]*compiledRule),
+		exactHosts: make(map[string][]matchEntry),
 	})
 
 	return router
@@ -407,17 +401,20 @@ func collectMirrorTransportKeys(keys map[string]bool, filters []RouteFilter) {
 	}
 }
 
-// indexRuleByHostname files a compiled rule under each hostname it serves:
-// exact hostnames on the table, wildcards in wildcardMap keyed by the suffix
-// they match, and a rule with no hostnames among the defaults.
+// indexRuleByHostname files a compiled rule's match entries under each
+// hostname it serves: exact hostnames on the table, wildcards in wildcardMap
+// keyed by the suffix they match, and a rule with no hostnames among the
+// defaults.
 func indexRuleByHostname(
 	table *routingTable,
-	wildcardMap map[string][]*compiledRule,
+	wildcardMap map[string][]matchEntry,
 	hostnames []string,
 	compiled *compiledRule,
 ) {
+	entries := compiled.entries()
+
 	if len(hostnames) == 0 {
-		table.defaultRules = append(table.defaultRules, compiled)
+		table.defaultRules = append(table.defaultRules, entries...)
 
 		return
 	}
@@ -426,11 +423,29 @@ func indexRuleByHostname(
 		normalized := strings.ToLower(hostname)
 		if strings.HasPrefix(normalized, "*.") {
 			suffix := normalized[1:] // e.g., "*.example.com" → ".example.com"
-			wildcardMap[suffix] = append(wildcardMap[suffix], compiled)
+			wildcardMap[suffix] = append(wildcardMap[suffix], entries...)
 		} else {
-			table.exactHosts[normalized] = append(table.exactHosts[normalized], compiled)
+			table.exactHosts[normalized] = append(table.exactHosts[normalized], entries...)
 		}
 	}
+}
+
+func (c *compiledRule) entries() []matchEntry {
+	if len(c.matches) == 0 {
+		return []matchEntry{{compiled: c}}
+	}
+
+	entries := make([]matchEntry, len(c.matches))
+	for idx, matcher := range c.matches {
+		entries[idx] = matchEntry{
+			compiled: c,
+			matcher:  matcher,
+			matchIdx: idx,
+			rank:     rankMatch(&c.rule.Matches[idx]),
+		}
+	}
+
+	return entries
 }
 
 // compileRoutingTable builds a routingTable from a Config. env is forwarded
@@ -440,12 +455,12 @@ func indexRuleByHostname(
 // the mirror destination.
 func compileRoutingTable(cfg *Config, env filterEnv) *routingTable {
 	table := &routingTable{
-		exactHosts: make(map[string][]*compiledRule),
+		exactHosts: make(map[string][]matchEntry),
 		owners:     compileListenerOwners(cfg.ListenerHostnames),
 		version:    cfg.Version,
 	}
 
-	wildcardMap := make(map[string][]*compiledRule)
+	wildcardMap := make(map[string][]matchEntry)
 
 	report := compileReport{version: cfg.Version}
 
@@ -473,7 +488,7 @@ func compileRoutingTable(cfg *Config, env filterEnv) *routingTable {
 
 	// Convert wildcard map to sorted slice (longest suffix first for precedence).
 	for suffix, rules := range wildcardMap {
-		sortRulesByPrecedence(rules)
+		sortByPrecedence(rules)
 
 		table.wildcardHosts = append(table.wildcardHosts, wildcardEntry{
 			suffix: suffix,
@@ -487,10 +502,10 @@ func compileRoutingTable(cfg *Config, env filterEnv) *routingTable {
 
 	// Sort exact host rules and default rules by precedence.
 	for host := range table.exactHosts {
-		sortRulesByPrecedence(table.exactHosts[host])
+		sortByPrecedence(table.exactHosts[host])
 	}
 
-	sortRulesByPrecedence(table.defaultRules)
+	sortByPrecedence(table.defaultRules)
 
 	report.summarize(len(cfg.Rules))
 
@@ -556,8 +571,8 @@ func (r *compileReport) summarize(rules int) {
 func compileRule(rule *RouteRule, ruleIndex int, env filterEnv) (*compiledRule, error) {
 	var matches []*CompiledMatch
 
-	for matchIdx, match := range rule.Matches {
-		compiled, err := CompileMatch(match)
+	for matchIdx := range rule.Matches {
+		compiled, err := CompileMatch(&rule.Matches[matchIdx])
 		if err != nil {
 			return nil, errors.Wrapf(err, "match[%d]", matchIdx)
 		}
@@ -599,7 +614,6 @@ func compileRule(rule *RouteRule, ruleIndex int, env filterEnv) (*compiledRule, 
 		rule:           rule,
 		filters:        filters,
 		backendFilters: backendFilters,
-		priority:       computePriority(rule),
 		ruleIndex:      ruleIndex,
 		listeners:      compileRuleListeners(rule.Listeners),
 		closedErr:      closedErr,
@@ -631,99 +645,104 @@ func failClosed(rule *RouteRule, backendIdx int) *RouteRule {
 	return &closed
 }
 
-// computePriority calculates a precedence score for Gateway API ordering.
-// Higher score = higher precedence. Rules are sorted descending by priority.
-//
-// Gateway API precedence (from spec, GEP-1722):
-//
-//  1. Longest hostname (handled by exact > wildcard > default lookup order)
-//  2. Exact path > Regex path > Prefix path (matching the priority constants
-//     above; RegularExpression path precedence is implementation-specific per
-//     httproute_types.go:189)
-//  3. Longest path value
-//  4. Method match present
-//  5. Most header matches
-//  6. Most query param matches
-//
-// Each component is maximized independently across all ORed matches in the rule.
-// This is correct because a rule with matches [PathPrefix /v2, header:x]
-// should rank higher on path than a rule with [PathPrefix /, header:y],
-// regardless of which match carries the header.
-func computePriority(rule *RouteRule) int {
-	maxPathTypeScore := 0
-	maxPathLen := 0
-	hasMethod := false
-	maxHeaders := 0
-	maxQueryParams := 0
-
-	for _, match := range rule.Matches {
-		if match.Path != nil {
-			pathTypeScore := 0
-
-			switch match.Path.Type {
-			case PathMatchExact:
-				pathTypeScore = priorityExactPath
-			case PathMatchPathPrefix:
-				pathTypeScore = priorityPrefixPath
-			case PathMatchRegularExpression:
-				pathTypeScore = priorityRegexPath
-			}
-
-			if pathTypeScore > maxPathTypeScore {
-				maxPathTypeScore = pathTypeScore
-				maxPathLen = len(match.Path.Value)
-			} else if pathTypeScore == maxPathTypeScore && len(match.Path.Value) > maxPathLen {
-				maxPathLen = len(match.Path.Value)
-			}
-		}
-
-		if match.Method != "" {
-			hasMethod = true
-		}
-
-		if len(match.Headers) > maxHeaders {
-			maxHeaders = len(match.Headers)
-		}
-
-		if len(match.QueryParams) > maxQueryParams {
-			maxQueryParams = len(match.QueryParams)
-		}
-	}
-
-	priority := maxPathTypeScore + maxPathLen*priorityPathLength
-
-	if hasMethod {
-		priority += priorityMethod
-	}
-
-	priority += maxHeaders * priorityPerHeader
-	priority += maxQueryParams * priorityPerQueryParam
-
-	return priority
+// matchRank orders matches by Gateway API precedence. Fields compare in
+// declaration order and each decides only on a tie of every field before it,
+// so no count can outweigh a higher criterion.
+type matchRank struct {
+	// GRPCRouteRule.Matches: characters in the service, then in the method.
+	// Both are zero for an HTTPRoute match, so where the two kinds share a
+	// host bucket a GRPCRoute match naming a service or method ranks first.
+	grpcService int
+	grpcMethod  int
+	// HTTPRouteRule.Matches: Exact, then PathPrefix by length, with
+	// RegularExpression (implementation-specific) placed between them.
+	pathType    int
+	pathLen     int
+	method      int
+	headers     int
+	queryParams int
 }
 
-// sortRulesByPrecedence sorts rules in descending priority order.
-// When priorities are equal, earlier rules (lower ruleIndex) win.
-func sortRulesByPrecedence(rules []*compiledRule) {
-	sort.SliceStable(rules, func(i, j int) bool {
-		if rules[i].priority != rules[j].priority {
-			return rules[i].priority > rules[j].priority
-		}
+const (
+	pathRankNone = iota
+	pathRankPrefix
+	pathRankRegex
+	pathRankExact
+)
 
-		return rules[i].ruleIndex < rules[j].ruleIndex
+func pathTypeRank(pathType PathMatchType) int {
+	switch pathType {
+	case PathMatchPathPrefix:
+		return pathRankPrefix
+	case PathMatchRegularExpression:
+		return pathRankRegex
+	case PathMatchExact:
+		return pathRankExact
+	default:
+		return pathRankNone
+	}
+}
+
+func rankMatch(match *RouteMatch) matchRank {
+	rank := matchRank{headers: len(match.Headers), queryParams: len(match.QueryParams)}
+
+	if match.Method != "" {
+		rank.method = 1
+	}
+
+	switch {
+	case match.GRPCMethod != nil:
+		rank.grpcService = len(match.GRPCMethod.Service)
+		rank.grpcMethod = len(match.GRPCMethod.Method)
+	case match.Path != nil:
+		rank.pathType = pathTypeRank(match.Path.Type)
+		rank.pathLen = len(match.Path.Value)
+	default:
+		// A match without a path matches as the spec's default, PathPrefix "/".
+		rank.pathType = pathRankPrefix
+		rank.pathLen = len("/")
+	}
+
+	return rank
+}
+
+func (r matchRank) compare(other matchRank) int {
+	return cmp.Or(
+		cmp.Compare(r.grpcService, other.grpcService),
+		cmp.Compare(r.grpcMethod, other.grpcMethod),
+		cmp.Compare(r.pathType, other.pathType),
+		cmp.Compare(r.pathLen, other.pathLen),
+		cmp.Compare(r.method, other.method),
+		cmp.Compare(r.headers, other.headers),
+		cmp.Compare(r.queryParams, other.queryParams),
+	)
+}
+
+// sortByPrecedence orders entries highest rank first. Equal ranks go to the
+// lower flattened rule index, which the converter assigns oldest route first,
+// then by {namespace}/{name}, then in rule order.
+func sortByPrecedence(entries []matchEntry) {
+	slices.SortFunc(entries, func(left, right matchEntry) int {
+		return cmp.Or(
+			right.rank.compare(left.rank),
+			cmp.Compare(left.compiled.ruleIndex, right.compiled.ruleIndex),
+			cmp.Compare(left.matchIdx, right.matchIdx),
+		)
 	})
 }
 
-// matchRules iterates through sorted rules and returns the first match.
-// Multiple matches within a rule are ORed.
-func matchRules(rules []*compiledRule, req *http.Request, hosts *hostOwners) *RouteResult {
-	for _, compiled := range rules {
+// matchRules returns the first entry, in precedence order, that the request
+// matches.
+func matchRules(entries []matchEntry, req *http.Request, hosts *hostOwners) *RouteResult {
+	for idx := range entries {
+		entry := &entries[idx]
+		compiled := entry.compiled
+
 		if !compiled.isolationAllows(hosts) {
 			continue
 		}
 
-		matchIdx := findMatchingIndex(compiled, req)
-		if matchIdx < 0 {
+		if entry.matcher != nil && !entry.matcher.Match(req) {
 			continue
 		}
 
@@ -739,7 +758,7 @@ func matchRules(rules []*compiledRule, req *http.Request, hosts *hostOwners) *Ro
 			Filters:        compiled.filters,
 			BackendFilters: backendFilters,
 			BackendIdx:     backendIdx,
-			MatchedPrefix:  getMatchedPathPrefix(compiled.rule, matchIdx),
+			MatchedPrefix:  getMatchedPathPrefix(compiled.rule, entry.matchIdx),
 		}
 	}
 
@@ -759,22 +778,6 @@ func getMatchedPathPrefix(rule *RouteRule, matchIdx int) string {
 	}
 
 	return ""
-}
-
-// findMatchingIndex returns the index of the first compiled match that matches the request,
-// or -1 if no match is found. A rule with no match conditions returns 0 (matches everything).
-func findMatchingIndex(compiled *compiledRule, req *http.Request) int {
-	if len(compiled.matches) == 0 {
-		return 0
-	}
-
-	for idx, match := range compiled.matches {
-		if match.Match(req) {
-			return idx
-		}
-	}
-
-	return -1
 }
 
 // selectBackend picks a backend using weighted random selection.

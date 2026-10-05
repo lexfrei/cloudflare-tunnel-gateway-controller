@@ -215,7 +215,7 @@ func convertRoutesGeneric[R metav1.Object](
 // cannot read.
 func ruleMatchesCompile(rule *RouteRule, sink *diagSink) bool {
 	for matchIdx := range rule.Matches {
-		_, err := CompileMatch(rule.Matches[matchIdx])
+		_, err := CompileMatch(&rule.Matches[matchIdx])
 		if err != nil {
 			sink.add(
 				DiagnosticAccepted,

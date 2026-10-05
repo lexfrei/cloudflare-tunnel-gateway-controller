@@ -320,9 +320,9 @@ func TestRouter_DefaultRules(t *testing.T) {
 }
 
 // TestRouter_RegexPathOutranksPrefix pins the implementation-specific path-type
-// precedence (exact > regex > prefix) documented at computePriority and in
-// docs/gateway-api/limitations.md, so the priority constants and the comment
-// cannot silently re-drift.
+// precedence (exact > regex > prefix) documented at matchRank and in
+// docs/gateway-api/limitations.md, so the code and those docs cannot silently
+// drift apart.
 func TestRouter_RegexPathOutranksPrefix(t *testing.T) {
 	t.Parallel()
 
