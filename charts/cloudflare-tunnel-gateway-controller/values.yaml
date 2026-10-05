@@ -556,7 +556,9 @@ proxy:
   # would otherwise reject by Host. The edge forwards arbitrary `X-*`
   # headers from any client, so enabling this in production lets a client
   # that reaches one hostname be served by a different hostname's backend,
-  # with the intended hostname's edge policy never evaluated. Applies to the
+  # with the intended hostname's edge policy never evaluated. It also trusts
+  # `X-Original-Proto` and `X-Original-Port` as the request scheme and port,
+  # which pick the listener a request is matched on. Applies to the
   # shared plane and to every per-Gateway data plane the controller renders;
   # GatewayConfig cannot turn it on.
   allowXOriginalHost: false

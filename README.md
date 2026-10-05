@@ -149,8 +149,8 @@ Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute or GRP
 | `spec.listeners` | ✅ | Fully processed for route binding and status |
 | `spec.listeners[].name` | ✅ | Used for route binding, status reporting, attached route counting |
 | `spec.listeners[].protocol` | ✅ | HTTP/HTTPS listeners bind HTTPRoute and GRPCRoute |
-| `spec.listeners[].port` | ✅ | Used for route binding when route specifies a port, and as the redirect port of a scheme-less `RequestRedirect` ([redirect port](https://cf.k8s.lex.la/latest/gateway-api/limitations/#redirect-port)) |
-| `spec.listeners[].hostname` | ✅ | Routes must have intersecting hostnames; a host is served only by routes on the most specific listener that matches it ([listener isolation](https://cf.k8s.lex.la/latest/gateway-api/limitations/#listener-isolation)) |
+| `spec.listeners[].port` | ✅ | A request is served only by routes on a listener with the port it arrived on: 80 for HTTP and 443 for HTTPS unless the URL names another port the edge proxies ([listener ports and schemes](https://cf.k8s.lex.la/latest/gateway-api/limitations/#listener-ports-and-schemes)) |
+| `spec.listeners[].hostname` | ✅ | Routes must have intersecting hostnames; a request is served only by routes on the most specific listener that matches its host and port ([listener isolation](https://cf.k8s.lex.la/latest/gateway-api/limitations/#listener-isolation)) |
 | `spec.listeners[].tls` | ✅ | CertificateRefs validated with ReferenceGrant support |
 | `spec.listeners[].allowedRoutes` | ✅ | Namespace (Same/All/Selector) and kind filtering |
 | `spec.tls.frontend` | ❌ | Refused: the Gateway is `Accepted=False` and its routes are not served; validate client certificates at the Cloudflare edge instead ([details](https://cf.k8s.lex.la/latest/gateway-api/limitations/#client-certificate-validation-spectlsfrontend-is-refused)) |
@@ -189,6 +189,7 @@ The L7 proxy handles routing for every tunnel request, so most Gateway API behav
 
 - Edge-side constraints — Cloudflare hostname registration and edge HTTPS termination apply to all traffic.
 - A Gateway that sets `spec.tls.frontend` (client certificate validation) is refused, because clients complete TLS with the Cloudflare edge; require client certificates at the edge instead.
+- A route answers only requests on its listener's port, so a Gateway with only an `HTTP` listener on 80 gets a 404 for HTTPS traffic; add an `HTTPS` listener on 443 to serve it. The port is taken from `Host` as the client sent it, so it separates traffic but is not an access boundary.
 - gRPC requires Cloudflare zone gRPC proxying enabled (dashboard → Network → gRPC); otherwise the edge returns `403` zone-wide for `application/grpc`.
 - `BackendTLSPolicy` (proxy → backend TLS) is supported at minimum-viable scope: explicit `CACertificateRefs` only, `Hostname` and `URI` SANs, backend mTLS via the Gateway's `clientCertificateRef`.
 - Backend WebSocket via `appProtocol: kubernetes.io/ws` (and `/wss` with a `BackendTLSPolicy`).

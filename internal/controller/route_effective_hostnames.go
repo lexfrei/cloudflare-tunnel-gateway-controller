@@ -31,14 +31,13 @@ type servedHostname struct {
 	hostname gatewayv1.Hostname
 	// gateway is the "namespace/name" of the listener's Gateway, the parent
 	// Gateway for a ListenerSet entry.
-	gateway string
-	// listener is the listener's own hostname, "" when it has none.
-	listener string
+	gateway  string
+	listener proxy.Listener
 }
 
 // routeListeners maps a route to the listeners it is attached through, in
 // the shape of proxy.RouteRule.Listeners.
-type routeListeners map[types.NamespacedName]map[string][]string
+type routeListeners map[types.NamespacedName]map[string][]proxy.Listener
 
 // withEffectiveHostnames returns copies of the given routes whose
 // Spec.Hostnames is narrowed to the hostname scope of the listeners the route
@@ -252,9 +251,9 @@ func collectEffectiveListenerHostnames(
 	route Route,
 	views *listenerViewCache,
 	served func(gateway string) bool,
-) ([]gatewayv1.Hostname, bool, map[string][]string, error) {
+) ([]gatewayv1.Hostname, bool, map[string][]proxy.Listener, error) {
 	seen := make(map[gatewayv1.Hostname]struct{})
-	listeners := make(map[string][]string)
+	listeners := make(map[string][]proxy.Listener)
 
 	var out []gatewayv1.Hostname
 
@@ -393,6 +392,12 @@ func logUndecidedParent(ctx context.Context, level slog.Level, message, kind str
 	logging.FromContext(ctx).Log(ctx, level, message, "route", name, "error", err)
 }
 
+// effectiveHostnamesForParentRef resolves one parentRef to a managed Gateway
+// or ListenerSet, builds the RouteInfo (carrying the route's real hostnames so
+// the binding validator filters listeners accurately) and returns what the
+// listeners accepting the route lend it. A non-nil error means the parent
+// exists but could not be evaluated, as opposed to one that is absent,
+// foreign or rejects the route.
 func effectiveHostnamesForParentRef(
 	ctx context.Context,
 	cli client.Client,
@@ -402,61 +407,6 @@ func effectiveHostnamesForParentRef(
 	ref gatewayv1.ParentReference,
 	views *listenerViewCache,
 ) ([]servedHostname, error) {
-	return resolveParentRefListeners(ctx, cli, controllerName, validator, route, ref, views,
-		gatewayEffectiveHostnames, listenerSetEffectiveHostnames)
-}
-
-// gatewayListenerBranch and listenerSetListenerBranch are the two per-parentRef
-// resolvers resolveParentRefListeners delegates to once a parentRef resolves to
-// a managed Gateway or ListenerSet respectively. Each extracts the per-listener
-// value the caller wants (hostname intersections, listener protocols, …) from
-// an accepted binding. A non-nil error means the parent exists but could not be
-// evaluated, as opposed to one that is absent, foreign or rejects the route.
-type (
-	gatewayListenerBranch[T any] func(
-		ctx context.Context,
-		cli client.Client,
-		controllerName string,
-		validator *routebinding.Validator,
-		namespace, name string,
-		routeInfo *routebinding.RouteInfo,
-		views *listenerViewCache,
-	) ([]T, error)
-
-	listenerSetListenerBranch[T any] func(
-		ctx context.Context,
-		cli client.Client,
-		controllerName string,
-		validator *routebinding.Validator,
-		namespace, name string,
-		routeInfo *routebinding.RouteInfo,
-		views *listenerViewCache,
-	) ([]T, error)
-)
-
-// resolveParentRefListeners is the shared parentRef → managed Gateway /
-// ListenerSet resolution used by both the hostname-intersection and
-// redirect-scheme passes. It applies the same group / kind / namespace
-// resolution and builds the RouteInfo (carrying the route's real hostnames so
-// the binding validator filters listeners accurately), then delegates to the
-// Gateway or ListenerSet branch. Only the per-listener value each pass extracts
-// differs, so the two passes share this preamble via the T parameter instead of
-// duplicating it.
-//
-// controllerName reaches the branches because the GatewayClass check needs the
-// resolved Gateway, which only they hold — a ListenerSet's class lives on its
-// parent Gateway, not on the ListenerSet.
-func resolveParentRefListeners[T any](
-	ctx context.Context,
-	cli client.Client,
-	controllerName string,
-	validator *routebinding.Validator,
-	route Route,
-	ref gatewayv1.ParentReference,
-	views *listenerViewCache,
-	gatewayBranch gatewayListenerBranch[T],
-	listenerSetBranch listenerSetListenerBranch[T],
-) ([]T, error) {
 	if !parentref.InGatewayAPIGroup(ref) {
 		return nil, nil
 	}
@@ -482,9 +432,9 @@ func resolveParentRefListeners[T any](
 
 	switch kind {
 	case kindGateway:
-		return gatewayBranch(ctx, cli, controllerName, validator, namespace, string(ref.Name), routeInfo, views)
+		return gatewayEffectiveHostnames(ctx, cli, controllerName, validator, namespace, string(ref.Name), routeInfo, views)
 	case kindListenerSet:
-		return listenerSetBranch(ctx, cli, controllerName, validator, namespace, string(ref.Name), routeInfo, views)
+		return listenerSetEffectiveHostnames(ctx, cli, controllerName, validator, namespace, string(ref.Name), routeInfo, views)
 	}
 
 	return nil, nil
@@ -517,12 +467,13 @@ func gatewayEffectiveHostnames(
 		return nil, incompleteBindingError(result)
 	}
 
-	hostByName := make(map[gatewayv1.SectionName]*gatewayv1.Hostname, len(gateway.Spec.Listeners))
+	byName := make(map[gatewayv1.SectionName]sectionListener, len(gateway.Spec.Listeners))
 	for i := range gateway.Spec.Listeners {
-		hostByName[gateway.Spec.Listeners[i].Name] = gateway.Spec.Listeners[i].Hostname
+		listener := &gateway.Spec.Listeners[i]
+		byName[listener.Name] = sectionListener{hostname: listener.Hostname, port: listener.Port}
 	}
 
-	return effectiveHostnamesForSections(result.MatchedListeners, hostByName, routeInfo.Hostnames,
+	return effectiveHostnamesForSections(result.MatchedListeners, byName, routeInfo.Hostnames,
 		client.ObjectKeyFromObject(&gateway).String()), incompleteBindingError(result)
 }
 
@@ -564,17 +515,18 @@ func listenerSetEffectiveHostnames(
 
 	matched := nonConflictedSections(ctx, cli, &listenerSet, result.MatchedListeners, views)
 
-	hostByName := make(map[gatewayv1.SectionName]*gatewayv1.Hostname, len(listenerSet.Spec.Listeners))
+	byName := make(map[gatewayv1.SectionName]sectionListener, len(listenerSet.Spec.Listeners))
 	for i := range listenerSet.Spec.Listeners {
-		hostByName[listenerSet.Spec.Listeners[i].Name] = listenerSet.Spec.Listeners[i].Hostname
+		entry := &listenerSet.Spec.Listeners[i]
+		byName[entry.Name] = sectionListener{hostname: entry.Hostname, port: entry.Port}
 	}
 
-	return effectiveHostnamesForSections(matched, hostByName, routeInfo.Hostnames,
+	return effectiveHostnamesForSections(matched, byName, routeInfo.Hostnames,
 		listenerSetParentKey(&listenerSet).String()), incompleteBindingError(result)
 }
 
 // gatewayOwnedElsewhere reports whether the Gateway's GatewayClass names a
-// different controller. The hostname and redirect-scheme passes drop a parent
+// different controller. The hostname pass drops a parent
 // only on that answer. A missing or unreadable class is not evidence that the
 // Gateway is someone else's, and dropping our own Gateway on it would leave a
 // hostname-less route answering every Host. GatewayInfraReconciler reads the
@@ -592,7 +544,7 @@ func gatewayOwnedElsewhere(
 
 	state, err := classifyGatewayClass(ctx, cli, gateway, controllerName)
 	if err != nil {
-		logging.FromContext(ctx).Debug("GatewayClass unreadable, Gateway still treated as ours for hostnames and redirect scheme",
+		logging.FromContext(ctx).Debug("GatewayClass unreadable, Gateway still treated as ours for hostnames",
 			"error", err,
 			"gateway", gateway.Namespace+"/"+gateway.Name,
 			"gatewayClassName", string(gateway.Spec.GatewayClassName))
@@ -602,7 +554,7 @@ func gatewayOwnedElsewhere(
 }
 
 // listenerSetExcluded reports whether a ListenerSet must contribute nothing to
-// the hostname and redirect-scheme passes: it belongs to another controller,
+// the hostname pass: it belongs to another controller,
 // or its parent Gateway's spec.allowedListeners refuses it. Route acceptance
 // rejects a parentRef to a refused ListenerSet (resolveListenerSetParentBinding),
 // so its entries are not served here either.
@@ -643,9 +595,8 @@ func listenerSetExcluded(
 
 // nonConflictedSections drops, from sections, any matched listener whose
 // merged-view entry (across the parent Gateway and its sibling ListenerSets) is
-// conflicted and therefore not programmed. A route binds to neither the
-// hostname nor the protocol of a conflicted listener, so both the
-// hostname-inheritance and redirect-scheme passes route their accepted
+// conflicted and therefore not programmed. A route binds to nothing a
+// conflicted listener lends, so the hostname pass routes its accepted
 // sections through this. An unresolvable parent Gateway returns the input
 // sections unchanged, which is best-effort and now rarely reached: the class
 // filter resolves the same parent earlier and contributes nothing when it
@@ -697,20 +648,21 @@ func dropConflictedSections(
 // gateway names the Gateway the listeners belong to.
 func effectiveHostnamesForSections(
 	sections []gatewayv1.SectionName,
-	hostByName map[gatewayv1.SectionName]*gatewayv1.Hostname,
+	byName map[gatewayv1.SectionName]sectionListener,
 	routeHostnames []gatewayv1.Hostname,
 	gateway string,
 ) []servedHostname {
 	var out []servedHostname
 
 	for _, section := range sections {
-		listenerHostname, ok := hostByName[section]
+		listener, ok := byName[section]
 		if !ok {
 			continue
 		}
 
+		listenerHostname := listener.hostname
 		served := func(hostname gatewayv1.Hostname) {
-			out = append(out, servedHostname{hostname: hostname, gateway: gateway, listener: listenerHostnameOf(listenerHostname)})
+			out = append(out, servedHostname{hostname: hostname, gateway: gateway, listener: proxyListener(listenerHostname, listener.port)})
 		}
 
 		// A hostname-less route accepted by a hostname-less listener serves
@@ -731,12 +683,19 @@ func effectiveHostnamesForSections(
 	return out
 }
 
-// listenerHostnameOf renders a listener hostname the way the proxy config
-// carries it: lowercase, "" for a listener without one.
-func listenerHostnameOf(hostname *gatewayv1.Hostname) string {
-	if hostname == nil {
-		return ""
+// sectionListener is what a listener section lends the routes it accepts.
+type sectionListener struct {
+	hostname *gatewayv1.Hostname
+	port     gatewayv1.PortNumber
+}
+
+// proxyListener renders a listener the way the proxy config carries it: a
+// lowercase hostname, "" for a listener without one, and its port.
+func proxyListener(hostname *gatewayv1.Hostname, port gatewayv1.PortNumber) proxy.Listener {
+	listener := proxy.Listener{Port: port}
+	if hostname != nil {
+		listener.Hostname = strings.ToLower(string(*hostname))
 	}
 
-	return strings.ToLower(string(*hostname))
+	return listener
 }

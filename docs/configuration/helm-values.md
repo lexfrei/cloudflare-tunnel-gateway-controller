@@ -111,7 +111,7 @@ The `proxy` section configures the in-process L7 reverse proxy. The proxy embeds
 | `proxy.configAPIPort` | int | `8081` | Port where the controller pushes configuration, for the shared plane and every per-Gateway plane |
 | `proxy.configAPITLS.enabled` | bool | `true` | Serve the config API (and the probes and `/metrics` that share its port) over TLS with certificates the controller issues from its own runtime-generated CA; `false` keeps plain HTTP ([Config API TLS](../reference/security.md#config-api-tls)) |
 | `proxy.proxyPort` | int | `8080` | Internal proxy port (tunnel traffic arrives here) |
-| `proxy.allowXOriginalHost` | bool | `false` | Trust the client-supplied `X-Original-Host` header as the routing key and backend `Host`. Test deployments only — leaving it on in production lets a client be served by another hostname's backend ([details](../guides/l7-proxy.md)). Also applies to per-Gateway data planes |
+| `proxy.allowXOriginalHost` | bool | `false` | Trust the client-supplied `X-Original-Host` header as the routing key and backend `Host`, and `X-Original-Proto` / `X-Original-Port` as the request scheme and port. Test deployments only — leaving it on in production lets a client be served by another hostname's backend ([details](../guides/l7-proxy.md)). Also applies to per-Gateway data planes |
 
 ### Tunnel Token (required)
 

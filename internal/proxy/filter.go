@@ -72,6 +72,21 @@ const hostRewrittenHeader = "X-Proxy-Host-Rewritten"
 // only when the handler was built with WithAllowXOriginalHost.
 const originalHostHeader = "X-Original-Host"
 
+// originalProtoHeader is originalHostHeader's twin for the scheme: the test
+// zone redirects plain HTTP to HTTPS at the edge, so the suite reaches an HTTP
+// listener over HTTPS and names the scheme it meant here. Same trust rule.
+const originalProtoHeader = "X-Original-Proto"
+
+// originalPortHeader carries the port the suite connected to, which a Host
+// the suite sets may contradict: per the Gateway API that port, not the one
+// in Host, picks the listener. Same trust rule.
+const originalPortHeader = "X-Original-Port"
+
+const (
+	httpDefaultPort  = 80
+	httpsDefaultPort = 443
+)
+
 // SetMatchedPrefix returns a shallow copy of req with the matched path prefix
 // stored in its context. The original request is NOT modified.
 // Used by URL rewrite filters for ReplacePrefixMatch.
@@ -188,17 +203,23 @@ func (f *requestRedirect) buildRedirectURL(req *http.Request) string {
 }
 
 // buildRedirectBase constructs the base URL (scheme + host) for a redirect.
+// Per the Gateway API, an empty scheme is the scheme of the request, and with
+// both scheme and port empty the port is the listener's, which is the port
+// the request arrived on: listener isolation matched it by that port. That
+// port is left out of Location when it is the scheme's default; an explicit
+// Port is always written.
 func buildRedirectBase(req *http.Request, config *RedirectConfig) *url.URL {
-	// Per spec, an empty redirect scheme means "the scheme of the request".
-	// Behind the tunnel cloudflared terminates TLS at the edge, so the origin
-	// request carries no usable scheme — the controller resolves the intended
-	// scheme from the parent listener's protocol and stamps it into
-	// config.Scheme (see withDefaultRedirectScheme). This https fallback only
-	// applies when neither an explicit nor a listener-resolved scheme is
-	// available (e.g. no managed parent resolved the route).
-	scheme := req.URL.Scheme
-	if scheme == "" {
-		scheme = schemeHTTPS
+	scheme := requestScheme(req)
+
+	var port int32
+
+	switch {
+	case config.Port != nil:
+		port = *config.Port
+	case config.Scheme == nil:
+		if arrived := requestPort(req); arrived != defaultPort(scheme) {
+			port = arrived
+		}
 	}
 
 	if config.Scheme != nil {
@@ -214,8 +235,8 @@ func buildRedirectBase(req *http.Request, config *RedirectConfig) *url.URL {
 	hostname = stripPort(hostname)
 
 	host := hostname
-	if config.Port != nil {
-		host = fmt.Sprintf("%s:%d", hostname, *config.Port)
+	if port != 0 {
+		host = fmt.Sprintf("%s:%d", hostname, port)
 	}
 
 	return &url.URL{
@@ -474,6 +495,8 @@ func (f *requestMirror) ProcessRequest(req *http.Request) *http.Response {
 	// the plain and upgrade legs.
 	tmpl.Header.Del(hostRewrittenHeader)
 	tmpl.Header.Del(originalHostHeader)
+	tmpl.Header.Del(originalProtoHeader)
+	tmpl.Header.Del(originalPortHeader)
 	// The client's hop-by-hop headers describe its connection to this proxy,
 	// not the mirror leg's; the primary leg drops them too. Like the primary
 	// leg, set the forwarding headers afterwards, so a client naming them in

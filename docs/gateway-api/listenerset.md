@@ -15,9 +15,9 @@ metadata:
 spec:
   gatewayClassName: cloudflare-tunnel
   listeners:
-    - name: http
-      port: 80
-      protocol: HTTP
+    - name: https
+      port: 443
+      protocol: HTTPS
       hostname: shared.example.com
       allowedRoutes:
         namespaces:
@@ -41,9 +41,9 @@ spec:
     kind: Gateway
     name: shared-gateway
   listeners:
-    - name: team-a-http
-      port: 80
-      protocol: HTTP
+    - name: team-a-https
+      port: 443
+      protocol: HTTPS
       hostname: team-a.example.com
       allowedRoutes:
         namespaces:
@@ -91,9 +91,9 @@ A `ListenerSet` is successfully attached to a Gateway when:
 
 The Gateway's `status.attachedListenerSets` field is the count of ListenerSets meeting all three criteria, and 0 while the Gateway is refused. When the controller cannot finish that count, for example because a ListenerSet's namespace or a certificate Secret cannot be read, the Gateway keeps the count it had and the controller counts again.
 
-### Hostnames and redirect schemes from a ListenerSet
+### Hostnames from a ListenerSet
 
-A route bound through a `ListenerSet` can inherit a hostname and a redirect scheme from its entries only while the parent Gateway exists, can be read, and is not managed by a different Gateway API implementation. A ListenerSet names no GatewayClass of its own, so its parent Gateway's class decides whose it is. If the parent Gateway is absent, or its class names another controller, the entries lend no hostname to a route bound through it and no protocol or port to a scheme-less redirect. If the controller cannot evaluate the ListenerSet or its parent Gateway, the entries lend nothing either, so a route bound through it serves only what its other parents lend until the controller can, or nothing when none lends a hostname; [Routes attached to another implementation's Gateway](limitations.md#routes-attached-to-another-implementations-gateway) lists the causes and the status the route carries meanwhile. A parent whose class is missing or cannot be read at that moment is not treated as another implementation's, so its ListenerSets keep lending hostnames and redirect defaults.
+A route bound through a `ListenerSet` can inherit a hostname from its entries only while the parent Gateway exists, can be read, and is not managed by a different Gateway API implementation. A ListenerSet names no GatewayClass of its own, so its parent Gateway's class decides whose it is. If the parent Gateway is absent, or its class names another controller, the entries lend no hostname to a route bound through it. If the controller cannot evaluate the ListenerSet or its parent Gateway, the entries lend nothing either, so a route bound through it serves only what its other parents lend until the controller can, or nothing when none lends a hostname; [Routes attached to another implementation's Gateway](limitations.md#routes-attached-to-another-implementations-gateway) lists the causes and the status the route carries meanwhile. A parent whose class is missing or cannot be read at that moment is not treated as another implementation's, so its ListenerSets keep lending hostnames.
 
 ## Precedence and conflict resolution
 
@@ -178,6 +178,6 @@ This is an external-dns behaviour, not a controller limitation — the controlle
 
 ## Tunnel-specific notes
 
-Cloudflare Tunnel is a single ingress point — `port`, `protocol`, and `tls` on Gateway listeners are accepted for spec compliance but the real TLS termination happens at Cloudflare's edge. The same constraint applies to ListenerSet listeners: per-ListenerSet TLS certificate refs are validated for status (`ResolvedRefs`, including ReferenceGrant for cross-namespace refs), never served — TLS terminates at the Cloudflare edge with Cloudflare's certificates, and parent listener secrets are never readable through a child ListenerSet. Multi-port and protocol-specific behaviour (TCP/UDP) is not supported.
+Cloudflare Tunnel is a single ingress point — `protocol` and `tls` on Gateway listeners are accepted for spec compliance but the real TLS termination happens at Cloudflare's edge, while `port` selects the requests a listener serves ([listener ports and schemes](limitations.md#listener-ports-and-schemes)). The same constraint applies to ListenerSet listeners: per-ListenerSet TLS certificate refs are validated for status (`ResolvedRefs`, including ReferenceGrant for cross-namespace refs), never served — TLS terminates at the Cloudflare edge with Cloudflare's certificates, and parent listener secrets are never readable through a child ListenerSet. TCP and UDP listeners are not supported.
 
 For the full tenant self-service pattern (Selector delegation, hostname-ownership enforcement, collision detection), see the [Multi-Tenancy guide](../guides/multi-tenancy.md).

@@ -459,6 +459,8 @@ func TestHandler_WebSocketUpgradeStripsProxyOnlyHeaders(t *testing.T) {
 	req.Header.Set("Sec-WebSocket-Version", "13")
 	req.Header.Set("Sec-WebSocket-Key", rfc6455SampleWSKey)
 	req.Header.Set("X-Original-Host", "ws.example.com")
+	req.Header.Set("X-Original-Proto", "http")
+	req.Header.Set("X-Original-Port", "80")
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, req)
@@ -467,6 +469,10 @@ func TestHandler_WebSocketUpgradeStripsProxyOnlyHeaders(t *testing.T) {
 	case headers := <-gotHeaders:
 		assert.Empty(t, headers.Get("X-Original-Host"),
 			"the backend must not receive the conformance host-carrier header")
+		assert.Empty(t, headers.Get("X-Original-Proto"),
+			"the backend must not receive the conformance scheme-carrier header")
+		assert.Empty(t, headers.Get("X-Original-Port"),
+			"the backend must not receive the conformance port-carrier header")
 		assert.Empty(t, headers.Get("X-Proxy-Host-Rewritten"),
 			"the backend must not receive the proxy's internal rewrite marker")
 	case <-time.After(5 * time.Second):
@@ -575,6 +581,8 @@ func TestHandler_MirrorLegStripsProxyOnlyHeaders(t *testing.T) {
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.example.com/", nil)
 	req.Header.Set("X-Original-Host", "app.example.com")
+	req.Header.Set("X-Original-Proto", "http")
+	req.Header.Set("X-Original-Port", "80")
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, req)
@@ -585,6 +593,10 @@ func TestHandler_MirrorLegStripsProxyOnlyHeaders(t *testing.T) {
 			"the mirror backend must not receive the proxy's internal rewrite marker")
 		assert.Empty(t, headers.Get("X-Original-Host"),
 			"the mirror backend must not receive the host-carrier header either")
+		assert.Empty(t, headers.Get("X-Original-Proto"),
+			"the mirror backend must not receive the scheme-carrier header either")
+		assert.Empty(t, headers.Get("X-Original-Port"),
+			"the mirror backend must not receive the port-carrier header either")
 	case <-time.After(5 * time.Second):
 		t.Fatal("mirror backend never received the request")
 	}
@@ -2146,14 +2158,19 @@ func TestHandler_XOriginalHostRestoredWithoutRewrite(t *testing.T) {
 	t.Parallel()
 
 	type hostObservation struct {
-		host          string
-		xOriginalHost string
+		host           string
+		xOriginalHost  string
+		xOriginalProto string
+		xOriginalPort  string
 	}
 
 	received := make(chan hostObservation, 1)
 
 	backend := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, req *http.Request) {
-		received <- hostObservation{host: req.Host, xOriginalHost: req.Header.Get("X-Original-Host")}
+		received <- hostObservation{
+			host: req.Host, xOriginalHost: req.Header.Get("X-Original-Host"), xOriginalProto: req.Header.Get("X-Original-Proto"),
+			xOriginalPort: req.Header.Get("X-Original-Port"),
+		}
 		writer.WriteHeader(http.StatusOK)
 	}))
 	defer backend.Close()
@@ -2178,6 +2195,8 @@ func TestHandler_XOriginalHostRestoredWithoutRewrite(t *testing.T) {
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://edge.cloudflare.com/test", nil)
 	req.Header.Set("X-Original-Host", "app.example.com")
+	req.Header.Set("X-Original-Proto", "http")
+	req.Header.Set("X-Original-Port", "80")
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, req)
@@ -2189,4 +2208,8 @@ func TestHandler_XOriginalHostRestoredWithoutRewrite(t *testing.T) {
 		"X-Original-Host must be restored as the backend-facing Host")
 	assert.Empty(t, obs.xOriginalHost,
 		"the X-Original-Host transport header must be stripped before the backend")
+	assert.Empty(t, obs.xOriginalProto,
+		"the X-Original-Proto transport header must be stripped before the backend")
+	assert.Empty(t, obs.xOriginalPort,
+		"the X-Original-Port transport header must be stripped before the backend")
 }

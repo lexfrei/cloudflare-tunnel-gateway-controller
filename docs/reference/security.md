@@ -244,7 +244,7 @@ The proxy passes the forwarding headers it receives on to the backend instead of
 - `Forwarded`, `X-Forwarded-Host` and `X-Forwarded-Proto` reach the backend as the proxy received them.
 - `X-Forwarded-For` reaches the backend with the address of the connection the request arrived on appended, when that address is known. That happens after the filter, so a removed `X-Forwarded-For` comes back holding only that address. A WebSocket upgrade and a request mirror's copy get the same treatment.
 - The client's hop-by-hop headers, the RFC 7230 set (`Proxy-Authorization` among them) plus any header `Connection` names, are removed, apart from the forwarding headers above. `TE: trailers` is kept, and a WebSocket upgrade to a WebSocket-enabled backend carries `Connection: Upgrade` and `Upgrade` for the handshake.
-- `X-Original-Host` and the proxy's internal `X-Proxy-Host-Rewritten` marker are removed before any request reaches a backend.
+- `X-Original-Host`, `X-Original-Proto`, `X-Original-Port` and the proxy's internal `X-Proxy-Host-Rewritten` marker are removed before any request reaches a backend.
 - Other end-to-end request headers pass through.
 
 The Cloudflare edge forwards arbitrary `X-*` headers from any client, and apart from the removals above the proxy does not rewrite them, so a backend should not trust them as a statement from the edge:

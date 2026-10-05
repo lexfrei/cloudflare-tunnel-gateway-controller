@@ -15,9 +15,19 @@ const isolationGateway = "infra/gw"
 
 // conformanceListeners are the listeners of the upstream
 // GatewayHTTPListenerIsolation conformance test.
-var conformanceListeners = []string{"", "*.example.com", "*.foo.example.com", "abc.foo.example.com"}
+var conformanceListeners = hostListeners("", "*.example.com", "*.foo.example.com", "abc.foo.example.com")
 
-func isolationRule(path string, hostnames []string, listeners map[string][]string) proxy.RouteRule {
+// hostListeners returns listeners compared on hostname alone.
+func hostListeners(hostnames ...string) []proxy.Listener {
+	out := make([]proxy.Listener, 0, len(hostnames))
+	for _, hostname := range hostnames {
+		out = append(out, proxy.Listener{Hostname: hostname})
+	}
+
+	return out
+}
+
+func isolationRule(path string, hostnames []string, listeners map[string][]proxy.Listener) proxy.RouteRule {
 	return proxy.RouteRule{
 		Hostnames: hostnames,
 		Listeners: listeners,
@@ -64,14 +74,14 @@ func assertOwnership(t *testing.T, router *proxy.Router, owners map[string]strin
 func TestRouter_ListenerIsolation(t *testing.T) {
 	t.Parallel()
 
-	attached := func(listener string) map[string][]string {
-		return map[string][]string{isolationGateway: {listener}}
+	attached := func(listener string) map[string][]proxy.Listener {
+		return map[string][]proxy.Listener{isolationGateway: hostListeners(listener)}
 	}
 
 	router := proxy.NewRouter()
 	require.NoError(t, router.UpdateConfig(&proxy.Config{
-		Version:           1,
-		ListenerHostnames: map[string][]string{isolationGateway: conformanceListeners},
+		Version:          1,
+		GatewayListeners: map[string][]proxy.Listener{isolationGateway: conformanceListeners},
 		Rules: []proxy.RouteRule{
 			isolationRule("/empty", nil, attached("")),
 			isolationRule("/wild", []string{"*.example.com"}, attached("*.example.com")),
@@ -97,13 +107,13 @@ func TestRouter_ListenerIsolationWithHostnameIntersection(t *testing.T) {
 
 	router := proxy.NewRouter()
 	require.NoError(t, router.UpdateConfig(&proxy.Config{
-		Version:           1,
-		ListenerHostnames: map[string][]string{isolationGateway: conformanceListeners},
+		Version:          1,
+		GatewayListeners: map[string][]proxy.Listener{isolationGateway: conformanceListeners},
 		Rules: []proxy.RouteRule{
 			isolationRule("/empty", []string{"bar.com", "*.example.com", "*.foo.example.com", "abc.foo.example.com"},
-				map[string][]string{isolationGateway: {""}}),
+				map[string][]proxy.Listener{isolationGateway: hostListeners("")}),
 			isolationRule("/wild", []string{"*.example.com", "*.foo.example.com", "abc.foo.example.com"},
-				map[string][]string{isolationGateway: {"*.example.com"}}),
+				map[string][]proxy.Listener{isolationGateway: hostListeners("*.example.com")}),
 		},
 	}))
 
@@ -124,10 +134,10 @@ func TestRouter_ListenerIsolationCatchAllWithNestedListener(t *testing.T) {
 
 	router := proxy.NewRouter()
 	require.NoError(t, router.UpdateConfig(&proxy.Config{
-		Version:           1,
-		ListenerHostnames: map[string][]string{isolationGateway: conformanceListeners},
+		Version:          1,
+		GatewayListeners: map[string][]proxy.Listener{isolationGateway: conformanceListeners},
 		Rules: []proxy.RouteRule{
-			isolationRule("/any", nil, map[string][]string{isolationGateway: {"", "*.foo.example.com"}}),
+			isolationRule("/any", nil, map[string][]proxy.Listener{isolationGateway: hostListeners("", "*.foo.example.com")}),
 		},
 	}))
 
@@ -149,15 +159,15 @@ func TestRouter_ListenerIsolationIsPerGateway(t *testing.T) {
 	router := proxy.NewRouter()
 	require.NoError(t, router.UpdateConfig(&proxy.Config{
 		Version: 1,
-		ListenerHostnames: map[string][]string{
-			isolationGateway: {"*.example.com", "foo.example.com"},
-			other:            {"*.example.com"},
+		GatewayListeners: map[string][]proxy.Listener{
+			isolationGateway: hostListeners("*.example.com", "foo.example.com"),
+			other:            hostListeners("*.example.com"),
 		},
 		Rules: []proxy.RouteRule{
-			isolationRule("/one", []string{"*.example.com"}, map[string][]string{isolationGateway: {"*.example.com"}}),
-			isolationRule("/both", []string{"*.example.com"}, map[string][]string{
-				isolationGateway: {"*.example.com"},
-				other:            {"*.example.com"},
+			isolationRule("/one", []string{"*.example.com"}, map[string][]proxy.Listener{isolationGateway: hostListeners("*.example.com")}),
+			isolationRule("/both", []string{"*.example.com"}, map[string][]proxy.Listener{
+				isolationGateway: hostListeners("*.example.com"),
+				other:            hostListeners("*.example.com"),
 			}),
 		},
 	}))
@@ -174,9 +184,9 @@ func TestRouter_RuleWithoutListenersIsNotIsolated(t *testing.T) {
 
 	router := proxy.NewRouter()
 	require.NoError(t, router.UpdateConfig(&proxy.Config{
-		Version:           1,
-		ListenerHostnames: map[string][]string{isolationGateway: conformanceListeners},
-		Rules:             []proxy.RouteRule{isolationRule("/any", nil, nil)},
+		Version:          1,
+		GatewayListeners: map[string][]proxy.Listener{isolationGateway: conformanceListeners},
+		Rules:            []proxy.RouteRule{isolationRule("/any", nil, nil)},
 	}))
 
 	assert.NotNil(t, routeHost(router, "abc.foo.example.com", "/any"))
@@ -189,10 +199,10 @@ func TestRouter_ListenerIsolationHostWithoutListener(t *testing.T) {
 
 	router := proxy.NewRouter()
 	require.NoError(t, router.UpdateConfig(&proxy.Config{
-		Version:           1,
-		ListenerHostnames: map[string][]string{isolationGateway: {"*.example.com"}},
+		Version:          1,
+		GatewayListeners: map[string][]proxy.Listener{isolationGateway: hostListeners("*.example.com")},
 		Rules: []proxy.RouteRule{
-			isolationRule("/any", nil, map[string][]string{isolationGateway: {"*.example.com"}}),
+			isolationRule("/any", nil, map[string][]proxy.Listener{isolationGateway: hostListeners("*.example.com")}),
 		},
 	}))
 
@@ -208,10 +218,10 @@ func TestRouter_ListenerIsolationUnknownGatewayIsNotIsolated(t *testing.T) {
 
 	router := proxy.NewRouter()
 	require.NoError(t, router.UpdateConfig(&proxy.Config{
-		Version:           1,
-		ListenerHostnames: map[string][]string{isolationGateway: conformanceListeners},
+		Version:          1,
+		GatewayListeners: map[string][]proxy.Listener{isolationGateway: conformanceListeners},
 		Rules: []proxy.RouteRule{
-			isolationRule("/any", []string{"*.example.com"}, map[string][]string{"infra/unread": {"*.example.com"}}),
+			isolationRule("/any", []string{"*.example.com"}, map[string][]proxy.Listener{"infra/unread": hostListeners("*.example.com")}),
 		},
 	}))
 

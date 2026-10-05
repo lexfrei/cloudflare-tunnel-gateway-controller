@@ -33,9 +33,9 @@ The Gateway resource is fully processed. Listeners are used for route binding, s
 | `spec.gatewayClassName` | Yes | Required; the referenced GatewayClass must have a matching `spec.controllerName` |
 | `spec.listeners` | Yes | Fully processed for route binding and status |
 | `spec.listeners[].name` | Yes | Used for route binding, status reporting, attached route counting |
-| `spec.listeners[].port` | Yes | Used for route binding when route specifies a port, and as the redirect port of a scheme-less `RequestRedirect` ([redirect port](limitations.md#redirect-port)) |
+| `spec.listeners[].port` | Yes | A request is served only by routes on a listener with the port it arrived on: 80 for HTTP and 443 for HTTPS unless the URL names another port the edge proxies ([listener ports and schemes](limitations.md#listener-ports-and-schemes)) |
 | `spec.listeners[].protocol` | Yes | Used for route kind filtering (HTTP/HTTPS allow HTTPRoute/GRPCRoute) |
-| `spec.listeners[].hostname` | Yes | Routes must have intersecting hostnames; a host is served only by routes on the most specific listener that matches it ([listener isolation](limitations.md#listener-isolation)) |
+| `spec.listeners[].hostname` | Yes | Routes must have intersecting hostnames; a request is served only by routes on the most specific listener that matches its host and port ([listener isolation](limitations.md#listener-isolation)) |
 | `spec.listeners[].tls` | Yes | CertificateRefs validated with ReferenceGrant support |
 | `spec.listeners[].allowedRoutes` | Yes | Namespace (Same/All/Selector) and kind filtering |
 | `spec.tls.backend.clientCertificateRef` | Yes | `kubernetes.io/tls` Secret only; same-namespace or via ReferenceGrant; presented during backend TLS handshake **only** when the target Service has a BackendTLSPolicy (no client cert is sent over plaintext) |
@@ -46,7 +46,7 @@ The Gateway resource is fully processed. Listeners are used for route binding, s
 
 !!! info "TLS Termination"
 
-    Cloudflare Tunnel terminates TLS at Cloudflare's edge network. TLS certificate references on listeners are validated (existence, ReferenceGrant for cross-namespace refs), but the actual TLS termination is handled by Cloudflare, not by the controller. The listener `port` and `protocol` fields are used for Gateway API route binding semantics, not for configuring network listeners.
+    Cloudflare Tunnel terminates TLS at Cloudflare's edge network. TLS certificate references on listeners are validated (existence, ReferenceGrant for cross-namespace refs), but the actual TLS termination is handled by Cloudflare, not by the controller. The listener `port` and `protocol` fields are used for Gateway API route binding semantics, not for configuring network listeners, and `port` also selects the requests a listener serves: those the edge received on that port ([listener ports and schemes](limitations.md#listener-ports-and-schemes)).
 
 ## HTTPRoute
 

@@ -31,17 +31,17 @@ func attachRuleListeners(cfg *proxy.Config, attached routeListeners) {
 	}
 }
 
-// gatewayListenerHostnames returns, for every Gateway a rule is attached to,
-// the hostnames of its programmed listeners, ListenerSet entries included. A
-// Gateway that cannot be read is left out, and the proxy then does not
-// isolate rules by that Gateway.
-func gatewayListenerHostnames(
+// gatewayListeners returns, for every Gateway a rule is attached to, its
+// programmed listeners, ListenerSet entries included. A Gateway that cannot
+// be read is left out, and the proxy then does not isolate rules by that
+// Gateway.
+func gatewayListeners(
 	ctx context.Context,
 	cli client.Client,
 	views *listenerViewCache,
 	rules []proxy.RouteRule,
-) map[string][]string {
-	out := make(map[string][]string)
+) map[string][]proxy.Listener {
+	out := make(map[string][]proxy.Listener)
 	unreadable := make(map[string]bool)
 
 	for idx := range rules {
@@ -50,26 +50,26 @@ func gatewayListenerHostnames(
 				continue
 			}
 
-			hostnames, ok := programmedListenerHostnames(ctx, cli, views, key)
+			listeners, ok := programmedListeners(ctx, cli, views, key)
 			if !ok {
 				unreadable[key] = true
 
 				continue
 			}
 
-			out[key] = hostnames
+			out[key] = listeners
 		}
 	}
 
 	return out
 }
 
-func programmedListenerHostnames(
+func programmedListeners(
 	ctx context.Context,
 	cli client.Client,
 	views *listenerViewCache,
 	key string,
-) ([]string, bool) {
+) ([]proxy.Listener, bool) {
 	namespace, name, _ := strings.Cut(key, "/")
 
 	var gateway gatewayv1.Gateway
@@ -90,18 +90,18 @@ func programmedListenerHostnames(
 		return nil, false
 	}
 
-	var hostnames []string
+	var listeners []proxy.Listener
 
 	for idx := range view.merged.Listeners {
 		listener := &view.merged.Listeners[idx]
-		value := listenerHostnameOf(listener.Hostname)
+		value := proxyListener(listener.Hostname, listener.Port)
 
-		if admitsRoutes(listener) && !slices.Contains(hostnames, value) {
-			hostnames = append(hostnames, value)
+		if admitsRoutes(listener) && !slices.Contains(listeners, value) {
+			listeners = append(listeners, value)
 		}
 	}
 
-	return hostnames, true
+	return listeners, true
 }
 
 // admitsRoutes reports whether a merged listener is one routes can attach to,

@@ -12,6 +12,10 @@ GRPCRoute enables routing gRPC traffic through Cloudflare Tunnel with service an
 
     Separate from the tunnel transport, the Cloudflare **zone** must have gRPC proxying enabled (dashboard → **Network → gRPC**). If it is disabled, the Cloudflare edge returns `403` with `content-type: text/html` zone-wide for every `application/grpc` request — upstream of the tunnel, so the request never reaches the proxy. The GRPCRoute still reports `Accepted=True` while every gRPC call fails with the opaque client error `rpc error: code = PermissionDenied ... received unexpected content-type "text/html"`. As a breadcrumb the controller emits a Normal Event (`reason: GRPCEdgeProxyingRequired`) on accepted GRPCRoutes naming this prerequisite. See [Limitations](limitations.md#grpc-requires-cloudflare-zone-grpc-proxying).
 
+!!! note "Attach GRPCRoutes to an HTTPS listener"
+
+    gRPC clients reach the Cloudflare edge over HTTPS, so their requests arrive on port 443 and are served only through a listener on that port. A GRPCRoute attached only to an `HTTP` listener on 80 gets no traffic; see [listener ports and schemes](limitations.md#listener-ports-and-schemes).
+
 ## Basic Example
 
 ```yaml

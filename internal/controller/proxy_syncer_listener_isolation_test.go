@@ -156,8 +156,12 @@ func TestProxySyncer_ListenerIsolation(t *testing.T) {
 	cfg, err := proxy.ParseConfig(wire)
 	require.NoError(t, err)
 
-	assert.ElementsMatch(t, []string{"", "*.example.com", "*.foo.example.com", "abc.foo.example.com"},
-		cfg.ListenerHostnames[isolationGatewayKey])
+	assert.ElementsMatch(t, []proxy.Listener{
+		{Port: 80},
+		{Hostname: "*.example.com", Port: 80},
+		{Hostname: "*.foo.example.com", Port: 80},
+		{Hostname: "abc.foo.example.com", Port: 80},
+	}, cfg.GatewayListeners[isolationGatewayKey])
 
 	assertListenerOwnership(t, cfg, map[string]string{
 		"bar.com":             "empty",
@@ -226,7 +230,7 @@ func TestProxySyncer_ListenerIsolationCountsListenerSetEntries(t *testing.T) {
 		lsRoute,
 	}, nil, nil, nil, clientCertParents{})
 
-	assert.Contains(t, cfg.ListenerHostnames[isolationGatewayKey], "bar.example.com")
+	assert.Contains(t, cfg.GatewayListeners[isolationGatewayKey], proxy.Listener{Hostname: "bar.example.com", Port: 80})
 	assert.Empty(t, answeringRoute(t, cfg, "bar.example.com", "wild"), "the entry owns its hostname")
 	assert.Equal(t, "entry", answeringRoute(t, cfg, "bar.example.com", "entry"))
 	assert.Equal(t, "wild", answeringRoute(t, cfg, "baz.example.com", "wild"))
@@ -259,7 +263,7 @@ func TestProxySyncer_ListenerIsolationGRPC(t *testing.T) {
 	cfg := syncer.buildProxyConfig(context.Background(), nil, []*gatewayv1.GRPCRoute{route}, nil, nil, clientCertParents{})
 
 	require.Len(t, cfg.Rules, 1)
-	assert.Equal(t, map[string][]string{isolationGatewayKey: {"*.example.com"}}, cfg.Rules[0].Listeners)
+	assert.Equal(t, map[string][]proxy.Listener{isolationGatewayKey: {{Hostname: "*.example.com", Port: 80}}}, cfg.Rules[0].Listeners)
 
 	router := proxy.NewRouter()
 	require.NoError(t, router.UpdateConfig(cfg))
@@ -294,7 +298,7 @@ func TestProxySyncer_ListenerIsolationCountsOnlyThisPlanesGateways(t *testing.T)
 		clientCertParents{http: addGatewayKeys(nil, "team/wild", isolationGatewayKey)})
 
 	require.Len(t, cfg.Rules, 1)
-	assert.Equal(t, map[string][]string{isolationGatewayKey: {"*.example.com"}}, cfg.Rules[0].Listeners)
+	assert.Equal(t, map[string][]proxy.Listener{isolationGatewayKey: {{Hostname: "*.example.com", Port: 80}}}, cfg.Rules[0].Listeners)
 	assert.Empty(t, answeringRoute(t, cfg, "abc.foo.example.com", "wild"))
 	assert.Equal(t, "wild", answeringRoute(t, cfg, "bar.example.com", "wild"))
 }
@@ -334,31 +338,31 @@ func TestProxySyncer_ListenerIsolationIgnoresListenersAdmittingNoRoute(t *testin
 			cfg := syncer.buildProxyConfig(context.Background(),
 				[]*gatewayv1.HTTPRoute{isolationRoute("wild", "wildcard")}, nil, nil, nil, clientCertParents{})
 
-			assert.Equal(t, []string{"*.example.com"}, cfg.ListenerHostnames[isolationGatewayKey])
+			assert.Equal(t, []proxy.Listener{{Hostname: "*.example.com", Port: 80}}, cfg.GatewayListeners[isolationGatewayKey])
 			assert.Equal(t, "wild", answeringRoute(t, cfg, "foo.example.com", "wild"))
 		})
 	}
 }
 
-// TestProgrammedListenerHostnames_UnreadableGatewayIsLeftOut pins the fail
+// TestProgrammedListeners_UnreadableGatewayIsLeftOut pins the fail
 // open: a Gateway that cannot be read gets no listener list, and the proxy
 // then does not isolate routes by it.
-func TestProgrammedListenerHostnames_UnreadableGatewayIsLeftOut(t *testing.T) {
+func TestProgrammedListeners_UnreadableGatewayIsLeftOut(t *testing.T) {
 	t.Parallel()
 
 	cli := isolationClient(t)
-	_, ok := programmedListenerHostnames(context.Background(), cli, nil, "infra/missing")
+	_, ok := programmedListeners(context.Background(), cli, nil, "infra/missing")
 	assert.False(t, ok)
 
-	rules := []proxy.RouteRule{{Listeners: map[string][]string{"infra/missing": {"*.example.com"}}}}
-	assert.Empty(t, gatewayListenerHostnames(context.Background(), cli, nil, rules))
+	rules := []proxy.RouteRule{{Listeners: map[string][]proxy.Listener{"infra/missing": {{Hostname: "*.example.com"}}}}}
+	assert.Empty(t, gatewayListeners(context.Background(), cli, nil, rules))
 }
 
-// TestProgrammedListenerHostnames_UnreadableListenerSetsLeaveGatewayOut pins
+// TestProgrammedListeners_UnreadableListenerSetsLeaveGatewayOut pins
 // the fail open when the ListenerSets cannot be listed: isolating by the
 // Gateway's own listeners alone would hand an entry's hosts to the Gateway's
 // wildcard, so the Gateway gets no listener list at all.
-func TestProgrammedListenerHostnames_UnreadableListenerSetsLeaveGatewayOut(t *testing.T) {
+func TestProgrammedListeners_UnreadableListenerSetsLeaveGatewayOut(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
@@ -375,7 +379,7 @@ func TestProgrammedListenerHostnames_UnreadableListenerSetsLeaveGatewayOut(t *te
 			},
 		}).Build()
 
-	_, ok := programmedListenerHostnames(context.Background(), cli, nil, isolationGatewayKey)
+	_, ok := programmedListeners(context.Background(), cli, nil, isolationGatewayKey)
 	assert.False(t, ok)
 }
 
@@ -512,4 +516,74 @@ func TestServedElsewhere(t *testing.T) {
 			assert.Equal(t, tt.want, servedElsewhere(tt.served, route, tt.ref))
 		})
 	}
+}
+
+// TestProxySyncer_ListenerPortMatching drives the upstream
+// HTTPRouteListenerPortMatching fixture: listeners share hostnames across
+// ports, routes attach by parentRef port and sectionName, and the port a
+// request carries in Host picks the route.
+func TestProxySyncer_ListenerPortMatching(t *testing.T) {
+	t.Parallel()
+
+	listener := func(name string, port gatewayv1.PortNumber, hostname gatewayv1.Hostname) gatewayv1.Listener {
+		out := isolationListener(name, hostname, gatewayv1.HTTPProtocolType)
+		out.Port = port
+
+		return out
+	}
+
+	gateway := isolationGateway()
+	gateway.Spec.Listeners = []gatewayv1.Listener{
+		listener("listener-1", 80, "foo.com"),
+		listener("listener-2", 8080, "foo.com"),
+		listener("listener-3", 8080, "bar.com"),
+		listener("listener-4", 8090, "foo.com"),
+		listener("listener-5", 8090, "bar.com"),
+	}
+
+	route := func(path string, port gatewayv1.PortNumber, section gatewayv1.SectionName) *gatewayv1.HTTPRoute {
+		out := isolationRoute(path, section)
+		out.Spec.ParentRefs[0].Port = &port
+
+		return out
+	}
+
+	syncer := NewProxySyncer("cluster.local", "token", "", isolationClient(t, gateway), nil)
+	built := syncer.buildProxyConfig(context.Background(), []*gatewayv1.HTTPRoute{
+		route("v1", 80, ""),
+		route("v2", 8080, ""),
+		route("v3", 8090, "listener-4"),
+	}, nil, nil, nil, clientCertParents{})
+
+	wire, err := json.Marshal(built)
+	require.NoError(t, err)
+
+	cfg, err := proxy.ParseConfig(wire)
+	require.NoError(t, err)
+
+	assert.ElementsMatch(t, []proxy.Listener{
+		{Hostname: "foo.com", Port: 80},
+		{Hostname: "foo.com", Port: 8080},
+		{Hostname: "bar.com", Port: 8080},
+		{Hostname: "foo.com", Port: 8090},
+		{Hostname: "bar.com", Port: 8090},
+	}, cfg.GatewayListeners[isolationGatewayKey])
+
+	answers := func(host string) []string {
+		var out []string
+
+		for _, path := range []string{"v1", "v2", "v3"} {
+			if answeringRoute(t, cfg, host, path) != "" {
+				out = append(out, path)
+			}
+		}
+
+		return out
+	}
+
+	assert.Equal(t, []string{"v1"}, answers("foo.com"))
+	assert.Equal(t, []string{"v2"}, answers("foo.com:8080"))
+	assert.Equal(t, []string{"v2"}, answers("bar.com:8080"))
+	assert.Equal(t, []string{"v3"}, answers("foo.com:8090"))
+	assert.Empty(t, answers("bar.com:8090"))
 }
