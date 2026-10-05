@@ -393,7 +393,7 @@ What actually gets exercised against a real Cloudflare Tunnel, and by which suit
 | GRPCRoute matching + header modifiers through the tunnel transport | e2e (`TestGRPCRouteEndToEnd`) | conformance gRPC tests dial the Cloudflare edge via the injectable client; the e2e adds the production pattern — a real registered hostname with no `X-Original-Host` header |
 | WebSocket upgrade through the tunnel (+ response filters) | conformance + e2e | `ws` cleartext; `wss` (TLS WebSocket backend) is unit-only, see below |
 | `appProtocol` semantics: `kubernetes.io/h2c` | conformance | |
-| `appProtocol` TLS hint without BackendTLSPolicy (fail-closed 502) | e2e (`TestBackendAppProtocolTLSWithoutPolicyFailsClosed`) | spec SHOULD: never silently dial cleartext |
+| `appProtocol` TLS hint without BackendTLSPolicy (fail-closed 500) | e2e (`TestBackendAppProtocolTLSWithoutPolicyFailsClosed`) | spec SHOULD: never silently dial cleartext |
 | ExternalBackend CRD (direct-dial URL, base path) | e2e (`TestExternalBackendEndToEnd`) | proxy dials the URL directly, no Service resolution |
 | ListenerSet (attach, conditions, AttachedRoutes, routing) | conformance + e2e | |
 | ReferenceGrant (cross-namespace backends) | conformance | |

@@ -194,7 +194,7 @@ The L7 proxy handles routing for every tunnel request, so most Gateway API behav
 - Backend WebSocket via `appProtocol: kubernetes.io/ws` (and `/wss` with a `BackendTLSPolicy`).
 - `timeouts.request` / `timeouts.backendRequest` are enforced as header-only deadlines, so streaming responses (SSE, chunked, gRPC server-streaming) keep flowing past the deadline.
 - `retry` (Experimental channel) retries every method at most 10 times, at least 10ms apart, and a request body over 64 KiB, or a streamed one the first attempt did not finish sending, is not resent once the proxy has started reading it.
-- Unavailable backends in a weighted rule return a status (`500`/`503`) for their share rather than dialing a dead address, so the other backends keep serving.
+- Unavailable backends in a weighted rule return a status (`500`/`503`, gRPC `UNAVAILABLE`) for their share rather than dialing a dead address, so the other backends keep serving.
 - A match pattern the proxy cannot compile drops its own rule, reported on the route that carries it; other rules and other routes keep serving.
 - `RequestMirror` copies are dropped once a filter is at its in-flight dispatch cap (`proxy.mirror.maxInFlight`, counted by `cftunnel_proxy_mirror_dropped_total`), so a mirror backend that stops answering cannot grow the proxy's memory with request rate.
 - Informational `1xx` responses such as `103 Early Hints` are not forwarded through the tunnel; the client gets only the final response.
