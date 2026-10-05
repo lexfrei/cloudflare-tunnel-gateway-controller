@@ -16,9 +16,10 @@ import (
 // weighted pool with its weight: per the Gateway API spec the proportion of
 // requests routed to an invalid backend MUST receive a 500, while valid
 // sibling backends keep serving their share. Matching is content-addressed by
-// service host:port (see proxy.MarkUnavailableBackends), so it applies
-// uniformly across HTTP and gRPC rules without depending on rule ordering.
-func markUnavailableBackends(cfg *proxy.Config, clusterDomain string, failedRefs []ingress.BackendRefError) {
+// service host:port within the rules of the route the ref belongs to (see
+// proxy.MarkUnavailableRouteBackends): a ref refused for one route leaves
+// another route granted the same Service serving.
+func markUnavailableBackends(cfg *proxy.Config, clusterDomain, routeKind string, failedRefs []ingress.BackendRefError) {
 	for i := range failedRefs {
 		ref := &failedRefs[i]
 
@@ -30,8 +31,10 @@ func markUnavailableBackends(cfg *proxy.Config, clusterDomain string, failedRefs
 			domain = ref.Domain
 		}
 
-		proxy.MarkUnavailableBackends(
-			cfg, domain, ref.BackendNS, ref.BackendName, ref.Port, http.StatusInternalServerError,
+		route := proxy.RuleProvenance{Kind: routeKind, Namespace: ref.RouteNamespace, Name: ref.RouteName}
+
+		proxy.MarkUnavailableRouteBackends(
+			cfg, &route, domain, ref.BackendNS, ref.BackendName, ref.Port, http.StatusInternalServerError,
 		)
 	}
 }

@@ -1307,7 +1307,7 @@ func (s *ProxySyncer) buildProxyConfig(
 	// 500 for that backend's traffic fraction instead of dialing a dead address
 	// and surfacing a 502. The backend stays in the weighted pool so the
 	// fraction is preserved per the Gateway API spec.
-	markUnavailableBackends(cfg, s.clusterDomain, failedRefs)
+	markUnavailableBackends(cfg, s.clusterDomain, kindHTTPRouteDiag, failedRefs)
 
 	// Append GRPCRoute rules. gRPC method matching maps onto the same proxy
 	// path matcher; backends are dialed h2c unless a BackendTLSPolicy puts TLS on
@@ -1337,9 +1337,9 @@ func (s *ProxySyncer) buildProxyConfig(
 		cfg.Diagnostics = append(cfg.Diagnostics, undecided...)
 
 		// Mark invalid gRPC backendRefs the same way as HTTP. Matching is by
-		// service host:port across all rules, so no rule-offset bookkeeping is
-		// needed.
-		markUnavailableBackends(cfg, s.clusterDomain, grpcFailedRefs)
+		// service host:port within the referencing route's rules, found by
+		// provenance, so no rule-offset bookkeeping is needed.
+		markUnavailableBackends(cfg, s.clusterDomain, kindGRPCRouteDiag, grpcFailedRefs)
 	}
 
 	// Expand each headless Service (clusterIP: None) into one backend per ready
