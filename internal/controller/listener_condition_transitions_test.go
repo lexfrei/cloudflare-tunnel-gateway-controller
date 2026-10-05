@@ -507,12 +507,11 @@ func TestPreserveConditionTransitions_ForeignConditions(t *testing.T) {
 	}
 }
 
-// TestPreserveOwnedConditionTransitions pins the route-parent-status twin of
-// preserveConditionTransitions: within a single RouteParentStatus entry every
-// condition belongs to this controller (the entry is keyed by controllerName),
-// so there is no foreign condition to leave untouched -- a prior type absent
-// from desired is dropped rather than kept.
-func TestPreserveOwnedConditionTransitions(t *testing.T) {
+// TestPreserveRouteParentConditionTransitions pins the route-parent-status twin
+// of preserveConditionTransitions: an entry keyed by our controllerName can
+// still hold another controller's condition type, which survives untouched,
+// while an owned type absent from desired is dropped.
+func TestPreserveRouteParentConditionTransitions(t *testing.T) {
 	t.Parallel()
 
 	seededAt := metav1.NewTime(time.Now().Add(-time.Hour).Truncate(time.Second))
@@ -521,6 +520,8 @@ func TestPreserveOwnedConditionTransitions(t *testing.T) {
 		metav1.ConditionTrue, string(gatewayv1.RouteReasonAccepted), seededAt)
 	shadowed := seededListenerCondition(routeConditionShadowed,
 		metav1.ConditionTrue, routeReasonShadowed, seededAt)
+	foreign := seededListenerCondition("special.io/SomeField",
+		metav1.ConditionTrue, "SomeReason", seededAt)
 
 	tests := []struct {
 		name    string
@@ -581,9 +582,21 @@ func TestPreserveOwnedConditionTransitions(t *testing.T) {
 			check: func(t *testing.T, merged []metav1.Condition) {
 				t.Helper()
 
-				require.Len(t, merged, 1, "no foreign entries exist in this scope, so nothing survives beyond desired")
+				require.Len(t, merged, 1)
 				assert.Nil(t, findCondition(merged, routeConditionShadowed),
 					"an own condition this sync no longer emits must be dropped")
+			},
+		},
+		{
+			name:    "foreign type absent from desired is kept verbatim",
+			prior:   []metav1.Condition{accepted, foreign},
+			desired: []metav1.Condition{accepted},
+			check: func(t *testing.T, merged []metav1.Condition) {
+				t.Helper()
+
+				got := findCondition(merged, foreign.Type)
+				require.NotNil(t, got, "a condition type this controller does not own must not be removed")
+				assert.Equal(t, foreign, *got)
 			},
 		},
 	}
@@ -592,7 +605,7 @@ func TestPreserveOwnedConditionTransitions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			merged := preserveOwnedConditionTransitions(tt.prior, tt.desired)
+			merged := preserveRouteParentConditionTransitions(tt.prior, tt.desired)
 			tt.check(t, merged)
 		})
 	}

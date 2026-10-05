@@ -43,12 +43,32 @@ func preserveConditionTransitions(prior, desired []metav1.Condition) []metav1.Co
 	return mergeConditionTransitions(prior, desired, isControllerOwnedListenerConditionType)
 }
 
+// isControllerOwnedRouteParentConditionType is the RouteParentStatus twin of
+// isControllerOwnedListenerConditionType: the types this controller writes into
+// its own entry. RouteParentStatus.Conditions godoc forbids removing or
+// changing any other type, even in an entry carrying our controllerName.
+func isControllerOwnedRouteParentConditionType(condType string) bool {
+	switch condType {
+	case string(gatewayv1.RouteConditionAccepted),
+		string(gatewayv1.RouteConditionResolvedRefs),
+		string(gatewayv1.RouteConditionPartiallyInvalid):
+		return true
+	}
+
+	return strings.HasPrefix(condType, cfConditionDomainPrefix)
+}
+
+// preserveRouteParentConditionTransitions is preserveConditionTransitions for
+// a route's own RouteParentStatus entry.
+//
+// desired must not contain duplicate condition types.
+func preserveRouteParentConditionTransitions(prior, desired []metav1.Condition) []metav1.Condition {
+	return mergeConditionTransitions(prior, desired, isControllerOwnedRouteParentConditionType)
+}
+
 // preserveOwnedConditionTransitions is preserveConditionTransitions' twin for
-// a scope where every condition belongs to this controller -- a route's own
-// RouteParentStatus entry (keyed by controllerName) or a GatewayClassConfig's
-// status, both sole-owner surfaces with no foreign condition to leave
-// untouched. A prior condition type absent from desired is dropped rather
-// than kept, since nothing else can be responsible for reviving it.
+// a status this controller is the sole writer of (a GatewayClassConfig's): a
+// prior condition type absent from desired is dropped rather than kept.
 //
 // desired must not contain duplicate condition types.
 func preserveOwnedConditionTransitions(prior, desired []metav1.Condition) []metav1.Condition {
@@ -83,9 +103,15 @@ func mergeConditionTransitions(prior, desired []metav1.Condition, isOwned func(s
 // reconciledGen. Conditions of other controllers are skipped: their generation
 // is unrelated to ours and must not defer our own status write.
 func ownedListenerConditionsStale(reconciledGen int64, conditionSets ...[]metav1.Condition) bool {
+	return conditionsStaleBy(reconciledGen, isControllerOwnedListenerConditionType, conditionSets...)
+}
+
+// conditionsStaleBy is statusGenerationStale restricted to the types isOwned
+// accepts.
+func conditionsStaleBy(reconciledGen int64, isOwned func(string) bool, conditionSets ...[]metav1.Condition) bool {
 	for _, set := range conditionSets {
 		for i := range set {
-			if isControllerOwnedListenerConditionType(set[i].Type) && set[i].ObservedGeneration > reconciledGen {
+			if isOwned(set[i].Type) && set[i].ObservedGeneration > reconciledGen {
 				return true
 			}
 		}
