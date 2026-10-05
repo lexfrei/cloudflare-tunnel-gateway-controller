@@ -951,23 +951,31 @@ func clampPercent(value int64) int32 {
 }
 
 func convertHeaderModifier(modifier *gatewayv1.HTTPHeaderFilter) *HeaderModifier {
-	result := &HeaderModifier{}
-
-	for _, header := range modifier.Set {
-		result.Set = append(result.Set, HeaderValue{
-			Name:  string(header.Name),
-			Value: header.Value,
-		})
+	return &HeaderModifier{
+		Set:    firstHeaderPerName(modifier.Set),
+		Add:    firstHeaderPerName(modifier.Add),
+		Remove: append([]string(nil), modifier.Remove...),
 	}
+}
 
-	for _, header := range modifier.Add {
-		result.Add = append(result.Add, HeaderValue{
-			Name:  string(header.Name),
-			Value: header.Value,
-		})
+// firstHeaderPerName keeps the first entry of each case-insensitive header
+// name: the HTTPHeader Name godoc says later equivalent entries MUST be ignored,
+// and the CRD's listMapKey only rejects exact duplicates.
+func firstHeaderPerName(headers []gatewayv1.HTTPHeader) []HeaderValue {
+	var result []HeaderValue
+
+	seen := make(map[string]struct{}, len(headers))
+
+	for _, header := range headers {
+		key := http.CanonicalHeaderKey(string(header.Name))
+		if _, dup := seen[key]; dup {
+			continue
+		}
+
+		seen[key] = struct{}{}
+
+		result = append(result, HeaderValue{Name: string(header.Name), Value: header.Value})
 	}
-
-	result.Remove = append(result.Remove, modifier.Remove...)
 
 	return result
 }
