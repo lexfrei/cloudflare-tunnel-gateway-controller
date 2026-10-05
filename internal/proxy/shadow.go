@@ -192,7 +192,7 @@ type rankedShadowKey struct {
 
 // ruleShadowKeys expands a rule into its claimed (hostname, match) keys. A
 // rule with no hostnames claims the default bucket (""); a rule with no
-// matches claims the matches-everything key — both mirror the router's
+// matches claims the key of an empty match — both mirror the router's
 // behaviour exactly.
 func ruleShadowKeys(rule *RouteRule) []rankedShadowKey {
 	hostnames := rule.Hostnames
@@ -207,7 +207,7 @@ func ruleShadowKeys(rule *RouteRule) []rankedShadowKey {
 
 	matches := make([]rankedMatch, 0, max(len(rule.Matches), 1))
 	if len(rule.Matches) == 0 {
-		matches = append(matches, rankedMatch{key: "catch-all"})
+		matches = append(matches, rankedMatch{key: canonicalMatchKey(&RouteMatch{}), rank: rankMatch(&RouteMatch{})})
 	}
 
 	for idx := range rule.Matches {
@@ -261,6 +261,11 @@ func canonicalMatchKey(match *RouteMatch) string {
 	// Ranking data only: Path carries the condition, and dropping it keeps an
 	// HTTPRoute match and a GRPCRoute match on the same path colliding.
 	norm.GRPCMethod = nil
+
+	// A match without a path matches as the spec default, PathPrefix "/".
+	if norm.Path == nil {
+		norm.Path = &PathMatch{Type: PathMatchPathPrefix, Value: "/"}
+	}
 
 	encoded, err := json.Marshal(norm)
 	if err != nil {

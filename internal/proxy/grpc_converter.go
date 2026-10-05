@@ -92,9 +92,7 @@ func convertGRPCRouteRule(
 	proxyRule := RouteRule{Hostnames: hostnames}
 
 	for _, match := range rule.Matches {
-		if converted, ok := convertGRPCMatch(match); ok {
-			proxyRule.Matches = append(proxyRule.Matches, converted)
-		}
+		proxyRule.Matches = append(proxyRule.Matches, convertGRPCMatch(match))
 	}
 
 	for filterIdx := range rule.Filters {
@@ -182,18 +180,9 @@ func unsupportedGRPCFilterMessage(scope, filterType string) string {
 	)
 }
 
-// convertGRPCMatch maps a GRPCRouteMatch to a proxy RouteMatch. Returns
-// ok=false when the match carries no constraint at all (nil method + no
-// headers), which means "match every gRPC request" and is best expressed as
-// a rule with no matches rather than an empty RouteMatch.
-//
-// Consequence for the multi-match case: when a single rule's matches[] array
-// mixes an empty (match-all) match with specific ones, the empty match is
-// dropped, narrowing the rule from "match all" to "match only the specific
-// entries". That author configuration is nonsensical — a match-all sibling
-// makes the specific matches redundant — so we deliberately drop it rather
-// than promote the whole rule to a catch-all that would shadow other routes.
-func convertGRPCMatch(match gatewayv1.GRPCRouteMatch) (RouteMatch, bool) {
+// convertGRPCMatch maps a GRPCRouteMatch to a proxy RouteMatch. An empty
+// match converts to an empty RouteMatch, which matches every request.
+func convertGRPCMatch(match gatewayv1.GRPCRouteMatch) RouteMatch {
 	proxyMatch := RouteMatch{}
 
 	if path := grpcMethodToPath(match.Method); path != nil {
@@ -208,11 +197,7 @@ func convertGRPCMatch(match gatewayv1.GRPCRouteMatch) (RouteMatch, bool) {
 		proxyMatch.Headers = append(proxyMatch.Headers, convertGRPCHeaderMatch(header))
 	}
 
-	if proxyMatch.Path == nil && len(proxyMatch.Headers) == 0 {
-		return RouteMatch{}, false
-	}
-
-	return proxyMatch, true
+	return proxyMatch
 }
 
 // grpcMethodToPath converts a GRPCMethodMatch to the proxy path matcher form.

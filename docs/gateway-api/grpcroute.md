@@ -108,6 +108,8 @@ gRPC methods are mapped to HTTP/2 paths using the standard format `/package.Serv
 | Method only | `method: GetUser` | regex `/[^/]+/GetUser` (any service) |
 | No match | (empty) | Matches all gRPC traffic |
 
+An empty match (`{}`) also matches all traffic, even next to specific matches in the same rule: the rule then serves every request on its hostnames that a more specific match, in this route or another, does not take. Against an equally specific match, such as another route's rule without matches, the oldest route wins.
+
 ### Match Type Field
 
 The `type` field specifies how to match:

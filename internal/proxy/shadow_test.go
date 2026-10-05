@@ -268,6 +268,50 @@ func TestDetectShadowedRules_CatchAllPair(t *testing.T) {
 	assert.Equal(t, "second", diags[0].Name)
 }
 
+// TestDetectShadowedRules_EmptyMatchCollidesWithNoMatches pins that a rule
+// with no matches and a rule whose only match is empty claim the same pair:
+// both match every request on the hostname.
+func TestDetectShadowedRules_EmptyMatchCollidesWithNoMatches(t *testing.T) {
+	t.Parallel()
+
+	cfg := &proxy.Config{
+		Rules: []proxy.RouteRule{
+			{Hostnames: []string{"grpc.example.com"}},
+			{Hostnames: []string{"grpc.example.com"}, Matches: []proxy.RouteMatch{{}}},
+		},
+		Provenance: []proxy.RuleProvenance{
+			prov("GRPCRoute", "ns", "first", shadowT0, 0),
+			prov("GRPCRoute", "ns", "second", shadowT1, 0),
+		},
+	}
+
+	diags := proxy.DetectShadowedRules(cfg)
+	require.Len(t, diags, 1)
+	assert.Equal(t, "second", diags[0].Name)
+}
+
+// TestDetectShadowedRules_EmptyMatchCollidesWithPathPrefixRoot pins that a
+// match without a path claims the same pair as an explicit PathPrefix "/",
+// the spec default it ranks as.
+func TestDetectShadowedRules_EmptyMatchCollidesWithPathPrefixRoot(t *testing.T) {
+	t.Parallel()
+
+	cfg := &proxy.Config{
+		Rules: []proxy.RouteRule{
+			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{pathPrefixMatch("/")}},
+			{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{{}}},
+		},
+		Provenance: []proxy.RuleProvenance{
+			prov("HTTPRoute", "ns", "first", shadowT0, 0),
+			prov("HTTPRoute", "ns", "second", shadowT1, 0),
+		},
+	}
+
+	diags := proxy.DetectShadowedRules(cfg)
+	require.Len(t, diags, 1)
+	assert.Equal(t, "second", diags[0].Name)
+}
+
 // TestDetectShadowedRules_PartialShadowEmitsPerPair pins granularity: a rule
 // with two ORed matches where only one collides yields exactly one diagnostic
 // (for the shadowed pair), because the other match still serves traffic.
