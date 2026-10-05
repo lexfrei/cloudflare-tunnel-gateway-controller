@@ -123,9 +123,9 @@ metadata:
 spec:
   gatewayClassName: cloudflare-tunnel
   listeners:
-    - name: http
-      port: 80
-      protocol: HTTP
+    - name: https
+      port: 443
+      protocol: HTTPS
 ```
 
 ### HTTPRoute
