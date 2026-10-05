@@ -105,7 +105,9 @@ func loadGatewayClientCertPEM(
 	if targetNS != gateway.Namespace {
 		allowed, err := grantChecker(ctx, gateway, targetNS, *ref)
 		if err != nil {
-			return nil, nil, err
+			// A grant that could not be read says nothing about the ref, so
+			// the status emit path keeps the previous ResolvedRefs verdict.
+			return nil, nil, errors.Wrapf(errGatewayClientCertTransientError, "%s", err.Error())
 		}
 
 		if !allowed {
@@ -230,13 +232,10 @@ func buildClientCertResolvedRefsCondition(generation int64, now metav1.Time, err
 	}
 }
 
-// checkSecretReferenceGrantForGateway is the standalone equivalent of
-// GatewayReconciler.checkSecretReferenceGrant — both walk ReferenceGrants in
-// the target namespace and report whether any grants the Gateway's namespace
-// access to the referenced Secret. Extracted as a free function so the
-// ProxySyncer can authorise the same cross-namespace path without holding a
-// GatewayReconciler reference. The behaviour is byte-identical to the
-// receiver-method version.
+// checkSecretReferenceGrantForGateway walks the ReferenceGrants in the target
+// namespace and reports whether any grants the Gateway's namespace access to
+// the referenced Secret. A free function so the ProxySyncer can authorise the
+// same cross-namespace path without holding a GatewayReconciler reference.
 func checkSecretReferenceGrantForGateway(
 	ctx context.Context,
 	c client.Client,
@@ -246,11 +245,7 @@ func checkSecretReferenceGrantForGateway(
 ) (bool, error) {
 	var grants gatewayv1beta1.ReferenceGrantList
 	if err := c.List(ctx, &grants, client.InNamespace(targetNamespace)); err != nil {
-		// Wrap as transient so the Gateway-status emit path leaves the
-		// previous ResolvedRefs verdict alone instead of falsely declaring
-		// InvalidClientCertificateRef on an API-server hiccup. The ref
-		// itself is not necessarily invalid; the next reconcile retries.
-		return false, errors.Wrapf(errGatewayClientCertTransientError, "list ReferenceGrants in %s: %s", targetNamespace, err.Error())
+		return false, errors.Wrapf(err, "listing ReferenceGrants in %s", targetNamespace)
 	}
 
 	for i := range grants.Items {
@@ -272,9 +267,8 @@ func checkSecretReferenceGrantForGateway(
 	return false, nil
 }
 
-// grantAllowsGatewayFromNamespace mirrors GatewayReconciler.grantAllowsGateway
-// as a free function so the standalone reference-grant check above can reuse
-// the same predicate.
+// grantAllowsGatewayFromNamespace reports whether the grant admits Gateways
+// from gatewayNamespace.
 func grantAllowsGatewayFromNamespace(grant *gatewayv1beta1.ReferenceGrant, gatewayNamespace string) bool {
 	for _, from := range grant.Spec.From {
 		if from.Group == gatewayv1.GroupName &&

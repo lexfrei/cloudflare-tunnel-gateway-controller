@@ -61,9 +61,10 @@ func TestGatewayConflictedListeners_IgnoresListenerSetConflicts(t *testing.T) {
 	}
 
 	cli := buildGatewayFakeClient(t, gc, gw, ls)
-	views := newListenerViewCache(cli, nil)
+	view, err := newListenerViewCache(cli, nil).forGateway(context.Background(), gw)
+	require.NoError(t, err)
 
-	assert.Empty(t, gatewayConflictedListeners(context.Background(), views, gw),
+	assert.Empty(t, gatewayConflictedListeners(view),
 		"a ListenerSet-entry conflict must not flip the parent Gateway to ListenersNotValid")
 }
 

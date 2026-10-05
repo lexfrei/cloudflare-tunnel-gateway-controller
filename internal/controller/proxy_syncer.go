@@ -403,8 +403,7 @@ func gatewayManagedByController(ctx context.Context, c client.Client, gateway *g
 
 // gatewayClientCertGrantChecker adapts the package-level grant lookup into a
 // secretRefGrantChecker so the syncer can resolve cross-namespace refs without
-// depending on a GatewayReconciler instance. The lookup mirrors the
-// implementation on GatewayReconciler.checkSecretReferenceGrant verbatim.
+// depending on a GatewayReconciler instance.
 func gatewayClientCertGrantChecker(c client.Client) secretRefGrantChecker {
 	return func(
 		ctx context.Context,

@@ -100,11 +100,7 @@ func validateListenerSetCertRef(
 	if refNamespace != listenerSet.Namespace {
 		allowed, err := checkListenerSetSecretReferenceGrant(ctx, cli, listenerSet, refNamespace, ref)
 		if err != nil {
-			return listenerEntryRefsCheck{
-				Status:  metav1.ConditionFalse,
-				Reason:  string(gatewayv1.ListenerReasonRefNotPermitted),
-				Message: fmt.Sprintf("Failed to check ReferenceGrant: %v", err),
-			}, nil
+			return listenerEntryRefsCheck{}, err
 		}
 
 		if !allowed {

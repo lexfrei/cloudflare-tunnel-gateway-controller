@@ -1823,7 +1823,8 @@ func TestGatewayReconciler_ValidateTLSCertificateRefs_NoTLS(t *testing.T) {
 		TLS:      nil,
 	}
 
-	status, reason, _ := reconciler.validateTLSCertificateRefs(ctx, gateway, listener)
+	status, reason, _, err := reconciler.validateTLSCertificateRefs(ctx, gateway, listener)
+	require.NoError(t, err)
 	assert.Equal(t, metav1.ConditionTrue, status)
 	assert.Equal(t, string(gatewayv1.ListenerReasonResolvedRefs), reason)
 }
@@ -1935,7 +1936,8 @@ func TestGatewayReconciler_ValidateSecretExists(t *testing.T) {
 				Name: gatewayv1.ObjectName("tls-secret"),
 			}
 
-			status, _, msg := reconciler.validateSecretExists(ctx, "default", ref)
+			status, _, msg, err := reconciler.validateSecretExists(ctx, "default", ref)
+			require.NoError(t, err)
 			assert.Equal(t, tt.expectedStatus, status)
 
 			if tt.expectedMsg != "" {
@@ -1960,7 +1962,8 @@ func TestGatewayReconciler_ValidateSecretExists_NotFound(t *testing.T) {
 		Name: gatewayv1.ObjectName("nonexistent-secret"),
 	}
 
-	status, reason, msg := reconciler.validateSecretExists(ctx, "default", ref)
+	status, reason, msg, err := reconciler.validateSecretExists(ctx, "default", ref)
+	require.NoError(t, err)
 	assert.Equal(t, metav1.ConditionFalse, status)
 	assert.Equal(t, string(gatewayv1.ListenerReasonInvalidCertificateRef), reason)
 	assert.Contains(t, msg, "not found")
@@ -1990,7 +1993,8 @@ func TestGatewayReconciler_ValidateSingleCertRef_UnsupportedKind(t *testing.T) {
 		Name: "some-ref",
 	}
 
-	status, reason, msg := reconciler.validateSingleCertRef(ctx, gateway, ref)
+	status, reason, msg, err := reconciler.validateSingleCertRef(ctx, gateway, ref)
+	require.NoError(t, err)
 	assert.Equal(t, metav1.ConditionFalse, status)
 	assert.Equal(t, string(gatewayv1.ListenerReasonInvalidCertificateRef), reason)
 	assert.Contains(t, msg, "Unsupported certificate ref kind")
@@ -2020,7 +2024,8 @@ func TestGatewayReconciler_ValidateSingleCertRef_UnsupportedGroup(t *testing.T) 
 		Name:  "some-ref",
 	}
 
-	status, reason, _ := reconciler.validateSingleCertRef(ctx, gateway, ref)
+	status, reason, _, err := reconciler.validateSingleCertRef(ctx, gateway, ref)
+	require.NoError(t, err)
 	assert.Equal(t, metav1.ConditionFalse, status)
 	assert.Equal(t, string(gatewayv1.ListenerReasonInvalidCertificateRef), reason)
 }
@@ -2172,8 +2177,6 @@ func TestGatewayReconciler_GatewayReferencesSecretsInNamespace(t *testing.T) {
 func TestGatewayReconciler_GrantAllowsGateway(t *testing.T) {
 	t.Parallel()
 
-	reconciler := &GatewayReconciler{}
-
 	tests := []struct {
 		name             string
 		grant            *gatewayv1beta1.ReferenceGrant
@@ -2260,7 +2263,7 @@ func TestGatewayReconciler_GrantAllowsGateway(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := reconciler.grantAllowsGateway(tt.grant, tt.gatewayNamespace)
+			result := grantAllowsGatewayFromNamespace(tt.grant, tt.gatewayNamespace)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -2824,9 +2827,10 @@ func TestGatewayReconciler_ValidateTLSCertificateRefs_WithCerts(t *testing.T) {
 				},
 			}
 
-			status, reason, _ := reconciler.validateTLSCertificateRefs(
+			status, reason, _, err := reconciler.validateTLSCertificateRefs(
 				context.Background(), gateway, tt.listener,
 			)
+			require.NoError(t, err)
 			assert.Equal(t, tt.expectedStatus, status)
 			assert.Equal(t, tt.expectedReason, reason)
 		})
@@ -3026,7 +3030,8 @@ func TestGatewayReconciler_ValidateSingleCertRef_CrossNamespace_NoGrant(t *testi
 		Namespace: &otherNs,
 	}
 
-	status, reason, msg := reconciler.validateSingleCertRef(ctx, gateway, ref)
+	status, reason, msg, err := reconciler.validateSingleCertRef(ctx, gateway, ref)
+	require.NoError(t, err)
 	assert.Equal(t, metav1.ConditionFalse, status)
 	assert.Equal(t, string(gatewayv1.ListenerReasonRefNotPermitted), reason)
 	assert.Contains(t, msg, "not permitted")
@@ -3225,7 +3230,8 @@ func TestGatewayReconciler_ValidateTLSCertificateRefs_CrossNamespace_WithGrant(t
 		},
 	}
 
-	status, reason, _ := reconciler.validateTLSCertificateRefs(ctx, gateway, listener)
+	status, reason, _, err := reconciler.validateTLSCertificateRefs(ctx, gateway, listener)
+	require.NoError(t, err)
 	assert.Equal(t, metav1.ConditionTrue, status)
 	assert.Equal(t, string(gatewayv1.ListenerReasonResolvedRefs), reason)
 }
@@ -3294,7 +3300,8 @@ func TestGatewayReconciler_ValidateSingleCertRef_CrossNamespace_WithNamedGrant(t
 		Namespace: &certNs,
 	}
 
-	status, _, _ := reconciler.validateSingleCertRef(ctx, gateway, ref)
+	status, _, _, err := reconciler.validateSingleCertRef(ctx, gateway, ref)
+	require.NoError(t, err)
 	assert.Equal(t, metav1.ConditionTrue, status)
 }
 
