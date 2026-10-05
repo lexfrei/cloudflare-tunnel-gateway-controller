@@ -424,13 +424,13 @@ func syncAndUpdateStatusCommon(ctx context.Context, params *syncUpdateParams) (c
 type pushOutcome struct {
 	// lostRace reports a partition push abandoned as a lost stale-version race.
 	lostRace bool
-	// undecided reports a partition not pushed because a backend reference
-	// in it could not be evaluated.
+	// undecided reports a partition not pushed because an input of its
+	// config could not be read.
 	undecided bool
 }
 
 // syncOutcome folds a sync's push outcome into what the reconcile returns: a
-// lost push race, a partition left unpushed on an undecided reference and a
+// lost push race, a partition left unpushed on an unread input and a
 // route parent that could not be evaluated each request a requeue, a sync
 // error propagates unless a requeue interval is already set, and a status
 // update error propagates last.
@@ -688,25 +688,23 @@ func partitionPushFailure(
 	err error,
 	outcome *pushOutcome,
 ) []proxy.RouteDiagnostic {
+	params.routeSyncer.Metrics.RecordSyncError(ctx, "proxy_push")
+
 	if errors.Is(err, errBackendRefsUndecided) {
 		outcome.undecided = true
 
 		level := params.routeSyncer.logRepeats.Level("undecided "+key, err.Error(), slog.LevelError)
 		logger.Log(ctx, level, "proxy config not pushed; the data plane keeps its current config and the sync is retried",
 			"partition", key, "error", err)
+	} else {
+		logger.Error("proxy sync failed (non-blocking)", "partition", key, "error", err)
 
-		return nil
-	}
-
-	logger.Error("proxy sync failed (non-blocking)", "partition", key, "error", err)
-	params.routeSyncer.Metrics.RecordSyncError(ctx, "proxy_push")
-
-	if errors.Is(err, proxy.ErrLostConfigPushRace) {
-		outcome.lostRace = true
+		outcome.lostRace = outcome.lostRace || errors.Is(err, proxy.ErrLostConfigPushRace)
 	}
 
 	// Surface a SUSTAINED push failure on the partition's own routes once it
-	// crosses the no-flap threshold (#487).
+	// crosses the no-flap threshold (#487). A config left unpushed leaves the
+	// streak as it was, so it neither raises nor clears the condition.
 	if params.proxySyncer.pushFailureStreak(key) >= pushFailureSurfaceThreshold {
 		return proxyPushFailureDiagnostics(original, err)
 	}

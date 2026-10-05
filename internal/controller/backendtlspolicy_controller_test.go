@@ -16,8 +16,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -319,6 +322,40 @@ func TestValidateCARefs_HappyPath(t *testing.T) {
 
 // ---- computeConditions ----
 
+func mustComputeConditions(
+	t *testing.T, r *BackendTLSPolicyReconciler, policy *gatewayv1.BackendTLSPolicy,
+) []metav1.Condition {
+	t.Helper()
+
+	conditions, err := r.computeConditions(context.Background(), policy)
+	require.NoError(t, err)
+
+	return conditions
+}
+
+// TestComputeConditions_ConflictListErrorIsReturned pins that a policy whose
+// peers cannot be listed gets no status from this pass: the error goes back
+// to the reconcile, which retries.
+func TestComputeConditions_ConflictListErrorIsReturned(t *testing.T) {
+	t.Parallel()
+
+	scheme := newBackendTLSPolicyScheme(t)
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(caConfigMap("ns", "cm", generateSelfSignedCAPEM(t))).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(_ context.Context, _ client.WithWatch, _ client.ObjectList, _ ...client.ListOption) error {
+				return errSimulatedCacheMiss
+			},
+		}).
+		Build()
+	r := &BackendTLSPolicyReconciler{Client: fakeClient, Scheme: scheme, ControllerName: "test"}
+
+	conditions, err := r.computeConditions(context.Background(), backendTLSPolicyFor("ns", "p", "svc", "cm", time.Time{}))
+	require.ErrorIs(t, err, errSimulatedCacheMiss)
+	assert.Nil(t, conditions)
+}
+
 func TestComputeConditions_HappyPath(t *testing.T) {
 	t.Parallel()
 
@@ -330,7 +367,7 @@ func TestComputeConditions_HappyPath(t *testing.T) {
 	policy := backendTLSPolicyFor("ns", "p", "svc", "cm", time.Time{})
 	policy.Generation = 5
 
-	conditions := r.computeConditions(context.Background(), policy)
+	conditions := mustComputeConditions(t, r, policy)
 
 	require.Len(t, conditions, 2)
 	assert.Equal(t, string(gatewayv1.PolicyConditionAccepted), conditions[0].Type)
@@ -359,7 +396,7 @@ func TestComputeConditions_InvalidKind(t *testing.T) {
 		},
 	}
 
-	conditions := r.computeConditions(context.Background(), policy)
+	conditions := mustComputeConditions(t, r, policy)
 
 	require.Len(t, conditions, 2)
 	assert.Equal(t, metav1.ConditionFalse, conditions[0].Status)
@@ -378,7 +415,7 @@ func TestComputeConditions_InvalidCACertificateRef(t *testing.T) {
 
 	policy := backendTLSPolicyFor("ns", "p", "svc", "nonexistent-cm", time.Time{})
 
-	conditions := r.computeConditions(context.Background(), policy)
+	conditions := mustComputeConditions(t, r, policy)
 
 	require.Len(t, conditions, 2)
 	assert.Equal(t, metav1.ConditionFalse, conditions[0].Status)
@@ -410,7 +447,7 @@ func TestComputeConditions_WellKnownUnsupportedEmitsInvalid(t *testing.T) {
 		},
 	}
 
-	conditions := r.computeConditions(context.Background(), policy)
+	conditions := mustComputeConditions(t, r, policy)
 
 	accepted := findCondition(conditions, string(gatewayv1.PolicyConditionAccepted))
 	require.NotNil(t, accepted)
@@ -460,7 +497,7 @@ func TestComputeConditions_NeverEmitsPolicyReasonInvalid(t *testing.T) {
 		t.Run(policy.Name, func(t *testing.T) {
 			t.Parallel()
 
-			conds := r.computeConditions(context.Background(), policy)
+			conds := mustComputeConditions(t, r, policy)
 			require.NotEmpty(t, conds)
 
 			for _, condition := range conds {
@@ -501,7 +538,8 @@ func TestBackendTLSResolver_UnknownSANType_ReturnsPoisonedConfig(t *testing.T) {
 
 	resolver := newBackendTLSResolver(fakeClient)
 
-	got := resolver(context.Background(), "ns", "svc", 443)
+	got, err := resolver(context.Background(), "ns", "svc", 443, true)
+	require.NoError(t, err)
 	require.NotNil(t, got, "policy targets the Service — resolver MUST NOT return nil (would downgrade to plaintext)")
 	assert.Empty(t, got.CABundlePEM,
 		"unknown SAN type → poisoned config (empty CA pool) so handshake fails closed")
@@ -529,7 +567,7 @@ func TestComputeConditions_URISANAccepted(t *testing.T) {
 		{Type: gatewayv1.URISubjectAltNameType, URI: "spiffe://abc.example.com/test-identity"},
 	}
 
-	conditions := r.computeConditions(context.Background(), policy)
+	conditions := mustComputeConditions(t, r, policy)
 
 	require.Len(t, conditions, 2)
 	assert.Equal(t, metav1.ConditionTrue, conditions[0].Status,
@@ -562,7 +600,7 @@ func TestComputeConditions_LoserStampedConflicted(t *testing.T) {
 		Build()
 	r := &BackendTLSPolicyReconciler{Client: fakeClient, Scheme: scheme, ControllerName: "test"}
 
-	loserConds := r.computeConditions(context.Background(), loser)
+	loserConds := mustComputeConditions(t, r, loser)
 	require.Len(t, loserConds, 2)
 
 	accepted := findCondition(loserConds, string(gatewayv1.PolicyConditionAccepted))
@@ -572,7 +610,7 @@ func TestComputeConditions_LoserStampedConflicted(t *testing.T) {
 	assert.Contains(t, accepted.Message, "ns/winner",
 		"Conflicted Message must name the winner so operators can locate the conflict")
 
-	winnerConds := r.computeConditions(context.Background(), winner)
+	winnerConds := mustComputeConditions(t, r, winner)
 	winnerAccepted := findCondition(winnerConds, string(gatewayv1.PolicyConditionAccepted))
 	require.NotNil(t, winnerAccepted)
 	assert.Equal(t, metav1.ConditionTrue, winnerAccepted.Status, "older policy must remain Accepted=True")
@@ -606,7 +644,7 @@ func TestComputeConditions_NotConflictedWithDistinctSectionName(t *testing.T) {
 		t.Run(policy.Name, func(t *testing.T) {
 			t.Parallel()
 
-			conds := r.computeConditions(context.Background(), policy)
+			conds := mustComputeConditions(t, r, policy)
 
 			accepted := findCondition(conds, string(gatewayv1.PolicyConditionAccepted))
 			require.NotNil(t, accepted)
@@ -640,12 +678,12 @@ func TestComputeConditions_TieBreakAlphabetical(t *testing.T) {
 		Build()
 	r := &BackendTLSPolicyReconciler{Client: fakeClient, Scheme: scheme, ControllerName: "test"}
 
-	alphaAccepted := findCondition(r.computeConditions(context.Background(), alpha), string(gatewayv1.PolicyConditionAccepted))
+	alphaAccepted := findCondition(mustComputeConditions(t, r, alpha), string(gatewayv1.PolicyConditionAccepted))
 	require.NotNil(t, alphaAccepted)
 	assert.Equal(t, metav1.ConditionTrue, alphaAccepted.Status,
 		"lexicographically smaller name wins the tie")
 
-	betaAccepted := findCondition(r.computeConditions(context.Background(), beta), string(gatewayv1.PolicyConditionAccepted))
+	betaAccepted := findCondition(mustComputeConditions(t, r, beta), string(gatewayv1.PolicyConditionAccepted))
 	require.NotNil(t, betaAccepted)
 	assert.Equal(t, metav1.ConditionFalse, betaAccepted.Status)
 	assert.Equal(t, string(gatewayv1.PolicyReasonConflicted), betaAccepted.Reason)
@@ -676,7 +714,7 @@ func TestComputeConditions_CAInvalidPrecedenceOverConflicted(t *testing.T) {
 		Build()
 	r := &BackendTLSPolicyReconciler{Client: fakeClient, Scheme: scheme, ControllerName: "test"}
 
-	conds := r.computeConditions(context.Background(), loser)
+	conds := mustComputeConditions(t, r, loser)
 	accepted := findCondition(conds, string(gatewayv1.PolicyConditionAccepted))
 	require.NotNil(t, accepted)
 	assert.Equal(t, metav1.ConditionFalse, accepted.Status)
@@ -913,7 +951,7 @@ func TestReconcile_ConflictResolution_DeletedWinnerFlipsLoserToAccepted(t *testi
 
 // alwaysEmptyPortName is a resolvePortName stub for tests where SectionName
 // is not expected to matter (no SectionName on the policies under test).
-func alwaysEmptyPortName() string { return "" }
+func alwaysEmptyPortName() (string, bool, error) { return "", true, nil }
 
 // TestReconcile_ConflictResolution_LoserStampedConflictedEndToEnd drives
 // the full Reconcile pipeline against two BackendTLSPolicies that target
@@ -969,6 +1007,90 @@ func TestReconcile_ConflictResolution_LoserStampedConflictedEndToEnd(t *testing.
 	assert.Contains(t, loserAccepted.Message, "ns/winner")
 }
 
+// failingReadClient fails every read of the given object kind and serves the
+// rest from objects.
+func failingReadClient(t *testing.T, failList, failGet bool, objects ...client.Object) client.WithWatch {
+	t.Helper()
+
+	return fake.NewClientBuilder().
+		WithScheme(newBackendTLSPolicyScheme(t)).
+		WithObjects(objects...).
+		WithStatusSubresource(&gatewayv1.BackendTLSPolicy{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*gatewayv1.BackendTLSPolicyList); ok && failList {
+					return errSimulatedCacheMiss
+				}
+
+				return c.List(ctx, list, opts...)
+			},
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if _, ok := obj.(*corev1.ConfigMap); ok && failGet {
+					return errSimulatedCacheMiss
+				}
+
+				return c.Get(ctx, key, obj, opts...)
+			},
+		}).
+		Build()
+}
+
+// TestReconcile_UnreadableInputsWriteNoStatus pins the reconcile contract: a
+// policy whose peers or CA ConfigMap cannot be read gets an error back for a
+// retry and keeps the status it had.
+func TestReconcile_UnreadableInputsWriteNoStatus(t *testing.T) {
+	t.Parallel()
+
+	const controllerName = "github.com/lexfrei/test"
+
+	tests := []struct {
+		name              string
+		failList, failGet bool
+	}{
+		{name: "peers unreadable", failList: true},
+		{name: "CA ConfigMap unreadable", failGet: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cli := failingReadClient(t, tt.failList, tt.failGet,
+				gatewayClassFor("cf-class", controllerName),
+				gatewayFor("ns", "gw", "cf-class"),
+				httpRouteFor("ns", "r", "gw", "svc"),
+				caConfigMap("ns", "cm", generateSelfSignedCAPEM(t)),
+				backendTLSPolicyFor("ns", "p", "svc", "cm", time.Time{}),
+			)
+			r := &BackendTLSPolicyReconciler{Client: cli, Scheme: cli.Scheme(), ControllerName: controllerName}
+
+			_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: "p"}})
+			require.ErrorIs(t, err, errSimulatedCacheMiss)
+
+			var policy gatewayv1.BackendTLSPolicy
+			require.NoError(t, cli.Get(context.Background(), client.ObjectKey{Namespace: "ns", Name: "p"}, &policy))
+			assert.Empty(t, policy.Status.Ancestors)
+		})
+	}
+}
+
+// TestBackendTLSResolver_UnreadableCAConfigMapIsUnresolved pins that a CA
+// ConfigMap read error other than NotFound is unresolved, not a policy whose
+// CA is missing.
+func TestBackendTLSResolver_UnreadableCAConfigMapIsUnresolved(t *testing.T) {
+	t.Parallel()
+
+	cli := failingReadClient(t, false, true,
+		backendTLSPolicyFor("ns", "p", "svc", "cm", time.Time{}),
+		caConfigMap("ns", "cm", generateSelfSignedCAPEM(t)),
+	)
+
+	got, err := newBackendTLSResolver(cli)(context.Background(), "ns", "svc", 443, true)
+	require.ErrorIs(t, err, errBackendTLSUnresolved)
+	require.ErrorIs(t, err, errSimulatedCacheMiss)
+	assert.Nil(t, got)
+}
+
 func TestSelectPolicyForServicePort_OlderWins(t *testing.T) {
 	t.Parallel()
 
@@ -978,8 +1100,9 @@ func TestSelectPolicyForServicePort_OlderWins(t *testing.T) {
 	scheme := newBackendTLSPolicyScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	winner := selectPolicyForServicePort(context.Background(), fakeClient,
-		[]gatewayv1.BackendTLSPolicy{newer, older}, "ns", "svc", 443)
+	winner, err := selectPolicyForServicePort(context.Background(), fakeClient,
+		[]gatewayv1.BackendTLSPolicy{newer, older}, "ns", "svc", 443, true)
+	require.NoError(t, err)
 	require.NotNil(t, winner)
 	assert.Equal(t, "policy-z", winner.Name)
 }
@@ -994,8 +1117,9 @@ func TestSelectPolicyForServicePort_TieBreaksAlphabetically(t *testing.T) {
 	scheme := newBackendTLSPolicyScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	winner := selectPolicyForServicePort(context.Background(), fakeClient,
-		[]gatewayv1.BackendTLSPolicy{policyB, policyA}, "ns", "svc", 443)
+	winner, err := selectPolicyForServicePort(context.Background(), fakeClient,
+		[]gatewayv1.BackendTLSPolicy{policyB, policyA}, "ns", "svc", 443, true)
+	require.NoError(t, err)
 	require.NotNil(t, winner)
 	assert.Equal(t, "alpha", winner.Name)
 }
@@ -1008,8 +1132,9 @@ func TestSelectPolicyForServicePort_NoMatchReturnsNil(t *testing.T) {
 	scheme := newBackendTLSPolicyScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	winner := selectPolicyForServicePort(context.Background(), fakeClient,
-		[]gatewayv1.BackendTLSPolicy{policy}, "ns", "svc", 443)
+	winner, err := selectPolicyForServicePort(context.Background(), fakeClient,
+		[]gatewayv1.BackendTLSPolicy{policy}, "ns", "svc", 443, true)
+	require.NoError(t, err)
 	assert.Nil(t, winner)
 }
 
@@ -1033,13 +1158,15 @@ func TestSelectPolicyForServicePort_SectionNameMatchesNamedPort(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(svc).Build()
 
 	// Matching named port → policy applies.
-	winner := selectPolicyForServicePort(context.Background(), fakeClient,
-		[]gatewayv1.BackendTLSPolicy{policy}, "ns", "svc", 8443)
+	winner, err := selectPolicyForServicePort(context.Background(), fakeClient,
+		[]gatewayv1.BackendTLSPolicy{policy}, "ns", "svc", 8443, true)
+	require.NoError(t, err)
 	require.NotNil(t, winner, "SectionName 'https' matches port 8443 (named 'https') → policy applies")
 
 	// Different port on the same Service → policy must NOT apply.
-	winner = selectPolicyForServicePort(context.Background(), fakeClient,
-		[]gatewayv1.BackendTLSPolicy{policy}, "ns", "svc", 80)
+	winner, err = selectPolicyForServicePort(context.Background(), fakeClient,
+		[]gatewayv1.BackendTLSPolicy{policy}, "ns", "svc", 80, true)
+	require.NoError(t, err)
 	assert.Nil(t, winner, "SectionName 'https' must NOT match port 80 (named 'http') — multi-port spec invariant")
 }
 
@@ -1082,8 +1209,9 @@ func TestSelectPolicyForServicePort_ScopedAndUnscopedDoBothApplyAtRuntime(t *tes
 	}
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(svc).Build()
 
-	winner := selectPolicyForServicePort(context.Background(), fakeClient,
-		[]gatewayv1.BackendTLSPolicy{scoped, unscoped}, "ns", "svc", 8443)
+	winner, err := selectPolicyForServicePort(context.Background(), fakeClient,
+		[]gatewayv1.BackendTLSPolicy{scoped, unscoped}, "ns", "svc", 8443, true)
+	require.NoError(t, err)
 	require.NotNil(t, winner, "at runtime, port 8443 (named 'https') overlaps BOTH the scoped and the unscoped policy")
 	assert.Equal(t, "scoped", winner.Name,
 		"older scoped policy wins on the matching named port even though the status mapper considers it a different scope from the unscoped peer")
@@ -1118,7 +1246,9 @@ func TestPolicyTargetsServicePort_KindAliases(t *testing.T) {
 				},
 			}
 
-			assert.Equal(t, tc.expected, policyTargetsServicePort(policy, "svc", alwaysEmptyPortName))
+			targets, err := policyTargetsServicePort(policy, "svc", alwaysEmptyPortName)
+			require.NoError(t, err)
+			assert.Equal(t, tc.expected, targets)
 		})
 	}
 }
@@ -1549,7 +1679,8 @@ func TestBackendTLSResolver_NoPolicyReturnsNil(t *testing.T) {
 
 	resolver := newBackendTLSResolver(fakeClient)
 
-	got := resolver(context.Background(), "ns", "svc", 443)
+	got, err := resolver(context.Background(), "ns", "svc", 443, true)
+	require.NoError(t, err)
 	assert.Nil(t, got, "no matching policy → nil so the proxy uses plaintext")
 }
 
@@ -1567,7 +1698,8 @@ func TestBackendTLSResolver_PolicyTargetsButCAMissing_ReturnsPoisonedConfig(t *t
 
 	resolver := newBackendTLSResolver(fakeClient)
 
-	got := resolver(context.Background(), "ns", "svc", 443)
+	got, err := resolver(context.Background(), "ns", "svc", 443, true)
+	require.NoError(t, err)
 	require.NotNil(t, got,
 		"policy targets the Service but CA cannot be resolved — resolver MUST NOT return nil "+
 			"(that would downgrade to plaintext). Return a poisoned config so the handshake fails.")
@@ -1590,7 +1722,8 @@ func TestBackendTLSResolver_PolicyTargetsButCAMalformed_ReturnsPoisonedConfig(t 
 
 	resolver := newBackendTLSResolver(fakeClient)
 
-	got := resolver(context.Background(), "ns", "svc", 443)
+	got, err := resolver(context.Background(), "ns", "svc", 443, true)
+	require.NoError(t, err)
 	require.NotNil(t, got, "policy targets the Service — resolver must NOT return nil for malformed CA")
 	assert.Empty(t, got.CABundlePEM)
 }
@@ -1619,7 +1752,8 @@ func TestBackendTLSResolver_URISubjectAltName_ForwardsURIToProxy(t *testing.T) {
 
 	resolver := newBackendTLSResolver(fakeClient)
 
-	got := resolver(context.Background(), "ns", "svc", 443)
+	got, err := resolver(context.Background(), "ns", "svc", 443, true)
+	require.NoError(t, err)
 	require.NotNil(t, got, "happy-path policy must produce a real TLS config")
 	assert.NotEmpty(t, got.CABundlePEM, "valid CA bundle must be forwarded — not a poisoned config")
 	assert.Equal(t, []string{"alt.example.com"}, got.SubjectAltNames,
@@ -1628,13 +1762,9 @@ func TestBackendTLSResolver_URISubjectAltName_ForwardsURIToProxy(t *testing.T) {
 		"URI SANs go to SubjectAltNameURIs")
 }
 
-// TestBackendTLSResolver_ListErrorFailsOpen pins the documented asymmetry
-// between cache errors (fail OPEN) and per-policy validation errors (fail
-// CLOSED). When `client.List` itself errors before the policy list can be
-// inspected, the resolver returns nil — the proxy dials plaintext for THIS
-// request rather than poisoning every route in the namespace. The decision
-// is documented in newBackendTLSResolver's godoc; this test pins it.
-func TestBackendTLSResolver_ListErrorFailsOpen(t *testing.T) {
+// TestBackendTLSResolver_ListErrorIsUnresolved pins that a failed policy List
+// is reported as an error, never as "no policy applies".
+func TestBackendTLSResolver_ListErrorIsUnresolved(t *testing.T) {
 	t.Parallel()
 
 	scheme := newBackendTLSPolicyScheme(t)
@@ -1654,11 +1784,109 @@ func TestBackendTLSResolver_ListErrorFailsOpen(t *testing.T) {
 
 	resolver := newBackendTLSResolver(fakeClient)
 
-	got := resolver(context.Background(), "ns", "svc", 443)
-	assert.Nil(t, got,
-		"List error → fail OPEN (nil → proxy dials plaintext). "+
-			"Poisoning every namespace on a transient cache miss would be a worse failure mode; "+
-			"the asymmetry is documented in newBackendTLSResolver's godoc and surfaced via a WARN log.")
+	got, err := resolver(context.Background(), "ns", "svc", 443, true)
+	require.ErrorIs(t, err, errBackendTLSUnresolved)
+	require.ErrorIs(t, err, errSimulatedCacheMiss)
+	assert.Nil(t, got)
+}
+
+// TestBackendTLSResolver_UnknownKindMeansNoPolicy pins that a client or API
+// server without the BackendTLSPolicy kind resolves to "no policy applies".
+func TestBackendTLSResolver_UnknownKindMeansNoPolicy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		client client.Client
+	}{
+		{name: "kind not in scheme", client: fake.NewClientBuilder().WithScheme(runtime.NewScheme()).Build()},
+		{name: "kind not served", client: fake.NewClientBuilder().
+			WithScheme(newBackendTLSPolicyScheme(t)).
+			WithInterceptorFuncs(interceptor.Funcs{
+				List: func(_ context.Context, _ client.WithWatch, _ client.ObjectList, _ ...client.ListOption) error {
+					return &meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: gatewayv1.GroupName, Kind: "BackendTLSPolicy"}}
+				},
+			}).
+			Build()},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := newBackendTLSResolver(tt.client)(context.Background(), "ns", "svc", 443, true)
+			require.NoError(t, err)
+			assert.Nil(t, got)
+		})
+	}
+}
+
+// TestBackendTLSResolver_SectionNamePortLookup pins the Service read a
+// SectionName-scoped policy needs: a port with another name is not covered, a
+// Service absent from the cache is covered for a core Service ref (its port
+// names are unknown) and not for another kind sharing the name, and any other
+// read error is unresolved.
+func TestBackendTLSResolver_SectionNamePortLookup(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		portName   string
+		notService bool
+		getErr     error
+		wantErr    error
+		wantPolicy bool
+	}{
+		{name: "port named by the policy", portName: "https", wantPolicy: true},
+		{name: "port named otherwise", portName: "metrics"},
+		{name: "service missing", portName: "https", getErr: apierrors.NewNotFound(corev1.Resource("services"), "svc"), wantPolicy: true},
+		{
+			name: "service missing, other kind", portName: "https", notService: true,
+			getErr: apierrors.NewNotFound(corev1.Resource("services"), "svc"),
+		},
+		{name: "service unreadable", portName: "https", getErr: errSimulatedCacheMiss, wantErr: errBackendTLSUnresolved},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			policy := backendTLSPolicyFor("ns", "p", "svc", "cm", time.Time{})
+			policy.Spec.TargetRefs[0].SectionName = new(gatewayv1.SectionName("https"))
+
+			service := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "svc"},
+				Spec:       corev1.ServiceSpec{Ports: []corev1.ServicePort{{Name: tt.portName, Port: 443}}},
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(newBackendTLSPolicyScheme(t)).
+				WithObjects(policy, service, caConfigMap("ns", "cm", generateSelfSignedCAPEM(t))).
+				WithInterceptorFuncs(interceptor.Funcs{
+					Get: func(
+						ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption,
+					) error {
+						if _, ok := obj.(*corev1.Service); ok && tt.getErr != nil {
+							return tt.getErr
+						}
+
+						return c.Get(ctx, key, obj, opts...)
+					},
+				}).
+				Build()
+
+			got, err := newBackendTLSResolver(fakeClient)(context.Background(), "ns", "svc", 443, !tt.notService)
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				assert.Nil(t, got)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantPolicy, got != nil)
+		})
+	}
 }
 
 func TestBackendTLSResolver_MultipleCARefs_Concatenates(t *testing.T) {
@@ -1687,7 +1915,8 @@ func TestBackendTLSResolver_MultipleCARefs_Concatenates(t *testing.T) {
 
 	resolver := newBackendTLSResolver(fakeClient)
 
-	got := resolver(context.Background(), "ns", "svc", 443)
+	got, err := resolver(context.Background(), "ns", "svc", 443, true)
+	require.NoError(t, err)
 	require.NotNil(t, got, "two valid CACertificateRefs must produce a real (non-poisoned) config")
 	assert.Contains(t, got.CABundlePEM, caOne,
 		"first CA bundle must appear in the concatenated trust pool")
@@ -1713,7 +1942,8 @@ func TestBackendTLSResolver_HappyPath_ReturnsRealConfig(t *testing.T) {
 
 	resolver := newBackendTLSResolver(fakeClient)
 
-	got := resolver(context.Background(), "ns", "svc", 443)
+	got, err := resolver(context.Background(), "ns", "svc", 443, true)
+	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.NotEmpty(t, got.CABundlePEM, "valid policy + CA → real CA bundle")
 	assert.Equal(t, "test.example.com", got.ServerName)

@@ -42,6 +42,7 @@ const policyAncestorStatusMaxCount = 16
 
 // Sentinel errors for BackendTLSPolicy CA validation so wrappers can be matched.
 var (
+	errBackendTLSCARefUnreadable   = errors.New("BackendTLSPolicy CA ConfigMap could not be read")
 	errBackendTLSNoCARef           = errors.New("BackendTLSPolicy has no CACertificateRefs (WellKnownCACertificates not supported)")
 	errBackendTLSUnsupportedGroup  = errors.New("BackendTLSPolicy CACertificateRef group not supported (only core)")
 	errBackendTLSUnsupportedKind   = errors.New("BackendTLSPolicy CACertificateRef kind not supported (only ConfigMap)")
@@ -242,7 +243,11 @@ func (r *BackendTLSPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, nil
 	}
 
-	conditions := r.computeConditions(ctx, &policy)
+	conditions, err := r.computeConditions(ctx, &policy)
+	if err != nil {
+		return ctrl.Result{}, errors.Wrap(err, "failed to evaluate BackendTLSPolicy conditions")
+	}
+
 	logger.Info("reconciling BackendTLSPolicy",
 		"name", policy.Name,
 		"namespace", policy.Namespace,
@@ -267,6 +272,9 @@ func (r *BackendTLSPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 //     stays True because the policy's own refs are valid.
 //   - All happy: both True. Both DNS-Hostname and URI-type SubjectAltNames
 //     are honoured end-to-end by the proxy.
+//   - The peers or a CA ConfigMap cannot be read for a reason other than
+//     NotFound: no conditions and the error, so Reconcile retries without
+//     writing status. A missing CA ConfigMap takes the first case.
 //
 // CA validity is checked first — Reason=InvalidCACertificateRef (or
 // InvalidKind / NoValidCACertificate) dominates over Conflicted, because a
@@ -281,25 +289,34 @@ func (r *BackendTLSPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Req
 func (r *BackendTLSPolicyReconciler) computeConditions(
 	ctx context.Context,
 	policy *gatewayv1.BackendTLSPolicy,
-) []metav1.Condition {
+) ([]metav1.Condition, error) {
 	// WellKnownCACertificates is not supported — only explicit CACertificateRefs
 	// are honoured. The CRD CEL admits a WellKnown-only policy (empty
 	// caCertificateRefs + wellKnownCACertificates set), and the Gateway API spec
 	// mandates Accepted=False/Invalid for an unsupported WellKnown value, not the
 	// generic NoValidCACertificate that an empty-refs policy would otherwise get.
 	if len(policy.Spec.Validation.CACertificateRefs) == 0 && policy.Spec.Validation.WellKnownCACertificates != nil {
-		return wellKnownUnsupportedConditions(policy.Generation, *policy.Spec.Validation.WellKnownCACertificates)
+		return wellKnownUnsupportedConditions(policy.Generation, *policy.Spec.Validation.WellKnownCACertificates), nil
 	}
 
 	if err := r.validateCARefs(ctx, policy); err != nil {
-		return caInvalidConditions(policy.Generation, err)
+		if errors.Is(err, errBackendTLSCARefUnreadable) {
+			return nil, err
+		}
+
+		return caInvalidConditions(policy.Generation, err), nil
 	}
 
-	if winner := r.conflictWinnerFor(ctx, policy); winner != nil {
-		return conflictedConditions(policy.Generation, winner)
+	winner, err := r.conflictWinnerFor(ctx, policy)
+	if err != nil {
+		return nil, err
 	}
 
-	return acceptedConditions(policy.Generation)
+	if winner != nil {
+		return conflictedConditions(policy.Generation, winner), nil
+	}
+
+	return acceptedConditions(policy.Generation), nil
 }
 
 // conflictedConditions returns the Accepted=False/Reason=Conflicted +
@@ -333,27 +350,17 @@ func conflictedConditions(generation int64, winner *gatewayv1.BackendTLSPolicy) 
 // (Service, SectionName) target, or nil if `policy` itself wins or no
 // peers conflict.
 //
-// Fails open: a cluster-list error is logged and treated as "no
-// conflict" so Status does not flip on a transient cache miss. The
-// caller continues to Accepted=True, the next reconcile re-runs the
-// check, and the proxy-side resolver already enforces precedence
-// independently — there is no plaintext-bypass risk from a missed
-// Conflicted stamp.
+// A List error is returned, so the reconcile retries instead of stamping
+// a status it could not evaluate.
 func (r *BackendTLSPolicyReconciler) conflictWinnerFor(
 	ctx context.Context,
 	policy *gatewayv1.BackendTLSPolicy,
-) *gatewayv1.BackendTLSPolicy {
+) (*gatewayv1.BackendTLSPolicy, error) {
 	ownTargets := normalizePolicyTargets(policy)
-	if len(ownTargets) == 0 {
-		return nil
-	}
 
 	var list gatewayv1.BackendTLSPolicyList
 	if err := r.List(ctx, &list, client.InNamespace(policy.Namespace)); err != nil {
-		log.FromContext(ctx).Error(err, "list BackendTLSPolicies for conflict check failed; treating as no conflict",
-			"namespace", policy.Namespace, "policy", policy.Name)
-
-		return nil
+		return nil, errors.Wrap(err, "listing BackendTLSPolicies for the conflict check")
 	}
 
 	var winner *gatewayv1.BackendTLSPolicy
@@ -380,7 +387,7 @@ func (r *BackendTLSPolicyReconciler) conflictWinnerFor(
 		}
 	}
 
-	return winner
+	return winner, nil
 }
 
 // normalizePolicyTargets canonicalises a policy's Service-shaped
@@ -395,7 +402,8 @@ func (r *BackendTLSPolicyReconciler) conflictWinnerFor(
 // Mismatch with the runtime resolver, by design: selectPolicyForServicePort
 // (internal/controller/proxy_syncer.go) resolves SectionName against the
 // actual Service port-name via a Service Get and matches when
-// SectionName == port-name. So a scoped (SectionName="https") and an
+// SectionName == port-name, or when a Service ref's Service is not in the
+// cache. So a scoped (SectionName="https") and an
 // unscoped policy on a Service with a port named "https" both reach the
 // resolver for that port at runtime, where the older one wins. This
 // status-side mapper deliberately treats those as different scopes per
@@ -559,6 +567,10 @@ func (r *BackendTLSPolicyReconciler) validateCARefs(
 
 		configMap, err := getConfigMap(ctx, r.Client, key)
 		if err != nil {
+			if !apierrors.IsNotFound(err) {
+				return fmt.Errorf("%w: %w", errBackendTLSCARefUnreadable, err)
+			}
+
 			return err
 		}
 

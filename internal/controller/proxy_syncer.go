@@ -20,6 +20,8 @@ import (
 	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -204,8 +206,8 @@ func NewProxySyncer(
 		k8sClient:            k8sClient,
 		backendValidator:     newBackendRefValidator(refGrantValidator, "HTTPRoute"),
 		grpcBackendValidator: newBackendRefValidator(refGrantValidator, "GRPCRoute"),
-		protocolResolver:     newBackendProtocolResolver(k8sClient),
-		tlsResolver:          newBackendTLSResolver(k8sClient),
+		protocolResolver:     recordingProtocolResolver(newBackendProtocolResolver(k8sClient)),
+		tlsResolver:          recordingTLSResolver(newBackendTLSResolver(k8sClient)),
 		gatewayCertLoader:    newGatewayClientCertLoader(k8sClient, controllerName),
 		controllerName:       controllerName,
 		configAuthority:      settings.configAuthority,
@@ -288,11 +290,7 @@ func (s *ProxySyncer) clientCertResolver(parents map[string]map[string]bool) pro
 			var listenerSet gatewayv1.ListenerSet
 			if err := s.k8sClient.Get(ctx, parent, &listenerSet); err != nil {
 				if !apierrors.IsNotFound(err) {
-					slog.Warn("gateway client cert resolver: Get(ListenerSet) failed — presenting no client certificate for this hop",
-						"error", err,
-						"namespace", parent.Namespace,
-						"listenerSet", parent.Name,
-					)
+					noteBackendReadError(ctx, fmt.Errorf("reading ListenerSet %s: %w", parent, err))
 				}
 
 				return nil
@@ -322,21 +320,19 @@ func (s *ProxySyncer) clientCertResolver(parents map[string]map[string]bool) pro
 // controller, the Secret cannot be resolved, the ReferenceGrant is missing,
 // or the keypair fails to parse. The first three reasons leave the Gateway's
 // ResolvedRefs condition alone; the remaining ones drive it through the
-// parallel emit path in the GatewayReconciler.
+// parallel emit path in the GatewayReconciler. A Gateway, GatewayClass,
+// Secret or ReferenceGrant that cannot be read for a reason other than not
+// existing is recorded on ctx's build collector, so the config built without
+// the certificate is not pushed.
 func newGatewayClientCertLoader(c client.Client, controllerName string) gatewayClientCertLoader {
 	return func(ctx context.Context, gatewayNN types.NamespacedName) *proxy.ClientCertConfig {
 		var gateway gatewayv1.Gateway
 		if err := c.Get(ctx, gatewayNN, &gateway); err != nil {
 			// NotFound is the expected outcome for routes pointing at a
 			// foreign-namespace or deleted parent — silently skip. Any other
-			// error is logged so a transient API-server hiccup that drops
-			// the client certificate has a visible cause.
+			// error holds the config back until the Gateway can be read.
 			if !apierrors.IsNotFound(err) {
-				slog.Warn("gateway client cert resolver: Get(Gateway) failed — presenting no client certificate for this hop",
-					"error", err,
-					"namespace", gatewayNN.Namespace,
-					"gateway", gatewayNN.Name,
-				)
+				noteBackendReadError(ctx, fmt.Errorf("reading Gateway %s: %w", gatewayNN, err))
 			}
 
 			return nil
@@ -351,10 +347,11 @@ func newGatewayClientCertLoader(c client.Client, controllerName string) gatewayC
 			// The Gateway-status emit path already reports the same error
 			// through ResolvedRefs; we also log on the syncer side so a
 			// 502-from-handshake-fail incident has a visible cause without
-			// scraping Gateway status. Transient API-server errors are
-			// excluded — those are expected to recover on the next reconcile
-			// without operator action.
-			if !errors.Is(err, errGatewayClientCertTransientError) {
+			// scraping Gateway status. A transient read error holds the
+			// config back instead, until the certificate can be read.
+			if errors.Is(err, errGatewayClientCertTransientError) {
+				noteBackendReadError(ctx, err)
+			} else {
 				slog.Warn("gateway client certificate resolution failed — backend mTLS handshake will be plaintext",
 					"error", err,
 					"namespace", gatewayNN.Namespace,
@@ -378,8 +375,9 @@ func newGatewayClientCertLoader(c client.Client, controllerName string) gatewayC
 // used by tests that don't construct a full GatewayClass chain. Only
 // gatewayClassManaged counts: an unknown class, missing or unreadable, returns
 // false, because presenting a cert that may belong to another controller is
-// worse than presenting none. The Gateway's status surface will already
-// reflect "no managed parent" via existing reconcile paths.
+// worse than presenting none; an unreadable one is also recorded on ctx's
+// build collector, so that config is not pushed. The Gateway's status surface
+// will already reflect "no managed parent" via existing reconcile paths.
 func gatewayManagedByController(ctx context.Context, c client.Client, gateway *gatewayv1.Gateway, controllerName string) bool {
 	if controllerName == "" {
 		return true
@@ -388,14 +386,10 @@ func gatewayManagedByController(ctx context.Context, c client.Client, gateway *g
 	state, err := classifyGatewayClass(ctx, c, gateway, controllerName)
 	if err != nil {
 		// A missing class is silent, since classifyGatewayClass reports it as
-		// unknown with a nil error. A failed read is logged because it has the
-		// same fail-closed outcome for an operational, not configuration,
-		// reason.
-		slog.Warn("gateway client cert resolver: GatewayClass read failed — Gateway treated as not ours, no cert presented",
-			"error", err,
-			"gateway", gateway.Name,
-			"gatewayClass", string(gateway.Spec.GatewayClassName),
-		)
+		// unknown with a nil error. A failed read holds the config back until
+		// the class can be read.
+		noteBackendReadError(ctx, fmt.Errorf("reading GatewayClass %q of Gateway %s/%s: %w",
+			gateway.Spec.GatewayClassName, gateway.Namespace, gateway.Name, err))
 	}
 
 	return state == gatewayClassManaged
@@ -415,26 +409,81 @@ func gatewayClientCertGrantChecker(c client.Client) secretRefGrantChecker {
 	}
 }
 
-// newBackendTLSResolver returns a resolver that looks up a BackendTLSPolicy
+// errBackendTLSUnresolved marks a lookup that could not tell whether a backend
+// needs TLS: whether a BackendTLSPolicy applies to it, or what appProtocol its
+// Service port declares. A config built with such a lookup is never pushed:
+// the replicas keep the last config they accepted, and the sync is retried.
+var errBackendTLSUnresolved = errors.New("cannot determine whether the backend needs TLS")
+
+// backendTLSLookup returns the TLS settings for a backend Service port, nil
+// when no BackendTLSPolicy applies, or an error wrapping
+// errBackendTLSUnresolved when that cannot be determined. isService is the
+// converter's: whether the ref names a core Service.
+type backendTLSLookup func(
+	ctx context.Context, namespace, serviceName string, port int32, isService bool,
+) (*proxy.BackendTLSConfig, error)
+
+// backendProtocolLookup returns the appProtocol of a backend Service port, ""
+// when none is set or the Service does not exist, or an error wrapping
+// errBackendTLSUnresolved when the Service cannot be read.
+type backendProtocolLookup func(ctx context.Context, namespace, serviceName string, port int32) (string, error)
+
+// recordingTLSResolver adapts lookup to the converter's resolver, recording a
+// lookup error on ctx's build collector. A failed lookup resolves to an
+// unenforceable config, so the backend fails closed even if the error were
+// dropped.
+func recordingTLSResolver(lookup backendTLSLookup) proxy.BackendTLSResolver {
+	return func(ctx context.Context, namespace, serviceName string, port int32, isService bool) *proxy.BackendTLSConfig {
+		tlsConfig, err := lookup(ctx, namespace, serviceName, port, isService)
+		if err != nil {
+			noteBackendReadError(ctx, err)
+
+			return &proxy.BackendTLSConfig{Unenforceable: fmt.Sprintf(
+				"The BackendTLSPolicy settings for Service %s/%s cannot be read.", namespace, serviceName)}
+		}
+
+		return tlsConfig
+	}
+}
+
+// failClosedAppProtocol is the appProtocol a failed lookup resolves to: a TLS
+// appProtocol fails a backend without a BackendTLSPolicy closed.
+const failClosedAppProtocol = "https"
+
+// recordingProtocolResolver adapts lookup to the converter's resolver,
+// recording a lookup error on ctx's build collector. A failed lookup resolves
+// to failClosedAppProtocol, so the backend fails closed even if the error were
+// dropped.
+func recordingProtocolResolver(lookup backendProtocolLookup) proxy.BackendProtocolResolver {
+	return func(ctx context.Context, namespace, serviceName string, port int32) string {
+		appProtocol, err := lookup(ctx, namespace, serviceName, port)
+		if err != nil {
+			noteBackendReadError(ctx, err)
+
+			return failClosedAppProtocol
+		}
+
+		return appProtocol
+	}
+}
+
+// newBackendTLSResolver returns a lookup that finds the BackendTLSPolicy
 // targeting the given Service+Port and returns the corresponding TLS
 // configuration (CA, hostname, SANs) for the proxy to apply on the backend
 // hop. SectionName on the policy's TargetRef is honoured per Gateway API:
 // when set, only the matching named port receives TLS — other ports of the
-// same Service are unaffected.
-//
-// One asymmetry worth calling out: when the cache-backed `client.List` call
-// itself errors (which only happens before the informer's initial sync or on
-// API server unavailability), the resolver fails OPEN — returns nil and the
-// proxy dials plaintext. Returning poisoned configs here would block every
-// route in the namespace whenever the BackendTLSPolicy cache hiccups, which
-// is a worse failure mode in practice. A WARN surfaces the event so the
-// asymmetry is observable in logs.
+// same Service are unaffected. For a core Service ref, a Service the cache does
+// not hold has no known port names, so a SectionName-scoped policy on it
+// applies to every port.
 //
 // Behaviour by case:
 //
-//   - List error or no policy targets the service: returns nil → the proxy
-//     dials the backend in plaintext (no policy applies, so there's no
-//     operator intent to enforce).
+//   - No policy targets the service: returns nil → the proxy dials the
+//     backend in plaintext (no operator intent to enforce).
+//   - The policies, a policy's CA ConfigMap, or the Service port name a
+//     SectionName needs cannot be read for a reason other than not
+//     existing: returns an error wrapping errBackendTLSUnresolved, and the
+//     partition's push is held back until the read succeeds.
 //   - A policy targets the service BUT cannot be enforced (missing
 //     ConfigMap, unsupported Group/Kind, empty ca.crt, malformed PEM,
 //     wellKnownCACertificates alone, an unsupported SAN type): returns a
@@ -451,33 +500,41 @@ func gatewayClientCertGrantChecker(c client.Client) secretRefGrantChecker {
 //
 // Precedence per Gateway API: oldest creationTimestamp wins; on tie,
 // alphabetical {namespace}/{name}.
-func newBackendTLSResolver(c client.Client) proxy.BackendTLSResolver {
-	return func(ctx context.Context, namespace, serviceName string, port int32) *proxy.BackendTLSConfig {
+func newBackendTLSResolver(c client.Client) backendTLSLookup {
+	return func(ctx context.Context, namespace, serviceName string, port int32, isService bool) (*proxy.BackendTLSConfig, error) {
 		var policies gatewayv1.BackendTLSPolicyList
 		if err := c.List(ctx, &policies, client.InNamespace(namespace)); err != nil {
-			slog.Warn("failed to list BackendTLSPolicy — falling back to plaintext for this backend; "+
-				"policy enforcement will resume once the cache recovers",
-				"error", err,
-				"namespace", namespace,
-				"service", serviceName,
-				"port", port,
-			)
+			// Neither the API server nor the client knows the kind, so no
+			// policy can exist, and a held-back push would never be retried
+			// into success.
+			if meta.IsNoMatchError(err) || runtime.IsNotRegisteredError(err) {
+				return nil, nil
+			}
 
-			return nil
+			return nil, fmt.Errorf("%w: listing BackendTLSPolicies in namespace %s: %w",
+				errBackendTLSUnresolved, namespace, err)
 		}
 
-		policy := selectPolicyForServicePort(ctx, c, policies.Items, namespace, serviceName, port)
+		policy, err := selectPolicyForServicePort(ctx, c, policies.Items, namespace, serviceName, port, isService)
+		if err != nil {
+			return nil, err
+		}
+
 		if policy == nil {
-			return nil
+			return nil, nil
 		}
 
 		if len(policy.Spec.Validation.CACertificateRefs) == 0 {
-			return poisonedBackendTLS(policy, serviceName, "it relies on wellKnownCACertificates, which this controller does not support")
+			return poisonedBackendTLS(policy, serviceName, "it relies on wellKnownCACertificates, which this controller does not support"), nil
 		}
 
-		caBundle, ok := resolveCABundlePEM(ctx, c, policy)
+		caBundle, ok, err := resolveCABundlePEM(ctx, c, policy)
+		if err != nil {
+			return nil, err
+		}
+
 		if !ok {
-			return poisonedBackendTLS(policy, serviceName, "its CA certificates cannot be resolved")
+			return poisonedBackendTLS(policy, serviceName, "its CA certificates cannot be resolved"), nil
 		}
 
 		dnsSANs, uriSANs, hasUnknown := splitSANsByType(policy)
@@ -492,7 +549,7 @@ func newBackendTLSResolver(c client.Client) proxy.BackendTLSResolver {
 				"name", policy.Name,
 			)
 
-			return poisonedBackendTLS(policy, serviceName, "it carries a SubjectAltName type this controller does not support")
+			return poisonedBackendTLS(policy, serviceName, "it carries a SubjectAltName type this controller does not support"), nil
 		}
 
 		return &proxy.BackendTLSConfig{
@@ -500,7 +557,7 @@ func newBackendTLSResolver(c client.Client) proxy.BackendTLSResolver {
 			ServerName:         string(policy.Spec.Validation.Hostname),
 			SubjectAltNames:    dnsSANs,
 			SubjectAltNameURIs: uriSANs,
-		}
+		}, nil
 	}
 }
 
@@ -550,40 +607,57 @@ func poisonedBackendTLS(policy *gatewayv1.BackendTLSPolicy, serviceName, cause s
 
 // selectPolicyForServicePort picks the precedence-winner among policies that
 // target a Service+Port: TargetRefs without SectionName apply to every port;
-// TargetRefs with SectionName apply only when the named port matches `port`.
+// TargetRefs with SectionName apply only when the named port matches `port`,
+// or, for a core Service ref (isService), when the Service is not in the cache
+// and its port names are unknown.
 // Older creationTimestamp wins; ties break alphabetically by name.
 //
 // `c`, `ctx`, and `namespace` enable the optional Service-port-name lookup —
 // when a policy carries a SectionName, the function maps the port number back
-// to the Service's port name and checks for a match.
+// to the Service's port name and checks for a match. A failed lookup is
+// returned as an error wrapping errBackendTLSUnresolved.
 func selectPolicyForServicePort(
 	ctx context.Context,
 	c client.Client,
 	policies []gatewayv1.BackendTLSPolicy,
 	namespace, serviceName string,
 	port int32,
-) *gatewayv1.BackendTLSPolicy {
-	var portName string
+	isService bool,
+) (*gatewayv1.BackendTLSPolicy, error) {
+	var (
+		portName    string
+		portKnown   bool
+		portNameErr error
+	)
 
 	// Defer the Service lookup until at least one policy carries a SectionName —
 	// most policies don't, so we avoid an extra Get for the common case.
 	portNameResolved := false
-	resolvePortName := func() string {
+	resolvePortName := func() (string, bool, error) {
 		if portNameResolved {
-			return portName
+			return portName, portKnown, portNameErr
 		}
 
 		portNameResolved = true
-		portName = lookupServicePortName(ctx, c, namespace, serviceName, port)
+		portName, portKnown, portNameErr = lookupServicePortName(ctx, c, namespace, serviceName, port)
+		// Port names count as unknown only for a core Service ref; for another
+		// kind sharing the name, an absent local Service has no port name.
+		portKnown = portKnown || !isService
 
-		return portName
+		return portName, portKnown, portNameErr
 	}
 
 	var best *gatewayv1.BackendTLSPolicy
 
 	for policyIdx := range policies {
 		policy := &policies[policyIdx]
-		if !policyTargetsServicePort(policy, serviceName, resolvePortName) {
+
+		targets, err := policyTargetsServicePort(policy, serviceName, resolvePortName)
+		if err != nil {
+			return nil, err
+		}
+
+		if !targets {
 			continue
 		}
 
@@ -592,7 +666,7 @@ func selectPolicyForServicePort(
 		}
 	}
 
-	return best
+	return best, nil
 }
 
 // policyTargetsServicePort reports whether any TargetRef in the policy points
@@ -602,8 +676,8 @@ func selectPolicyForServicePort(
 func policyTargetsServicePort(
 	policy *gatewayv1.BackendTLSPolicy,
 	serviceName string,
-	resolvePortName func() string,
-) bool {
+	resolvePortName func() (string, bool, error),
+) (bool, error) {
 	for _, target := range policy.Spec.TargetRefs {
 		if string(target.Name) != serviceName {
 			continue
@@ -615,37 +689,50 @@ func policyTargetsServicePort(
 		}
 
 		if target.SectionName == nil || *target.SectionName == "" {
-			return true
+			return true, nil
 		}
 
 		// SectionName set → only match when the actual backend port carries
-		// the same name. If the Service has no port with that name (or the
-		// Service can't be fetched), this policy does NOT apply to this port.
-		if string(*target.SectionName) == resolvePortName() {
-			return true
+		// the same name. A Service the cache does not hold has no known port
+		// names, so the policy is taken to apply: a RequestMirror destination
+		// is dialed without the not-found check a backendRef gets.
+		portName, known, err := resolvePortName()
+		if err != nil {
+			return false, err
+		}
+
+		if !known || string(*target.SectionName) == portName {
+			return true, nil
 		}
 	}
 
-	return false
+	return false, nil
 }
 
-// lookupServicePortName returns the name of the Service port matching `port`,
-// or "" if the Service or port can't be resolved. Errors are swallowed
-// intentionally: a missing Service is treated as "no port name available",
-// which leads SectionName-bearing policies to be rejected for this port.
-func lookupServicePortName(ctx context.Context, c client.Client, namespace, serviceName string, port int32) string {
+// lookupServicePortName returns the name of the Service port matching `port`
+// ("" when the Service has no such port) and whether the Service was found.
+// Any read error other than NotFound is returned wrapping
+// errBackendTLSUnresolved: without the port name the controller cannot tell
+// whether a SectionName-scoped policy applies.
+func lookupServicePortName(
+	ctx context.Context, c client.Client, namespace, serviceName string, port int32,
+) (string, bool, error) {
 	var svc corev1.Service
 	if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: serviceName}, &svc); err != nil {
-		return ""
+		if apierrors.IsNotFound(err) {
+			return "", false, nil
+		}
+
+		return "", false, fmt.Errorf("%w: reading Service %s/%s: %w", errBackendTLSUnresolved, namespace, serviceName, err)
 	}
 
 	for portIdx := range svc.Spec.Ports {
 		if svc.Spec.Ports[portIdx].Port == port {
-			return svc.Spec.Ports[portIdx].Name
+			return svc.Spec.Ports[portIdx].Name, true, nil
 		}
 	}
 
-	return ""
+	return "", true, nil
 }
 
 // isPolicyOlder reports whether candidate was created before incumbent, or
@@ -669,10 +756,12 @@ func isPolicyOlder(candidate, incumbent *gatewayv1.BackendTLSPolicy) bool {
 // Group/Kind, missing ConfigMap, empty `ca.crt` key, or a `ca.crt` value that
 // does not contain at least one parseable PEM CERTIFICATE block — the proxy
 // then short-circuits the backend so traffic fails closed rather than
-// downgrading silently to plaintext when the policy can't be enforced.
-func resolveCABundlePEM(ctx context.Context, c client.Client, policy *gatewayv1.BackendTLSPolicy) (string, bool) {
+// downgrading silently to plaintext when the policy can't be enforced. A
+// ConfigMap read error other than NotFound is returned wrapping
+// errBackendTLSUnresolved instead.
+func resolveCABundlePEM(ctx context.Context, c client.Client, policy *gatewayv1.BackendTLSPolicy) (string, bool, error) {
 	if len(policy.Spec.Validation.CACertificateRefs) == 0 {
-		return "", false
+		return "", false, nil
 	}
 
 	var bundle strings.Builder
@@ -680,30 +769,35 @@ func resolveCABundlePEM(ctx context.Context, c client.Client, policy *gatewayv1.
 	for _, ref := range policy.Spec.Validation.CACertificateRefs {
 		group := string(ref.Group)
 		if !coregroup.Is(group) {
-			return "", false
+			return "", false, nil
 		}
 
 		if string(ref.Kind) != configMapKind {
-			return "", false
+			return "", false, nil
 		}
 
 		var caCM corev1.ConfigMap
 
 		key := client.ObjectKey{Namespace: policy.Namespace, Name: string(ref.Name)}
 		if err := c.Get(ctx, key, &caCM); err != nil {
-			return "", false
+			if apierrors.IsNotFound(err) {
+				return "", false, nil
+			}
+
+			return "", false, fmt.Errorf("%w: reading CA ConfigMap %s/%s: %w",
+				errBackendTLSUnresolved, key.Namespace, key.Name, err)
 		}
 
 		caPEM, hasKey := caCM.Data[configMapCAKey]
 		if !hasKey || caPEM == "" {
-			return "", false
+			return "", false, nil
 		}
 
 		// Mirror the reconciler's validateCARefs check — a ConfigMap with
 		// garbage content under ca.crt would otherwise be passed through to
 		// the proxy and silently fail every TLS handshake at runtime.
-		if _, err := parseCABundle(caPEM); err != nil {
-			return "", false
+		if !caBundleParses(caPEM) {
+			return "", false, nil
 		}
 
 		bundle.WriteString(caPEM)
@@ -713,22 +807,34 @@ func resolveCABundlePEM(ctx context.Context, c client.Client, policy *gatewayv1.
 		}
 	}
 
-	return bundle.String(), true
+	return bundle.String(), true, nil
 }
 
-// newBackendProtocolResolver returns a resolver that reads a backend Service's
+func caBundleParses(pemBundle string) bool {
+	_, err := parseCABundle(pemBundle)
+
+	return err == nil
+}
+
+// newBackendProtocolResolver returns a lookup that reads a backend Service's
 // port appProtocol (e.g. kubernetes.io/h2c) so the proxy can pick the right
-// backend transport. Unknown services or ports resolve to "".
-func newBackendProtocolResolver(c client.Client) proxy.BackendProtocolResolver {
-	return func(ctx context.Context, namespace, serviceName string, port int32) string {
+// backend transport. A missing Service or port resolves to "".
+func newBackendProtocolResolver(c client.Client) backendProtocolLookup {
+	return func(ctx context.Context, namespace, serviceName string, port int32) (string, error) {
 		var svc corev1.Service
 
 		key := client.ObjectKey{Namespace: namespace, Name: serviceName}
 		if err := c.Get(ctx, key, &svc); err != nil {
-			return ""
+			// A client without the Service kind cannot hold an appProtocol;
+			// waiting for it would never succeed.
+			if apierrors.IsNotFound(err) || runtime.IsNotRegisteredError(err) {
+				return "", nil
+			}
+
+			return "", fmt.Errorf("%w: reading Service %s/%s: %w", errBackendTLSUnresolved, namespace, serviceName, err)
 		}
 
-		return portAppProtocol(&svc, port)
+		return portAppProtocol(&svc, port), nil
 	}
 }
 
@@ -891,8 +997,10 @@ type preparedPush struct {
 	cfgHash     string
 	diagnostics []proxy.RouteDiagnostic
 	skip        bool
-	// undecided, when set, says why the config must not be pushed: a backend
-	// reference in it could not be evaluated.
+	// undecided, when set, says why the config must not be pushed: an input
+	// it was built from could not be read. The partition's pushed state (skip
+	// key, failure streak, in-flight count, replay cache) is left untouched,
+	// so its replicas keep the last config they accepted.
 	undecided error
 }
 
@@ -924,7 +1032,7 @@ func (s *ProxySyncer) preparePush(
 	logger.Info("syncing proxy config",
 		"partition", key, "httpRoutes", len(routes), "grpcRoutes", len(grpcRoutes))
 
-	ctx, grantErrs := withGrantReadErrors(ctx)
+	ctx, readErrs := withBuildReadErrors(ctx)
 	cfg := s.buildProxyConfig(ctx, routes, grpcRoutes, failedRefs, grpcFailedRefs, certParents)
 
 	// Replace the converter's build-time version with the one the caller
@@ -944,10 +1052,15 @@ func (s *ProxySyncer) preparePush(
 
 	logger.Info("resolved endpoints", "partition", key, "original", len(endpoints), "resolved", len(resolved))
 
-	if err := grantErrs.err(); err != nil || partitionRefsUndecided(routes, grpcRoutes, failedRefs, grpcFailedRefs) {
-		grantErrs.markUndecided(diagnostics)
+	if err := readErrs.err(); err != nil || partitionRefsUndecided(routes, grpcRoutes, failedRefs, grpcFailedRefs) {
+		readErrs.markUndecided(diagnostics)
 
-		return preparedPush{cfg: cfg, diagnostics: diagnostics, undecided: errors.CombineErrors(errBackendRefsUndecided, err)}
+		undecided := errBackendRefsUndecided
+		if err != nil {
+			undecided = fmt.Errorf("%w: %w", errBackendRefsUndecided, err)
+		}
+
+		return preparedPush{cfg: cfg, diagnostics: diagnostics, undecided: undecided}
 	}
 
 	// Steady-state skip: when the rebuilt config is identical to the last

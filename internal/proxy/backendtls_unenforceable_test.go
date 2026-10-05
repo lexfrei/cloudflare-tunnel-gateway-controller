@@ -16,7 +16,7 @@ import (
 
 const unenforceableCause = "BackendTLSPolicy default/web-tls cannot be enforced"
 
-func unenforceableTLSResolver(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+func unenforceableTLSResolver(_ context.Context, _, _ string, _ int32, _ bool) *proxy.BackendTLSConfig {
 	return &proxy.BackendTLSConfig{ServerName: "web-svc", Unenforceable: unenforceableCause}
 }
 

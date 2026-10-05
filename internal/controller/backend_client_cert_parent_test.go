@@ -142,7 +142,7 @@ func certParentSyncer(t *testing.T, extra ...client.Object) (*ProxySyncer, map[s
 	)...).Build()
 
 	syncer := NewProxySyncer("cluster.local", "token", "", cli, nil)
-	syncer.tlsResolver = func(context.Context, string, string, int32) *proxy.BackendTLSConfig {
+	syncer.tlsResolver = func(context.Context, string, string, int32, bool) *proxy.BackendTLSConfig {
 		return &proxy.BackendTLSConfig{ServerName: "backend.example.com"}
 	}
 

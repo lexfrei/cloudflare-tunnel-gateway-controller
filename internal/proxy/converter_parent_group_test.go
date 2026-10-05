@@ -52,7 +52,7 @@ func TestConvertHTTPRoutes_GatewayClientCert_ParentGroup(t *testing.T) {
 				},
 			}
 
-			tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+			tlsResolver := func(_ context.Context, _, _ string, _ int32, _ bool) *proxy.BackendTLSConfig {
 				return &proxy.BackendTLSConfig{CABundlePEM: "CA", ServerName: "svc"}
 			}
 			certResolver := func(_ context.Context, _, _ ktypes.NamespacedName, _ gatewayv1.Kind) *proxy.ClientCertConfig {

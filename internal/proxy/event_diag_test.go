@@ -33,7 +33,7 @@ func TestConvertHTTPRoutes_H2CSuppressedByTLS_NormalEvent(t *testing.T) {
 	t.Parallel()
 
 	resolver := func(_ context.Context, _, _ string, _ int32) string { return "kubernetes.io/h2c" }
-	tlsResolver := func(_ context.Context, _, _ string, _ int32) *proxy.BackendTLSConfig {
+	tlsResolver := func(_ context.Context, _, _ string, _ int32, _ bool) *proxy.BackendTLSConfig {
 		return &proxy.BackendTLSConfig{CABundlePEM: "ca", ServerName: "web-svc"}
 	}
 
