@@ -22,7 +22,7 @@ jobs:
         run: echo "${{ github.event.pull_request.number }}" > pr-number.txt
 
       - name: Upload PR metadata
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: pr-metadata
           path: pr-number.txt
@@ -47,7 +47,7 @@ jobs:
           severity: 'CRITICAL,HIGH,MEDIUM'
 
       - name: Upload Trivy SARIF as artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: trivy-sarif
           path: trivy-fs-results.sarif
@@ -388,7 +388,7 @@ jobs:
 
       - name: Upload digest
         if: needs.registry-probe.outputs.publish == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: digests-${{ matrix.component }}-${{ matrix.arch }}
           path: /tmp/digests/*
@@ -507,7 +507,7 @@ jobs:
 
       - name: Upload image reference
         if: needs.registry-probe.outputs.publish == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: image-ref-${{ matrix.component }}
           path: /tmp/refs/*
@@ -872,7 +872,7 @@ jobs:
 
       - name: Upload chart bundle artifact
         if: needs.registry-probe.outputs.publish == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ci-chart-bundle
           path: /tmp/bundle/*
