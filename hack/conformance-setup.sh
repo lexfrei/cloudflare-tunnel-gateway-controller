@@ -51,7 +51,7 @@ TEST_NAMESPACE="conformance-test"
 RELEASE_NAME="cftunnel"
 CONTROLLER_IMAGE="controller:dev"
 PROXY_IMAGE="proxy:dev"
-GATEWAY_API_VERSION="v1.6.2"
+GATEWAY_API_VERSION="v1.6.3"
 
 # --- Flags ---
 RUN_TESTS=false

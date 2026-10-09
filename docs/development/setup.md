@@ -79,7 +79,7 @@ The controller binary takes no credential environment variables. Cloudflare cred
 
 ```bash
 # Install Gateway API CRDs
-kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.2/standard-install.yaml
+kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.3/standard-install.yaml
 
 # Create namespace
 kubectl create namespace cloudflare-tunnel-system
