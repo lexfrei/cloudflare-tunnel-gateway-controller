@@ -26,7 +26,7 @@ runs:
           set -euo pipefail
 
           # renovate: datasource=github-releases depName=helm/chart-testing
-          CT_VERSION="v3.14.0"
+          CT_VERSION="v3.15.0"
           # renovate: datasource=pypi depName=yamllint
           YAMLLINT_VERSION="1.38.0"
           # renovate: datasource=pypi depName=yamale
