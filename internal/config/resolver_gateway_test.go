@@ -149,7 +149,7 @@ func TestResolveForGateway_SharedModeReturnsNil(t *testing.T) {
 		Spec:       gatewayv1.GatewaySpec{GatewayClassName: "cloudflare-tunnel"},
 	}
 
-	resolver := newGatewayResolver(t)
+	resolver := newGatewayResolver(t, classFixtures()...)
 
 	resolved, err := resolver.ResolveForGateway(context.Background(), gateway)
 	require.NoError(t, err)
@@ -372,7 +372,10 @@ func TestResolveStatusConfigForGateway_SharedModeReturnsNil(t *testing.T) {
 	resolver := newGatewayResolver(t, classFixtures()...)
 
 	cfg, err := resolver.ResolveStatusConfigForGateway(context.Background(),
-		&gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: testGwNamespace}})
+		&gatewayv1.Gateway{
+			ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: testGwNamespace},
+			Spec:       gatewayv1.GatewaySpec{GatewayClassName: "cloudflare-tunnel"},
+		})
 	require.NoError(t, err)
 	assert.Nil(t, cfg, "a Gateway without parametersRef is shared mode")
 }
@@ -597,15 +600,6 @@ func TestResolveForGateway_ExplicitAuthSecretMissingIsInvalidParameters(t *testi
 	require.Error(t, err)
 	assert.ErrorIs(t, err, config.ErrInvalidParameters,
 		"a named-but-absent auth Secret is a user spec problem -> InvalidParameters")
-}
-
-// TestHasInfrastructureParametersRef pins the opt-in predicate the sync
-// partitioner uses.
-func TestHasInfrastructureParametersRef(t *testing.T) {
-	t.Parallel()
-
-	assert.False(t, config.HasInfrastructureParametersRef(&gatewayv1.Gateway{}))
-	assert.True(t, config.HasInfrastructureParametersRef(gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "x")))
 }
 
 // errTransientAPIServer simulates an infrastructure failure (apiserver

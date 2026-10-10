@@ -1338,8 +1338,9 @@ func TestGatewayReconciler_SetConfigErrorStatus(t *testing.T) {
 	fakeClient := setupGatewayFakeClient(gateway)
 
 	reconciler := &GatewayReconciler{
-		Client: fakeClient,
-		Scheme: fakeClient.Scheme(),
+		Client:         fakeClient,
+		Scheme:         fakeClient.Scheme(),
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	configErr := assert.AnError
@@ -3509,6 +3510,7 @@ func TestGatewayReconciler_SetConfigErrorStatus_UpdateFailure(t *testing.T) {
 		Client:         fakeClient,
 		Scheme:         fakeClient.Scheme(),
 		ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
 	}
 
 	configErr := errors.New("test config error")

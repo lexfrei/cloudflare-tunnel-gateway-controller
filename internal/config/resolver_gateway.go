@@ -39,6 +39,8 @@ const (
 // identity so callers retry with backoff instead of blaming the user's spec.
 var ErrInvalidParameters = errors.New("invalid Gateway spec.infrastructure.parametersRef")
 
+var errNoDedicatedPlane = errors.New("no dedicated data plane")
+
 // MarkInvalidParameters classifies err as ErrInvalidParameters without adding
 // the sentinel's text, which names a Gateway's infrastructure ref, to its
 // message. Both the standard library's errors.Is and cockroachdb's see the
@@ -94,16 +96,70 @@ type PerGatewayConfig struct {
 	GatewayConfig *v1alpha1.GatewayConfig
 }
 
-// HasInfrastructureParametersRef reports whether the Gateway opts into a
-// per-Gateway data plane. It deliberately does not validate the ref — an
-// unsupported group/kind is still an opt-in attempt and must surface as
-// InvalidParameters rather than silently falling back to the shared plane.
-func HasInfrastructureParametersRef(gateway *gatewayv1.Gateway) bool {
-	return gateway.Spec.Infrastructure != nil && gateway.Spec.Infrastructure.ParametersRef != nil
+// DataPlaneRef returns the parametersRef a Gateway's data plane resolves
+// from: the Gateway's own, or else the GatewayConfig its class names as the
+// default. Nil means the shared data plane. The Gateway's own ref is returned
+// unvalidated: an unsupported group/kind is still an opt-in attempt and must
+// surface as InvalidParameters rather than fall back to the shared plane.
+func DataPlaneRef(
+	gateway *gatewayv1.Gateway,
+	classConfig *v1alpha1.GatewayClassConfig,
+) *gatewayv1.LocalParametersReference {
+	if gateway.Spec.Infrastructure != nil && gateway.Spec.Infrastructure.ParametersRef != nil {
+		return gateway.Spec.Infrastructure.ParametersRef
+	}
+
+	if classConfig == nil {
+		return nil
+	}
+
+	name := classConfig.Spec.DefaultGatewayConfigName()
+	if name == "" {
+		return nil
+	}
+
+	return &gatewayv1.LocalParametersReference{
+		Group: ParametersRefGroup, Kind: GatewayParametersRefKind, Name: name,
+	}
+}
+
+// UsesDedicatedPlane reports whether the Gateway is served by a data plane of
+// its own, through its parametersRef or its class's default.
+func (r *Resolver) UsesDedicatedPlane(ctx context.Context, gateway *gatewayv1.Gateway) (bool, error) {
+	ref, _, err := r.dataPlaneRef(ctx, gateway)
+
+	return ref != nil, err
+}
+
+// dataPlaneRef is DataPlaneRef with the class read when the Gateway names no
+// GatewayConfig itself; the bool reports that the ref is the class default.
+func (r *Resolver) dataPlaneRef(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+) (*gatewayv1.LocalParametersReference, bool, error) {
+	if ref := DataPlaneRef(gateway, nil); ref != nil {
+		return ref, false, nil
+	}
+
+	className := string(gateway.Spec.GatewayClassName)
+
+	gatewayClass, err := r.readGatewayClass(ctx, className)
+	if err != nil {
+		return nil, false, classError(className, err)
+	}
+
+	classConfig, err := r.readClassConfig(ctx, gatewayClass.Spec.ParametersRef)
+	if err != nil {
+		return nil, false, classError(className, err)
+	}
+
+	ref := DataPlaneRef(gateway, classConfig)
+
+	return ref, ref != nil, nil
 }
 
 // ResolveForGateway resolves the per-Gateway data-plane configuration. A
-// Gateway without infrastructure.parametersRef returns (nil, nil) — shared
+// Gateway served by the shared plane (see DataPlaneRef) returns (nil, nil) — shared
 // mode, byte-for-byte the pre-existing behaviour. Resolution failures caused
 // by the referenced material classify as ErrInvalidParameters (see the
 // sentinel's doc for the status mapping).
@@ -170,11 +226,12 @@ func (r *Resolver) resolveStatusConfig(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 ) (*PerGatewayConfig, error) {
-	if !HasInfrastructureParametersRef(gateway) {
-		return nil, nil //nolint:nilnil // nil,nil IS the shared-mode signal, documented contract
+	ref, fromClass, err := r.dataPlaneRef(ctx, gateway)
+	if err != nil || ref == nil {
+		return nil, err
 	}
 
-	gwConfig, err := r.getGatewayConfig(ctx, gateway)
+	gwConfig, err := r.getGatewayConfig(ctx, gateway, ref, fromClass)
 	if err != nil {
 		return nil, err
 	}
@@ -232,11 +289,12 @@ func (r *Resolver) ResolveTunnelClaimForGateway(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 ) (*TunnelClaim, error) {
-	if !HasInfrastructureParametersRef(gateway) {
-		return nil, nil //nolint:nilnil // nil,nil IS the shared-mode signal, like ResolveForGateway
+	ref, fromClass, err := r.dataPlaneRef(ctx, gateway)
+	if err != nil || ref == nil {
+		return nil, err
 	}
 
-	gwConfig, err := r.getGatewayConfig(ctx, gateway)
+	gwConfig, err := r.getGatewayConfig(ctx, gateway, ref, fromClass)
 	if err != nil {
 		return nil, err
 	}
@@ -266,8 +324,8 @@ func (r *Resolver) ResolveTunnelClaimForGateway(
 	return claim, nil
 }
 
-// GetGatewayConfig resolves and returns the GatewayConfig referenced by the
-// Gateway's infrastructure.parametersRef, applying the same group/kind
+// GetGatewayConfig resolves and returns the GatewayConfig the Gateway's data
+// plane is configured from (see DataPlaneRef), applying the same group/kind
 // validation and ErrInvalidParameters classification as ResolveForGateway.
 // Exposed for the infra reconciler, which must ensure the generated auth
 // Secret exists BEFORE ResolveForGateway can read it.
@@ -275,7 +333,16 @@ func (r *Resolver) GetGatewayConfig(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
 ) (*v1alpha1.GatewayConfig, error) {
-	return r.getGatewayConfig(ctx, gateway)
+	ref, fromClass, err := r.dataPlaneRef(ctx, gateway)
+	if err != nil {
+		return nil, err
+	}
+
+	if ref == nil {
+		return nil, errors.Wrapf(errNoDedicatedPlane, "gateway %s/%s", gateway.Namespace, gateway.Name)
+	}
+
+	return r.getGatewayConfig(ctx, gateway, ref, fromClass)
 }
 
 // getGatewayConfig validates the parametersRef group/kind and fetches the
@@ -284,9 +351,9 @@ func (r *Resolver) GetGatewayConfig(
 func (r *Resolver) getGatewayConfig(
 	ctx context.Context,
 	gateway *gatewayv1.Gateway,
+	ref *gatewayv1.LocalParametersReference,
+	fromClass bool,
 ) (*v1alpha1.GatewayConfig, error) {
-	ref := gateway.Spec.Infrastructure.ParametersRef
-
 	if string(ref.Group) != ParametersRefGroup || string(ref.Kind) != GatewayParametersRefKind {
 		return nil, errors.Wrapf(ErrInvalidParameters,
 			"unsupported infrastructure parametersRef %s/%s (expected %s/%s)",
@@ -300,6 +367,12 @@ func (r *Resolver) getGatewayConfig(
 		// Only a deterministic referent failure is the USER's parametersRef
 		// being invalid; a transient apiserver error keeps its own identity so
 		// callers retry with backoff instead of stamping InvalidParameters.
+		if apierrors.IsNotFound(err) && fromClass {
+			return nil, errors.Wrapf(ErrInvalidParameters,
+				"GatewayConfig %s/%s, the default GatewayClass %q names for its Gateways: %v",
+				gateway.Namespace, ref.Name, gateway.Spec.GatewayClassName, err)
+		}
+
 		if apierrors.IsNotFound(err) {
 			return nil, errors.Wrapf(ErrInvalidParameters,
 				"GatewayConfig %s/%s: %v", gateway.Namespace, ref.Name, err)

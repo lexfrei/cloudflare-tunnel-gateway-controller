@@ -67,7 +67,7 @@ func TestResolveTunnelClaimForGateway_SharedModeReturnsNil(t *testing.T) {
 	t.Parallel()
 
 	verifier := &recordingVerifier{proof: tunnelownership.ProofVerified}
-	resolver := newClaimResolver(t, verifier)
+	resolver := newClaimResolver(t, verifier, classFixtures()...)
 
 	gateway := gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config")
 	gateway.Spec.Infrastructure = nil

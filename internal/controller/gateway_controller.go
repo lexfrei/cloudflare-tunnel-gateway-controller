@@ -377,13 +377,14 @@ func (r *GatewayReconciler) reportQuotaRefusal(
 	capacity int32,
 ) {
 	logger := log.FromContext(ctx)
-	err := dataPlaneQuotaError(capacity)
+	ownRef := config.DataPlaneRef(gateway, nil) != nil
+	err := dataPlaneQuotaError(capacity, ownRef)
 
 	// The refusal requeues every configErrorRequeueDelay for as long as the
 	// Gateway stands, so reporting on each pass would let the refused tenant
 	// choose the log and event volume. Report only when the verdict is new;
 	// the condition is what persists.
-	if !isRefusalReported(gateway, dataPlaneQuotaMessage(capacity)) {
+	if !isRefusalReported(gateway, dataPlaneQuotaMessage(capacity, ownRef)) {
 		logger.Error(err, "refusing a Gateway whose namespace is at its dedicated data-plane cap",
 			"gateway", gateway.Namespace+"/"+gateway.Name,
 			"cap", capacity)
@@ -404,9 +405,9 @@ func (r *GatewayReconciler) reportQuotaRefusal(
 // tunnelRefusalError explains.
 //
 //nolint:wrapcheck // classifying rather than wrapping is the point, per above
-func dataPlaneQuotaError(capacity int32) error {
+func dataPlaneQuotaError(capacity int32, ownRef bool) error {
 	return config.MarkInvalidParameters(
-		errors.Mark(errors.New(dataPlaneQuotaMessage(capacity)), errDataPlaneQuotaExceeded),
+		errors.Mark(errors.New(dataPlaneQuotaMessage(capacity, ownRef)), errDataPlaneQuotaExceeded),
 	)
 }
 
@@ -688,6 +689,35 @@ func (r *GatewayReconciler) tunnelRejection(
 	return &rejection
 }
 
+// keepsTunnelAddress reports whether a Gateway refused for its configuration
+// keeps its address: one with a dedicated data plane does, for the reason
+// given at the call site. With the class unreadable, the Gateway's own
+// parametersRef or a plane it already runs shows that.
+func (r *GatewayReconciler) keepsTunnelAddress(ctx context.Context, gateway *gatewayv1.Gateway) bool {
+	dedicated, err := r.ConfigResolver.UsesDedicatedPlane(ctx, gateway)
+	if err != nil {
+		return config.DataPlaneRef(gateway, nil) != nil || r.runsRenderedPlane(ctx, gateway)
+	}
+
+	return dedicated
+}
+
+// runsRenderedPlane reports whether the Gateway owns a rendered proxy
+// Deployment. A read that fails says nothing, so it counts as a running plane:
+// keeping an address is recoverable, releasing a held tunnel is not.
+func (r *GatewayReconciler) runsRenderedPlane(ctx context.Context, gateway *gatewayv1.Gateway) bool {
+	var deployment appsv1.Deployment
+
+	err := r.Get(ctx, types.NamespacedName{Name: render.DeploymentName(gateway), Namespace: gateway.Namespace}, &deployment)
+	if err != nil {
+		return !apierrors.IsNotFound(err)
+	}
+
+	owner := metav1.GetControllerOf(&deployment)
+
+	return owner != nil && owner.UID == gateway.UID
+}
+
 // resolveGatewayConfig resolves the Gateway's effective configuration: the
 // per-Gateway data plane (infrastructure.parametersRef → tunnel identity from
 // the connector token) when opted in, the GatewayClass chain otherwise. The
@@ -702,6 +732,12 @@ func (r *GatewayReconciler) resolveGatewayConfig(
 	// auth Secret. That Secret is created by the infra reconciler, so reading
 	// it here would fail transiently in the bootstrap window and leave the
 	// Gateway statusless until it lands — yet the status path never consumes it.
+	// A Gateway without its own parametersRef reads its class to learn whether
+	// it has a plane at all, so a failure there is the class's to report.
+	if _, err := r.ConfigResolver.UsesDedicatedPlane(ctx, gateway); err != nil {
+		return nil, false, errors.Wrap(err, "GatewayClass configuration")
+	}
+
 	perGateway, err := r.ConfigResolver.ResolveStatusConfigForGateway(ctx, gateway)
 	if err != nil {
 		return nil, false, errors.Wrap(err, "per-gateway configuration")
@@ -1196,7 +1232,7 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 		// serving its last configuration, and external-dns publishes records
 		// from this address, so clearing it would delete DNS for every
 		// hostname on the shared plane.
-		if !config.HasInfrastructureParametersRef(&freshGateway) && !errors.Is(configErr, errClassConfigConflict) {
+		if !r.keepsTunnelAddress(ctx, &freshGateway) && !errors.Is(configErr, errClassConfigConflict) {
 			freshGateway.Status.Addresses = nil
 		}
 
@@ -1762,16 +1798,30 @@ func (r *GatewayReconciler) gatewayConfigToGateways(ctx context.Context, obj cli
 		return nil
 	}
 
+	if len(gateways.Items) == 0 {
+		return nil
+	}
+
+	classConfigs, err := managedClassConfigs(ctx, r.Client, r.ControllerName)
+	if err != nil {
+		log.FromContext(ctx).Error(err, "listing GatewayClasses for a GatewayConfig event; status-refresh trigger dropped",
+			"namespace", obj.GetNamespace())
+
+		return nil
+	}
+
 	var requests []reconcile.Request
 
 	for i := range gateways.Items {
 		gateway := &gateways.Items[i]
 
-		if !config.HasInfrastructureParametersRef(gateway) {
+		// A class this controller does not manage contributes no default, so
+		// such a Gateway is matched on its own ref alone.
+		ref := config.DataPlaneRef(gateway, classConfigs[string(gateway.Spec.GatewayClassName)])
+		if ref == nil {
 			continue
 		}
 
-		ref := gateway.Spec.Infrastructure.ParametersRef
 		// Match Group/Kind too, not just Name: a parametersRef to a foreign CRD
 		// that happens to share the GatewayConfig's name is not ours to resolve.
 		if string(ref.Group) != config.ParametersRefGroup || string(ref.Kind) != config.GatewayParametersRefKind {
