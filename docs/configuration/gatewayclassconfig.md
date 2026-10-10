@@ -70,7 +70,7 @@ spec:
 
 Caps how many Gateways in one namespace may each have a dedicated data plane. Leave it unset for no cap. `0` is rejected rather than accepted as another spelling of unlimited: it is what an operator writes for "no dedicated planes at all", and a field that granted the opposite would fail open.
 
-Every Gateway that opts in through `spec.infrastructure.parametersRef` renders a proxy Deployment, a headless Service, a NetworkPolicy and an optional HPA into its own namespace, and registers a connector on its tunnel. Without a cap, a tenant who can create Gateways and `GatewayConfig` objects decides how much of the cluster to consume.
+Every Gateway with a dedicated data plane, through its own `spec.infrastructure.parametersRef` or `spec.perGatewayDataPlanes`, renders a proxy Deployment, a headless Service, a NetworkPolicy and an optional HPA into its own namespace, and registers a connector on its tunnel. Without a cap, a tenant who can create Gateways and `GatewayConfig` objects decides how much of the cluster to consume.
 
 Past the cap the newest Gateways are refused (`Accepted=False`, reason `DataPlaneQuotaExceeded`), no plane is rendered for them, and their routes are programmed nowhere. Ordering is by creation timestamp, so a Gateway created now takes a free slot or is refused and never evicts one already serving. Two things do evict: lowering the cap, and an OLDER Gateway opting in later — see the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md#capping-data-planes-per-namespace).
 
@@ -79,6 +79,18 @@ Like `allowSharedTunnels`, the field lives on the cluster-scoped GatewayClassCon
 ```yaml
 spec:
   maxDataPlanesPerNamespace: 5
+```
+
+### `spec.perGatewayDataPlanes` (optional)
+
+Makes a dedicated data plane the default for every Gateway of the class. `defaultGatewayConfigName` names a `GatewayConfig`; a Gateway without its own `spec.infrastructure.parametersRef` is configured as if it referenced the GatewayConfig of that name in its own namespace. Omitted, such Gateways keep the shared data plane.
+
+A Gateway whose namespace has no GatewayConfig of that name is refused (`Accepted=False`, reason `InvalidParameters`) rather than served by the shared plane. A Gateway's own `parametersRef` replaces the default, and the two are never merged. The tunnel comes from the connector token in that GatewayConfig, so the controller creates no tunnels. Tunnel arbitration, `allowSharedTunnels` and `maxDataPlanesPerNamespace` apply to these Gateways as to any other dedicated one. See [A dedicated plane for every Gateway of the class](../guides/per-gateway-isolation.md#a-dedicated-plane-for-every-gateway-of-the-class).
+
+```yaml
+spec:
+  perGatewayDataPlanes:
+    defaultGatewayConfigName: edge-config
 ```
 
 ### `spec.cloudflareCredentialsSecretRef` (required)

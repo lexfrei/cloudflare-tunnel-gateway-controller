@@ -57,7 +57,32 @@ Use it when admission-level scoping (see [Multi-Tenancy](multi-tenancy.md)) is n
 
 The controller renders `cf-proxy-edge` (Deployment) and `cf-proxy-edge-config` (headless Service) in `tenant-a`, parses the tunnel identity from the connector token (there is deliberately no separate `tunnelID` field — it cannot drift from the token), checks with Cloudflare that the token really holds that tunnel (see [Proving a tunnel claim](#proving-a-tunnel-claim)), and starts syncing the Gateway's routes to that tunnel. The Gateway's status address becomes `<tunnel-id>.cfargotunnel.com`, and `Programmed` turns `True` only once the rendered Deployment has ready replicas — that is, registered tunnel connectors.
 
-A Gateway without `infrastructure.parametersRef` keeps the shared data plane, unchanged. Removing the ref later deletes the rendered resources (only when actually owned by the Gateway) and returns the Gateway to the shared plane.
+A Gateway without `infrastructure.parametersRef` keeps the shared data plane, unchanged, unless its class sets a default GatewayConfig (see the next section). Removing the ref later deletes the rendered resources (only when actually owned by the Gateway) and returns the Gateway to the shared plane; under a class default it moves to the default GatewayConfig's plane instead.
+
+## A dedicated plane for every Gateway of the class
+
+An operator can make a dedicated data plane the default for a whole class instead of waiting for each Gateway to opt in. Set `perGatewayDataPlanes.defaultGatewayConfigName` on the cluster-scoped `GatewayClassConfig` (chart value `gatewayClassConfig.perGatewayDataPlanes.defaultGatewayConfigName`):
+
+```yaml
+apiVersion: cf.k8s.lex.la/v1alpha1
+kind: GatewayClassConfig
+metadata:
+  name: cloudflare-tunnel-config
+spec:
+  tunnelID: "550e8400-e29b-41d4-a716-446655440000"
+  cloudflareCredentialsSecretRef:
+    name: cloudflare-credentials
+  perGatewayDataPlanes:
+    defaultGatewayConfigName: edge-config
+```
+
+Every Gateway of the class without its own `infrastructure.parametersRef` is then configured as if it referenced `GatewayConfig/edge-config` in its own namespace. The connector token stays in the tenant's namespace and decides the tunnel, so Gateways of one namespace share that namespace's tunnel unless one of them names its own GatewayConfig. The controller never creates tunnels; each namespace brings its token as in [Opting in](#opting-in).
+
+A Gateway whose namespace has no GatewayConfig of that name is refused with `Accepted=False`, reason `InvalidParameters`, and a message naming the missing GatewayConfig and its namespace. It does not fall back to the shared plane: the operator asked for isolation, and serving the Gateway without it would hide the gap. Creating the GatewayConfig recovers the Gateway on its own.
+
+A Gateway's own `parametersRef` replaces the default; the two GatewayConfigs are never merged. Everything else on this page applies to class-default Gateways unchanged: tunnel arbitration and `allowSharedTunnels`, the claim check, the data-plane cap, Programmed gating on the rendered Deployment, and the propagation of `spec.infrastructure` labels and annotations.
+
+Turning the default on for a class that already serves Gateways moves every Gateway without its own ref off the shared plane at its next reconcile, and refuses those in namespaces that have no such GatewayConfig yet. Create the GatewayConfigs first. Turning it off removes the planes it gave and returns those Gateways to the shared plane. The chart's shared proxy keeps running either way; with every Gateway on a plane of its own it serves no routes.
 
 ## GatewayConfig reference
 
@@ -147,7 +172,7 @@ Watch for it in the `TunnelClaimRejected` Warning Events: a Gateway you believe 
 
 ## Capping data planes per namespace
 
-Every opted-in Gateway renders a proxy Deployment, a headless Service, a NetworkPolicy and an optional HPA into its namespace, and registers a connector on its tunnel. Nothing about the opt-in bounds how many a tenant may ask for: a namespace with `create` on Gateway and `GatewayConfig` can multiply that as far as its object quota allows.
+Every Gateway with a dedicated data plane renders a proxy Deployment, a headless Service, a NetworkPolicy and an optional HPA into its namespace, and registers a connector on its tunnel. Nothing about the opt-in bounds how many a tenant may ask for: a namespace with `create` on Gateway and `GatewayConfig` can multiply that as far as its object quota allows.
 
 `maxDataPlanesPerNamespace` on the cluster-scoped `GatewayClassConfig` (chart value `gatewayClassConfig.maxDataPlanesPerNamespace`) caps it. Leave it unset for no cap, so nothing changes until an operator sets one. `0` is rejected by the apiserver rather than accepted as another spelling of unlimited: it is what an operator writes for "no dedicated planes at all", and a field that granted the opposite would fail open. Like `allowSharedTunnels`, the field is deliberately not on `GatewayConfig` — a tenant must not be able to raise their own cap. On a cluster upgraded from a release before the field existed, re-apply the `GatewayClassConfig` CRD first: Helm never upgrades CRDs, and the apiserver prunes a field the installed schema does not declare, so the cap would read back unset and enforce nothing. See [CRD upgrades](../upgrading/index.md#crd-upgrades).
 
@@ -171,7 +196,7 @@ Freeing a slot is not instant, but nothing has to be poked to start it. Deleting
 
 A refused Gateway keeps the tunnel CNAME already published in its `status.addresses`, deliberately: an address is how this controller records possession of a tunnel, and clearing it on a refusal would surrender the tunnel to any other namespace claiming it. The practical consequence after a cap lowering is that external-dns keeps the DNS record and the hostname answers HTTP 530 (no connector) rather than NXDOMAIN. Delete the Gateway to retire the record.
 
-Only Gateways carrying `spec.infrastructure.parametersRef` count. The shared data plane serves any number of Gateways and is unaffected, which makes dropping the `parametersRef` the tenant-side remedy when a namespace has more Gateways than dedicated planes it can have.
+Only Gateways with a dedicated data plane count, whether through their own `spec.infrastructure.parametersRef` or the class default. The shared data plane serves any number of Gateways and is unaffected, which makes dropping the `parametersRef` the tenant-side remedy when a namespace has more Gateways than dedicated planes it can have. Under a class default that remedy does not exist: every Gateway of the class needs a plane, so the cap becomes a cap on the class's Gateways per namespace.
 
 A Gateway refused for claiming a tunnel it does not own also holds its slot, even though it gets no plane. The two rules are deliberately independent, so neither verdict moves when the other changes; the wasted slot is the refused tenant's own.
 

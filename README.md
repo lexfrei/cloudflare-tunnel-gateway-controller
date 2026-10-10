@@ -155,7 +155,7 @@ Create standard [Gateway API](https://gateway-api.sigs.k8s.io/) HTTPRoute or GRP
 | `spec.listeners[].allowedRoutes` | ✅ | Namespace (Same/All/Selector) and kind filtering |
 | `spec.tls.frontend` | ❌ | Refused: the Gateway is `Accepted=False` and its routes are not served; validate client certificates at the Cloudflare edge instead ([details](https://cf.k8s.lex.la/latest/gateway-api/limitations/#client-certificate-validation-spectlsfrontend-is-refused)) |
 | `spec.addresses` | ❌ | Only the tunnel CNAME is served: another hostname leaves the Gateway `Programmed=False`, any other address type refuses it (`Accepted=False`) ([details](https://cf.k8s.lex.la/latest/gateway-api/limitations/#specaddresses-accepts-only-the-tunnel-hostname)) |
-| `spec.infrastructure.parametersRef` | ✅ | Opts the Gateway into a dedicated data plane (`GatewayConfig`, group `cf.k8s.lex.la`) — its own proxy and tunnel |
+| `spec.infrastructure.parametersRef` | ✅ | Opts the Gateway into a dedicated data plane (`GatewayConfig`, group `cf.k8s.lex.la`) — its own proxy and tunnel. A class can make one the default for all its Gateways |
 | `spec.infrastructure.labels` / `.annotations` | ✅ | Propagated to the rendered per-Gateway resources, generated Secrets and pod template |
 
 > **Note:** Cloudflare Tunnel terminates TLS at its edge. `HTTPS` listeners are accepted and served, and their certificate references are validated (including cross-namespace ReferenceGrant checks), but the client gets the Cloudflare edge certificate, not the listener's `certificateRefs`.
@@ -201,6 +201,7 @@ The L7 proxy handles routing for every tunnel request, so most Gateway API behav
 - Informational `1xx` responses such as `103 Early Hints` are not forwarded through the tunnel; the client gets only the final response.
 - `HTTPRouteRule.name` uniqueness is not enforced at admission; an opt-in `ValidatingAdmissionPolicy` (`ruleNameUniquenessPolicy` Helm value) enforces it.
 - The non-canonical `group: core` is accepted for `backendRef`s and `BackendTLSPolicy` CA refs, and rejected for a Gateway's `clientCertificateRef`, listener `certificateRefs` and the `ReferenceGrant` authorising them. Write `group: ""`, the spelling the Gateway API defines, and the asymmetry cannot bite.
+- `spec.infrastructure.labels` and `.annotations` reach only Gateways with a dedicated data plane; the shared plane renders nothing per Gateway.
 - Knative Serving via `net-gateway-api` needs a split-horizon setup — see the [Knative Serving guide](https://cf.k8s.lex.la/latest/guides/knative-serving/) — because its readiness prober dials the Gateway's tunnel address directly, which is not reachable in-cluster.
 
 The proxy can emit a structured per-request access log via `proxy.accessLog.enabled: true`. See [Access Logging](https://cf.k8s.lex.la/latest/operations/access-logging/).

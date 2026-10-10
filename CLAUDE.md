@@ -85,7 +85,7 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 
 - **ProxySyncer** (`internal/controller/proxy_syncer.go`): Converts HTTPRoutes into proxy config and pushes to proxy endpoints via HTTP API. Resolves headless service DNS for endpoint discovery. Validates cross-namespace backends via ReferenceGrant. Push state is per data-plane partition (`syncPartition`), each with its own steady-state-skip cache, endpoints, and auth token.
 
-- **GatewayInfraReconciler** (`internal/controller/gateway_infra_reconciler.go`): Renders and reconciles per-Gateway data planes (#479) — a dedicated proxy Deployment, headless config Service, a config-API NetworkPolicy, and optional HPA for Gateways carrying `spec.infrastructure.parametersRef` → `GatewayConfig`. Resources are controller-owned (GC on Gateway delete, drift-healed, deleted on opt-out only when owned). Writes no Gateway status; GatewayReconciler stays the single status writer and gates `Programmed` on the rendered Deployment's readiness in per-Gateway mode.
+- **GatewayInfraReconciler** (`internal/controller/gateway_infra_reconciler.go`): Renders and reconciles per-Gateway data planes (#479) — a dedicated proxy Deployment, headless config Service, a config-API NetworkPolicy, and optional HPA for Gateways carrying `spec.infrastructure.parametersRef` → `GatewayConfig`, or, when their GatewayClassConfig sets `perGatewayDataPlanes.defaultGatewayConfigName`, for every Gateway of the class without one (the namespace's GatewayConfig of that name; missing → `InvalidParameters`). `config.DataPlaneRef` is the single shared-vs-dedicated decision. Resources are controller-owned (GC on Gateway delete, drift-healed, deleted on opt-out only when owned). Writes no Gateway status; GatewayReconciler stays the single status writer and gates `Programmed` on the rendered Deployment's readiness in per-Gateway mode.
 
 - **Route partitioning** (`internal/controller/route_partition.go`): Accepted routes are split per data plane (shared + one partition per opted-in Gateway). The Cloudflare sync writes one ingress document per TUNNEL (same-tunnel partitions merge); the proxy push delivers each partition's config to its own endpoints, with same-tunnel partitions receiving the union (the edge load-balances a tunnel's requests across all its connectors). Partition membership is the isolation guarantee.
 
@@ -93,7 +93,7 @@ helm template test charts/cloudflare-tunnel-gateway-controller --values charts/c
 
 ### Custom Resource Definitions
 
-- **GatewayClassConfig** (`api/v1alpha1/`): Cluster-scoped CRD for configuring Cloudflare credentials and tunnel ID. Referenced by GatewayClass via `parametersRef`. Spec carries only `cloudflareCredentialsSecretRef`, optional `accountId`, and `tunnelID`. Shared-proxy configuration (replicas, tunnel token, probes, access log, websocket timeouts) lives in Helm chart values, not in the CRD.
+- **GatewayClassConfig** (`api/v1alpha1/`): Cluster-scoped CRD for configuring Cloudflare credentials and tunnel ID. Referenced by GatewayClass via `parametersRef`. Spec carries `cloudflareCredentialsSecretRef`, `tunnelID`, and the optional `accountId`, `allowSharedTunnels`, `maxDataPlanesPerNamespace` and `perGatewayDataPlanes`. Shared-proxy configuration (replicas, tunnel token, probes, access log, websocket timeouts) lives in Helm chart values, not in the CRD.
 
 - **GatewayConfig** (`api/v1alpha1/gatewayconfig_types.go`): Namespaced CRD for per-Gateway data planes, referenced from `Gateway.spec.infrastructure.parametersRef`. Carries the namespace-local connector-token Secret ref (tunnel identity is PARSED from the token — no separate tunnelID field), optional API-credential and push-auth overrides, replicas/autoscaling (CEL: mutually exclusive), resources, and image override.
 
@@ -599,6 +599,11 @@ Official Gateway API conformance suite (`sigs.k8s.io/gateway-api/conformance` v1
 # Setup + run the custom e2e suite (smoke-level; lighter than --test)
 ./hack/conformance-setup.sh --test-e2e
 
+# Give every suite Gateway a dedicated data plane (class default GatewayConfig)
+# and claim GatewayInfrastructure; one replica per plane, -parallel 4, since
+# Cloudflare caps a tunnel at 25 replicas. Conformance only, not --test-e2e.
+./hack/conformance-setup.sh --per-gateway-planes --test
+
 # Verify a PR's CI artifact: skip the local build, deploy the chart and images
 # PR #N's CI run published, resolved by digest from that run (needs gh + jq).
 # Add --test to also run the suite. The run's artifacts are kept for one day.
@@ -632,3 +637,4 @@ kubectl --context kind-<cluster-name> rollout restart deployment --namespace clo
 - `CONFORMANCE_KUBE_CONTEXT` — kubectl context to run against (default: the kubeconfig's current context)
 - `CONFORMANCE_GATEWAY_CLASS` — GatewayClass name (default: `cloudflare-tunnel`)
 - `CONFORMANCE_REPORT_OUTPUT` — Path for YAML conformance report
+- `CONFORMANCE_PER_GATEWAY_PLANES` — `true` claims GatewayInfrastructure and reports mode `per-gateway-data-planes`; set by `--per-gateway-planes`
