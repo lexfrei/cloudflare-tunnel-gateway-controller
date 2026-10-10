@@ -3,8 +3,10 @@
 package conformance
 
 import (
+	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -150,9 +152,9 @@ func TestGatewayAPIConformance(t *testing.T) {
 	// --- Exempt features ---
 	// Features that don't apply to tunnel architecture — skip silently.
 	opts.ExemptFeatures = []features.FeatureName{
-		// Gateway: tunnel has no static IPs, no multi-port, no spec.infrastructure
+		// Gateway: tunnel has no static IPs, no multi-port. GatewayInfrastructure
+		// depends on the run mode, see applyRunMode.
 		features.SupportGatewayStaticAddresses,
-		features.SupportGatewayInfrastructure,
 		features.SupportGatewayPort8080,
 		features.SupportGatewayFrontendClientCertificateValidation,
 		features.SupportGatewayFrontendClientCertificateValidationInsecureFallback,
@@ -171,6 +173,13 @@ func TestGatewayAPIConformance(t *testing.T) {
 	// Also skip tests for unsupported protocols/features that ExemptFeatures
 	// does not reliably filter (conformance suite runs all profile tests).
 	opts.SkipTests = conformanceSkipTests()
+
+	perGatewayPlanes, err := envBool(envPerGatewayPlanes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	applyRunMode(&opts, perGatewayPlanes)
 
 	// --- Timeouts ---
 	// Increase timeouts for tunnel latency (Cloudflare edge round-trip).
@@ -224,6 +233,44 @@ func TestGatewayAPIConformance(t *testing.T) {
 	}
 
 	conformance.RunConformanceWithOptions(t, opts)
+}
+
+// envPerGatewayPlanes is set by hack/conformance-setup.sh --per-gateway-planes,
+// which deploys the class with a default GatewayConfig so every suite Gateway
+// gets a dedicated data plane.
+const envPerGatewayPlanes = "CONFORMANCE_PER_GATEWAY_PLANES"
+
+// perGatewayPlanesMode is the suite mode of that deployment. The report
+// records it, so a GatewayInfrastructure claim names the configuration that
+// earned it.
+const perGatewayPlanesMode = "per-gateway-data-planes"
+
+// applyRunMode claims GatewayInfrastructure only when every suite Gateway has
+// a dedicated data plane. The shared plane renders nothing per Gateway, so
+// spec.infrastructure labels and annotations have nothing to land on.
+func applyRunMode(opts *suite.ConformanceOptions, perGatewayPlanes bool) {
+	if !perGatewayPlanes {
+		opts.ExemptFeatures = append(opts.ExemptFeatures, features.SupportGatewayInfrastructure)
+
+		return
+	}
+
+	opts.Mode = perGatewayPlanesMode
+	opts.SupportedFeatures = append(opts.SupportedFeatures, features.SupportGatewayInfrastructure)
+}
+
+func envBool(key string) (bool, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return false, nil
+	}
+
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s=%q: %w", key, value, err)
+	}
+
+	return parsed, nil
 }
 
 func envOrDefault(key, fallback string) string {
@@ -284,7 +331,6 @@ func conformanceSkipTests() []string {
 
 		// Gateway features not applicable to tunnel architecture.
 		"GatewayStaticAddresses",
-		"GatewayInfrastructure",
 		"GatewayFrontendClientCertificateValidation",
 		"GatewayFrontendClientCertificateValidationInsecureFallback",
 		"GatewayFrontendInvalidDefaultClientCertificateValidation",
