@@ -26,7 +26,7 @@ runs:
           set -euo pipefail
 
           # renovate: datasource=github-releases depName=helm/chart-testing
-          CT_VERSION="v3.14.0"
+          CT_VERSION="v3.15.0"
           # renovate: datasource=pypi depName=yamllint
           YAMLLINT_VERSION="1.38.0"
           # renovate: datasource=pypi depName=yamale
@@ -39,23 +39,31 @@ runs:
           tarball="chart-testing_${ver}_linux_${arch}.tar.gz"
           mkdir -p "${dir}"
 
-          curl --retry 5 --retry-delay 1 -sSLo "${dir}/ct.tar.gz"     "${base}/${tarball}"
-          curl --retry 5 --retry-delay 1 -sSLo "${dir}/ct.tar.gz.pem" "${base}/${tarball}.pem"
-          curl --retry 5 --retry-delay 1 -sSLo "${dir}/ct.tar.gz.sig" "${base}/${tarball}.sig"
+          # --fail matters: without it curl writes the 404 page into the output
+          # file, and the failure then surfaces from cosign as "error during PEM
+          # decoding" instead of naming the missing asset.
+          curl --fail --retry 5 --retry-delay 1 -sSLo "${dir}/ct.tar.gz" "${base}/${tarball}"
+          curl --fail --retry 5 --retry-delay 1 -sSLo "${dir}/ct.tar.gz.sigstore.json" \
+            "${base}/${tarball}.sigstore.json"
 
           # Keyless verification against the chart-testing release workflow's
           # identity. The identity/issuer are stable across ct versions (they
           # reference the workflow ref, not the version), so only CT_VERSION
           # changes on a bump.
+          #
+          # 3.15.0 replaced the .pem/.sig pair with a single Sigstore bundle,
+          # so the signature travels in one .sigstore.json. cosign reads it
+          # through --bundle and needs no format flag: --new-bundle-format is
+          # already deprecated on the v3.1.3 the installer pins, since it is
+          # becoming the only supported format.
           cosign verify-blob \
-            --certificate "${dir}/ct.tar.gz.pem" \
-            --signature "${dir}/ct.tar.gz.sig" \
+            --bundle "${dir}/ct.tar.gz.sigstore.json" \
             --certificate-identity "https://github.com/helm/chart-testing/.github/workflows/release.yaml@refs/heads/main" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             "${dir}/ct.tar.gz"
 
           tar -xzf "${dir}/ct.tar.gz" -C "${dir}"
-          rm -f "${dir}/ct.tar.gz" "${dir}/ct.tar.gz.pem" "${dir}/ct.tar.gz.sig"
+          rm -f "${dir}/ct.tar.gz" "${dir}/ct.tar.gz.sigstore.json"
 
           # Install yamllint + yamale into a dedicated venv and put its bin dir
           # on PATH explicitly, mirroring upstream ct.sh. ct lint shells out to
