@@ -183,7 +183,7 @@ github.com/cloudflare/cloudflare-go/v7/workflows
 github.com/cloudflare/cloudflare-go/v7/zaraz
 github.com/cloudflare/cloudflare-go/v7/zero_trust
 github.com/cloudflare/cloudflare-go/v7/zones
-# github.com/cloudflare/cloudflared v0.0.0-20260924153110-96d39adbc812 => github.com/lexfrei/cloudflared v0.0.0-20261003041154-0e5bb3716548
+# github.com/cloudflare/cloudflared v0.0.0-20261005153913-18cdfe0a6fc7 => github.com/lexfrei/cloudflared v0.0.0-20261010230028-a0aabd9711e7
 ## explicit; go 1.26
 github.com/cloudflare/cloudflared/carrier
 github.com/cloudflare/cloudflared/cfapi
@@ -1577,5 +1577,5 @@ zombiezen.com/go/capnproto2/rpc/internal/refcount
 zombiezen.com/go/capnproto2/schemas
 zombiezen.com/go/capnproto2/server
 zombiezen.com/go/capnproto2/std/capnp/rpc
-# github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0.0-20261003041154-0e5bb3716548
+# github.com/cloudflare/cloudflared => github.com/lexfrei/cloudflared v0.0.0-20261010230028-a0aabd9711e7
 # github.com/quic-go/quic-go => github.com/chungthuang/quic-go v0.45.1-0.20260529212404-a9fddf436fc4
