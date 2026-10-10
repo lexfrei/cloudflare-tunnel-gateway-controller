@@ -162,6 +162,59 @@ tests:
       - failedTemplate:
           errorPattern: maxDataPlanesPerNamespace
 
+  # A class-default dedicated data plane is opt-in: without the value every
+  # Gateway of the class without its own parametersRef stays on the shared
+  # plane.
+  - it: should NOT set perGatewayDataPlanes by default
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "550e8400-e29b-41d4-a716-446655440000"
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - template: gatewayclassconfig.yaml
+        notExists:
+          path: spec.perGatewayDataPlanes
+
+  - it: should set the default GatewayConfig name when the operator asks for one
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "550e8400-e29b-41d4-a716-446655440000"
+        perGatewayDataPlanes:
+          defaultGatewayConfigName: tenant-plane
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - template: gatewayclassconfig.yaml
+        equal:
+          path: spec.perGatewayDataPlanes
+          value:
+            defaultGatewayConfigName: tenant-plane
+
+  - it: should reject a default GatewayConfig name that cannot name an object
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "550e8400-e29b-41d4-a716-446655440000"
+        perGatewayDataPlanes:
+          defaultGatewayConfigName: Tenant/Plane
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - failedTemplate:
+          errorPattern: defaultGatewayConfigName
+
   # 0 is what an operator writes for "no dedicated planes at all". The CRD
   # rejects it so it cannot double as a spelling of unlimited; rejecting it here
   # too turns an apiserver error mid-install into a helm error before anything

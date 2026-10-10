@@ -81,6 +81,7 @@ tests:
           name: cloudflare-credentials
         allowSharedTunnels: null
         maxDataPlanesPerNamespace: null
+        perGatewayDataPlanes: null
       networkPolicy:
         enabled: true
         kubernetesApiIpBlocks: null
