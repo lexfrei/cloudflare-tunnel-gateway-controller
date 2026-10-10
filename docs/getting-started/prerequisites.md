@@ -15,7 +15,7 @@ You need a Kubernetes cluster with:
 | Component | Supported |
 | --- | --- |
 | Kubernetes | 1.31+ |
-| Gateway API CRDs | Standard channel (Gateway API v1.6.2) |
+| Gateway API CRDs | Standard channel (Gateway API v1.6.3) |
 
 - **Kubernetes 1.31** is the `kubeVersion` constraint in the chart's `Chart.yaml`, and Helm refuses to install on an older cluster. The floor comes from the Gateway API standard bundle the controller is built against, which an older API server rejects in part. The bundle ships a ValidatingAdmissionPolicy under `admissionregistration.k8s.io/v1`, which the API server serves from 1.30. Its TLSRoute CRD has a validation rule that calls the CEL `isIP` function, and a newly created CRD's rules can use that function from 1.31: the library was added in 1.30, but a 1.30 API server compiles new rules against the 1.29 function set. Upstream Gateway API states the same 1.31 requirement for TLSRoute.
 - The chart's own optional ValidatingAdmissionPolicies use the same `admissionregistration.k8s.io/v1` API, so the 1.31 floor covers them. They are rendered by `ruleNameUniquenessPolicy.enabled` and by `hostnameOwnershipPolicy.enabled` while `hostnameOwnershipPolicy.admissionPolicy` keeps its default of `true`.
@@ -26,7 +26,7 @@ You need a Kubernetes cluster with:
 The controller requires Gateway API Custom Resource Definitions (CRDs) to be installed in your cluster:
 
 ```bash
-kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.2/standard-install.yaml
+kubectl apply --filename https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.3/standard-install.yaml
 ```
 
 As of Gateway API v1.6 the standard bundle also installs the `TCPRoute` and `UDPRoute` CRDs (GA); this controller does not implement them — Cloudflare Tunnel exposes HTTP(S) only — so they are inert.
@@ -35,9 +35,9 @@ As of Gateway API v1.6 the standard bundle also installs the `TCPRoute` and `UDP
 
     The controller watches `ListenerSet` resources as part of its core reconcile loop. The `listenersets.gateway.networking.k8s.io` CRD entered the **Standard** channel in Gateway API v1.5.0, so with any older bundle (v1.4.x or earlier) the manager cannot start at all because the watch target is missing.
 
-    Being able to start is not the same as being supported: the controller is built against v1.6.2, and its GatewayClass `SupportedVersion` condition compares the installed bundle's `major.minor` against that version — any other minor, including v1.5.x, is reported as `SupportedVersion=False` with reason `UnsupportedVersion` while the controller keeps running.
+    Being able to start is not the same as being supported: the controller is built against v1.6.3, and its GatewayClass `SupportedVersion` condition compares the installed bundle's `major.minor` against that version — any other minor, including v1.5.x, is reported as `SupportedVersion=False` with reason `UnsupportedVersion` while the controller keeps running.
 
-    If you are on an older Gateway API bundle, apply the v1.6.2 standard bundle before installing this controller.
+    If you are on an older Gateway API bundle, apply the v1.6.3 standard bundle before installing this controller.
 
 ## Cloudflare Account
 

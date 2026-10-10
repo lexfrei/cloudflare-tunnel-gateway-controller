@@ -150,9 +150,9 @@ func TestGatewayAPIConformance(t *testing.T) {
 	// --- Exempt features ---
 	// Features that don't apply to tunnel architecture — skip silently.
 	opts.ExemptFeatures = []features.FeatureName{
-		// Gateway: tunnel has no static IPs, no multi-port, no infra propagation
+		// Gateway: tunnel has no static IPs, no multi-port, no spec.infrastructure
 		features.SupportGatewayStaticAddresses,
-		features.SupportGatewayInfrastructurePropagation,
+		features.SupportGatewayInfrastructure,
 		features.SupportGatewayPort8080,
 		features.SupportGatewayFrontendClientCertificateValidation,
 		features.SupportGatewayFrontendClientCertificateValidationInsecureFallback,
