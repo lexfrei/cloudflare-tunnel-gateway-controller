@@ -370,9 +370,12 @@ CONFORMANCE_REPORT_OUTPUT=./conformance-report.yaml \
 | `CONFORMANCE_KUBE_CONTEXT` | kubeconfig's current context | kubectl context the suite runs against |
 | `CONFORMANCE_GATEWAY_CLASS` | `cloudflare-tunnel` | GatewayClass name |
 | `CONFORMANCE_REPORT_OUTPUT` | (none) | Path for YAML conformance report |
+| `CONFORMANCE_PER_GATEWAY_PLANES` | `false` | Claim `GatewayInfrastructure` and report the mode `per-gateway-data-planes`; set only against a deployment from `hack/conformance-setup.sh --per-gateway-planes` |
 | `CONTROLLER_VERSION` | `dev` | Version for report metadata |
 
 Profiles: `GATEWAY-HTTP`, `GATEWAY-GRPC`.
+
+`hack/conformance-setup.sh --per-gateway-planes --test` runs the suite with a dedicated data plane for every suite Gateway, from a default GatewayConfig the script creates in `gateway-conformance-infra`, and claims `GatewayInfrastructure`. Every plane registers on the one test tunnel, and Cloudflare caps a tunnel at [25 replicas](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/tunnel-availability/deploy-replicas/). The mode therefore runs the shared proxy and each plane at one replica and the suite at `-parallel 4`, and it takes longer because every Gateway waits for its plane before `Programmed`. It cannot run the e2e suite, whose Gateways live in namespaces without the default GatewayConfig.
 
 ## Live-Tunnel Coverage Matrix
 

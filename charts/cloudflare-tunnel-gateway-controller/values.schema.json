@@ -52,6 +52,19 @@
           "minimum": 1,
           "default": null,
           "description": "Cap on dedicated data planes per namespace (omit for no cap; 0 is rejected)"
+        },
+        "perGatewayDataPlanes": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "description": "Make a dedicated data plane the default for every Gateway of the class",
+          "properties": {
+            "defaultGatewayConfigName": {
+              "type": "string",
+              "maxLength": 253,
+              "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)?$",
+              "description": "GatewayConfig name, in each Gateway's own namespace, for Gateways without their own parametersRef (empty keeps the shared plane)"
+            }
+          }
         }
       }
     },

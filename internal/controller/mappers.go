@@ -137,6 +137,56 @@ func managedClassNames(
 	return names, nil
 }
 
+// managedClassConfigs maps each GatewayClass of this controller to the
+// GatewayClassConfig it names. The entry is nil when that config cannot be
+// served (a malformed ref, or a config that does not exist): such a class has
+// no default data plane, and its Gateways are refused for the class problem.
+func managedClassConfigs(
+	ctx context.Context,
+	cli client.Client,
+	controllerName string,
+) (map[string]*v1alpha1.GatewayClassConfig, error) {
+	classes, err := listGatewayClassesForController(ctx, cli, controllerName)
+	if err != nil {
+		return nil, err
+	}
+
+	configs := make(map[string]*v1alpha1.GatewayClassConfig, len(classes))
+
+	for i := range classes {
+		ref := classes[i].Spec.ParametersRef
+		configs[classes[i].Name] = nil
+
+		if config.ParametersRefProblem(ref) != "" {
+			continue
+		}
+
+		classConfig := &v1alpha1.GatewayClassConfig{}
+		if err := cli.Get(ctx, types.NamespacedName{Name: ref.Name}, classConfig); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+
+			return nil, errors.Wrapf(err, "reading GatewayClassConfig %s", ref.Name)
+		}
+
+		configs[classes[i].Name] = classConfig
+	}
+
+	return configs, nil
+}
+
+// usesDedicatedPlane reports whether the Gateway belongs to a class in
+// classConfigs and, if so, whether it gets a data plane of its own.
+func usesDedicatedPlane(
+	gateway *gatewayv1.Gateway,
+	classConfigs map[string]*v1alpha1.GatewayClassConfig,
+) (bool, bool) {
+	classConfig, managed := classConfigs[string(gateway.Spec.GatewayClassName)]
+
+	return managed, managed && config.DataPlaneRef(gateway, classConfig) != nil
+}
+
 // kindGateway / kindListenerSet are the Gateway API kinds used when route
 // parentRefs and ReferenceGrant from/to entries select the resource type.
 const (
@@ -223,7 +273,7 @@ func (m *ConfigMapper) isSecretReferencedByConfig(ctx context.Context, secret *c
 // match. Without this, rotating a per-Gateway API token only propagates on the
 // next route reconcile rather than immediately.
 func (m *ConfigMapper) isSecretReferencedByGatewayConfig(ctx context.Context, secret *corev1.Secret) bool {
-	classNames, err := managedClassNames(ctx, m.Client, m.ControllerName)
+	classConfigs, err := managedClassConfigs(ctx, m.Client, m.ControllerName)
 	if err != nil {
 		logging.FromContext(ctx).Warn("failed to list GatewayClasses in isSecretReferencedByGatewayConfig",
 			"error", err)
@@ -231,7 +281,7 @@ func (m *ConfigMapper) isSecretReferencedByGatewayConfig(ctx context.Context, se
 		return false
 	}
 
-	if len(classNames) == 0 {
+	if len(classConfigs) == 0 {
 		return false
 	}
 
@@ -245,7 +295,7 @@ func (m *ConfigMapper) isSecretReferencedByGatewayConfig(ctx context.Context, se
 
 	for i := range gateways.Items {
 		gateway := &gateways.Items[i]
-		if !classNames[string(gateway.Spec.GatewayClassName)] || !config.HasInfrastructureParametersRef(gateway) {
+		if _, dedicated := usesDedicatedPlane(gateway, classConfigs); !dedicated {
 			continue
 		}
 

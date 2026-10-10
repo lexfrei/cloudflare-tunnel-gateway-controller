@@ -480,7 +480,7 @@ func TestOverQuotaGateways(t *testing.T) {
 func TestDataPlaneQuotaMessage(t *testing.T) {
 	t.Parallel()
 
-	message := dataPlaneQuotaMessage(3)
+	message := dataPlaneQuotaMessage(3, true)
 
 	assert.Contains(t, message, "3")
 	assert.Contains(t, message, "namespace")
@@ -495,13 +495,29 @@ func TestDataPlaneQuotaMessageBelowOneOffersNoDeletion(t *testing.T) {
 	t.Parallel()
 
 	for _, capacity := range []int32{0, -1} {
-		message := dataPlaneQuotaMessage(capacity)
+		message := dataPlaneQuotaMessage(capacity, true)
 
 		assert.NotContains(t, message, "delete", "capacity %d", capacity)
 		assert.NotContains(t, message, "already has", "capacity %d", capacity)
 		assert.NotContains(t, message, "-1", "a cap below one must not be quoted back at the tenant")
 		assert.Contains(t, message, "drop spec.infrastructure.parametersRef", "capacity %d", capacity)
 	}
+}
+
+// A Gateway on its class's default plane has no parametersRef to drop, so the
+// refusal must not offer that remedy.
+func TestDataPlaneQuotaMessageWithoutOwnRef(t *testing.T) {
+	t.Parallel()
+
+	for _, capacity := range []int32{3, 0} {
+		message := dataPlaneQuotaMessage(capacity, false)
+
+		assert.NotContains(t, message, "parametersRef", "capacity %d", capacity)
+		assert.NotContains(t, message, "shared data plane", "capacity %d", capacity)
+	}
+
+	assert.Contains(t, dataPlaneQuotaMessage(3, false), "delete one")
+	assert.NotContains(t, dataPlaneQuotaMessage(0, false), "delete")
 }
 
 // TestDataPlaneQuotaLimitAgreesWithItsCount pins the wording of the phrase both
@@ -527,7 +543,7 @@ func TestDataPlaneQuotaWordingIsShared(t *testing.T) {
 
 	limit := dataPlaneQuotaLimit(1)
 	assert.Contains(t, routeErr.Error(), limit)
-	assert.Contains(t, dataPlaneQuotaMessage(1), limit)
+	assert.Contains(t, dataPlaneQuotaMessage(1, true), limit)
 }
 
 // TestDataPlaneQuotaErrorCarriesBothSentinels pins that a capacity refusal
@@ -540,7 +556,7 @@ func TestDataPlaneQuotaWordingIsShared(t *testing.T) {
 func TestDataPlaneQuotaErrorCarriesBothSentinels(t *testing.T) {
 	t.Parallel()
 
-	err := dataPlaneQuotaError(2)
+	err := dataPlaneQuotaError(2, true)
 
 	// errors.Is here is cockroachdb's, matching the consumers; assert.ErrorIs
 	// is the standard library's, which must agree.
@@ -549,7 +565,7 @@ func TestDataPlaneQuotaErrorCarriesBothSentinels(t *testing.T) {
 	assert.True(t, errors.Is(err, config.ErrInvalidParameters),
 		"every branch keyed on a deterministic spec problem must match it")
 	assert.ErrorIs(t, err, config.ErrInvalidParameters, "the standard library must see the classification too")
-	assert.Equal(t, dataPlaneQuotaMessage(2), err.Error(), "the tenant reads the message as written")
+	assert.Equal(t, dataPlaneQuotaMessage(2, true), err.Error(), "the tenant reads the message as written")
 }
 
 // TestDataPlaneQuotaMessageSurvivesConditionTruncation pins the length budget
@@ -561,7 +577,11 @@ func TestDataPlaneQuotaErrorCarriesBothSentinels(t *testing.T) {
 func TestDataPlaneQuotaMessageSurvivesConditionTruncation(t *testing.T) {
 	t.Parallel()
 
-	stored := refusedConditionPrefix + dataPlaneQuotaMessage(math.MaxInt32)
-	assert.LessOrEqual(t, len(stored), maxConditionMessageLength,
-		"a refusal message that truncates breaks the dedup that keeps the Event from repeating")
+	for _, capacity := range []int32{math.MaxInt32, 0} {
+		for _, ownRef := range []bool{true, false} {
+			stored := refusedConditionPrefix + dataPlaneQuotaMessage(capacity, ownRef)
+			assert.LessOrEqual(t, len(stored), maxConditionMessageLength,
+				"a refusal message that truncates breaks the dedup that keeps the Event from repeating")
+		}
+	}
 }

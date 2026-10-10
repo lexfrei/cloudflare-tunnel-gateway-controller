@@ -15,6 +15,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/cfmetrics"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 )
 
@@ -72,7 +73,10 @@ func assertStatusWriteSkippedOnReadError(
 			var fail atomic.Bool
 
 			cli := interceptor.NewClient(base, funcs(&fail))
-			reconciler := &GatewayReconciler{Client: cli, Scheme: base.Scheme(), ControllerName: "test-controller"}
+			reconciler := &GatewayReconciler{
+				Client: cli, Scheme: base.Scheme(), ControllerName: "test-controller",
+				ConfigResolver: config.NewResolver(cli, "default", cfmetrics.NewNoopCollector()),
+			}
 
 			_ = write(reconciler, gw)
 

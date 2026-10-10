@@ -762,7 +762,10 @@ func TestGatewayUpdateStatus_UncountableRouteKeepsAttachedRoutes(t *testing.T) {
 
 			base := setupGatewayFakeClient(gateway, route)
 			cli := interceptor.NewClient(base, failReads[*corev1.Namespace]("", failing()))
-			reconciler := &GatewayReconciler{Client: cli, Scheme: base.Scheme(), ControllerName: "test-controller"}
+			reconciler := &GatewayReconciler{
+				Client: cli, Scheme: base.Scheme(), ControllerName: "test-controller",
+				ConfigResolver: config.NewResolver(cli, "default", cfmetrics.NewNoopCollector()),
+			}
 
 			assert.Equal(t, writer.wantErr, writer.write(reconciler, gateway) != nil)
 

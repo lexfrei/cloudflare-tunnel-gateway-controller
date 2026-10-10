@@ -24,4 +24,8 @@ spec:
   {{- with .Values.gatewayClassConfig.maxDataPlanesPerNamespace }}
   maxDataPlanesPerNamespace: {{ . }}
   {{- end }}
+  {{- with dig "perGatewayDataPlanes" "defaultGatewayConfigName" "" .Values.gatewayClassConfig }}
+  perGatewayDataPlanes:
+    defaultGatewayConfigName: {{ . | quote }}
+  {{- end }}
 {{- end }}

@@ -52,6 +52,14 @@ gatewayClassConfig:
   # all".
   # @default -- unset (no cap)
   maxDataPlanesPerNamespace:
+  # -- Make a dedicated data plane the default for every Gateway of the class.
+  perGatewayDataPlanes:
+    # -- Name of the GatewayConfig a Gateway without its own
+    # spec.infrastructure.parametersRef is configured from, looked up in the
+    # Gateway's own namespace. A namespace without it gets its Gateways refused
+    # with Accepted=False/InvalidParameters. Empty keeps the shared data plane
+    # as the default.
+    defaultGatewayConfigName: ""
 
 # -- Controller configuration
 controller:

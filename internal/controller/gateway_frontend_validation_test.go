@@ -309,7 +309,10 @@ func TestSetConfigErrorStatus_ZeroesAttachedListenerSets(t *testing.T) {
 	}
 
 	fakeClient := setupGatewayFakeClient(gateway)
-	reconciler := &GatewayReconciler{Client: fakeClient, Scheme: fakeClient.Scheme(), ControllerName: "test-controller"}
+	reconciler := &GatewayReconciler{
+		Client: fakeClient, Scheme: fakeClient.Scheme(), ControllerName: "test-controller",
+		ConfigResolver: config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector()),
+	}
 
 	require.NoError(t, reconciler.setConfigErrorStatus(ctx, gateway,
 		config.MarkInvalidParameters(errors.New("GatewayClassConfig not found"))))

@@ -12,7 +12,7 @@ GatewayClassConfig provides tunnel configuration for the controller. It is refer
 
 ### Spec
 
-The spec carries only the contract the controller needs for Cloudflare API calls: `tunnelID`, `cloudflareCredentialsSecretRef`, and the optional `accountId`, `allowSharedTunnels` and `maxDataPlanesPerNamespace`. Every field is described in [GatewayClassConfigSpec](api.md#gatewayclassconfigspec). Proxy-side configuration (tunnel token, replicas, liveness probes) lives in the Helm chart `proxy.*` values; see [Helm chart reference](helm-chart.md). For the data-plane cap, see also the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md).
+The spec carries only the contract the controller needs for Cloudflare API calls: `tunnelID`, `cloudflareCredentialsSecretRef`, and the optional `accountId`, `allowSharedTunnels`, `maxDataPlanesPerNamespace` and `perGatewayDataPlanes`. Every field is described in [GatewayClassConfigSpec](api.md#gatewayclassconfigspec). Proxy-side configuration (tunnel token, replicas, liveness probes) lives in the Helm chart `proxy.*` values; see [Helm chart reference](helm-chart.md). For the data-plane cap, see also the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md).
 
 ### Example
 
@@ -38,7 +38,7 @@ GatewayClassConfig has a `status.conditions` subresource. The reconciler emits:
 
 ## GatewayConfig
 
-`GatewayConfig` is a namespaced CRD carrying per-Gateway data-plane parameters, referenced from `Gateway.spec.infrastructure.parametersRef` (group `cf.k8s.lex.la`, kind `GatewayConfig`, same namespace). Its presence opts the Gateway into a dedicated proxy Deployment and a dedicated Cloudflare Tunnel.
+`GatewayConfig` is a namespaced CRD carrying per-Gateway data-plane parameters, referenced from `Gateway.spec.infrastructure.parametersRef` (group `cf.k8s.lex.la`, kind `GatewayConfig`, same namespace). Its presence opts the Gateway into a dedicated proxy Deployment and a dedicated Cloudflare Tunnel. A GatewayClassConfig with `perGatewayDataPlanes.defaultGatewayConfigName` makes the GatewayConfig of that name in a Gateway's namespace the default for every Gateway of the class without its own ref.
 
 ### GatewayConfig Spec
 

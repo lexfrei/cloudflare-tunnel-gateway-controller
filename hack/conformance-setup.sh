@@ -25,6 +25,9 @@
 #                                                  # (no local build)
 #   ./hack/conformance-setup.sh --test-e2e       # setup + run the custom e2e suite
 #                                                  # (smoke-level; lighter than --test)
+#   ./hack/conformance-setup.sh --per-gateway-planes --test
+#                                                  # every suite Gateway gets its own
+#                                                  # data plane; claims GatewayInfrastructure
 #
 # Prerequisites:
 #   - .env file in repo root with: CF_API_TOKEN, CF_ACCOUNT_ID, CF_TUNNEL_ID,
@@ -58,6 +61,9 @@ RUN_TESTS=false
 RUN_E2E=false
 SKIP_BUILD=false
 CI_PR_NUMBER=""
+# --per-gateway-planes deploys the class with a default GatewayConfig, so every
+# suite Gateway gets a dedicated data plane instead of the shared one.
+PER_GATEWAY_PLANES=false
 # Gateway API CRD release channel. "experimental" is the default (superset of
 # CRD fields used by the established pre-merge gate); "standard" installs only
 # the standard-channel CRDs, which the conformance suite reports as
@@ -154,6 +160,7 @@ while [[ $# -gt 0 ]]; do
         || die "--channel must be 'standard' or 'experimental', got '${CHANNEL}'"
       ;;
     --skip-build) SKIP_BUILD=true ;;
+    --per-gateway-planes) PER_GATEWAY_PLANES=true ;;
     --use-ci-images)
       shift
       [[ $# -gt 0 ]] || die "--use-ci-images requires a PR number"
@@ -174,6 +181,12 @@ fi
 # silently drop one suite.
 if [[ "${RUN_TESTS}" == "true" && "${RUN_E2E}" == "true" ]]; then
   die "--test and --test-e2e are mutually exclusive (run them as separate invocations)"
+fi
+
+# The e2e suite's Gateways live in namespaces it creates on the fly, which
+# hold no default GatewayConfig, so every one of them would be refused.
+if [[ "${PER_GATEWAY_PLANES}" == "true" && "${RUN_E2E}" == "true" ]]; then
+  die "--per-gateway-planes is a conformance mode; it cannot run the e2e suite"
 fi
 
 # --- Pre-flight checks ---
@@ -407,6 +420,26 @@ fi
 # so the edge rejects them by Host and the intended Host rides X-Original-Host
 # instead. The proxy ignores that header unless this value is set, which is why
 # it belongs here and nowhere near a production values file.
+# --per-gateway-planes: Cloudflare caps a tunnel at 25 cloudflared replicas
+# (https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/tunnel-availability/deploy-replicas/),
+# and every plane in this mode registers on the one test tunnel. The shared
+# proxy drops to one replica, each plane runs one (see the GatewayConfig
+# below), and the suite runs with less parallelism, so live Gateways stay
+# under the cap with room for planes still terminating.
+PLANE_GATEWAY_CONFIG="conformance-plane"
+PLANE_NAMESPACE="gateway-conformance-infra"
+HELM_MODE_ARGS=()
+CONFORMANCE_PARALLEL=10
+CONFORMANCE_TIMEOUT=60m
+if [[ "${PER_GATEWAY_PLANES}" == "true" ]]; then
+  HELM_MODE_ARGS=(
+    --set gatewayClassConfig.perGatewayDataPlanes.defaultGatewayConfigName="${PLANE_GATEWAY_CONFIG}"
+    --set proxy.replicas=1
+  )
+  CONFORMANCE_PARALLEL=4
+  CONFORMANCE_TIMEOUT=90m
+fi
+
 info "Deploying controller via helm..."
 helm upgrade --install "${RELEASE_NAME}" \
   "${HELM_CHART_REF}" \
@@ -423,6 +456,7 @@ helm upgrade --install "${RELEASE_NAME}" \
   --set controller.logLevel=debug \
   --set hostnameOwnershipPolicy.enabled=true \
   --set-json 'hostnameOwnershipPolicy.namespaceSelector={"matchLabels":{"cf-e2e-hostname-policy":"enforced"}}' \
+  "${HELM_MODE_ARGS[@]}" \
   --wait --timeout 300s
 # 300s is a ceiling, not a wait: helm must outlast the proxy registering its 4
 # tunnel HA connections, which is slow on a cold local VM.
@@ -448,6 +482,37 @@ kubectl --context "${KUBE_CONTEXT}" rollout status deployment \
 
 info "All deployments ready!"
 
+# Every suite Gateway lives in ${PLANE_NAMESPACE}. The suite applies its own
+# Namespace manifest over this one and deletes the namespace at the end.
+if [[ "${PER_GATEWAY_PLANES}" == "true" ]]; then
+  info "Creating the default GatewayConfig in '${PLANE_NAMESPACE}'..."
+  kubectl --context "${KUBE_CONTEXT}" create namespace "${PLANE_NAMESPACE}" --dry-run=client --output yaml \
+    | kubectl --context "${KUBE_CONTEXT}" apply --filename -
+  kubectl --context "${KUBE_CONTEXT}" create secret generic conformance-tunnel-token \
+    --namespace "${PLANE_NAMESPACE}" \
+    --from-literal=tunnel-token="${CF_TUNNEL_TOKEN:?}" \
+    --dry-run=client --output yaml \
+    | kubectl --context "${KUBE_CONTEXT}" apply --filename -
+  kubectl --context "${KUBE_CONTEXT}" apply --filename - <<GCEOF
+apiVersion: cf.k8s.lex.la/v1alpha1
+kind: GatewayConfig
+metadata:
+  name: ${PLANE_GATEWAY_CONFIG}
+  namespace: ${PLANE_NAMESPACE}
+spec:
+  tunnelTokenSecretRef:
+    name: conformance-tunnel-token
+  replicas: 1
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+GCEOF
+fi
+
 # --- Step 10: Show status ---
 echo ""
 info "Cluster: ${CLUSTER_NAME} (context: ${KUBE_CONTEXT})"
@@ -461,7 +526,8 @@ if [[ "${RUN_TESTS}" == "true" ]]; then
   info "Running conformance tests against ${CF_TUNNEL_HOSTNAME}..."
   CONFORMANCE_KUBE_CONTEXT="${KUBE_CONTEXT}" \
   CONFORMANCE_TUNNEL_HOSTNAME="${CF_TUNNEL_HOSTNAME}" \
-    go test -v -race -tags conformance -count=1 -timeout=60m -parallel 10 ./test/conformance/...
+  CONFORMANCE_PER_GATEWAY_PLANES="${PER_GATEWAY_PLANES}" \
+    go test -v -race -tags conformance -count=1 -timeout="${CONFORMANCE_TIMEOUT}" -parallel "${CONFORMANCE_PARALLEL}" ./test/conformance/...
 elif [[ "${RUN_E2E}" == "true" ]]; then
   info "Running e2e tests against ${CF_TUNNEL_HOSTNAME}..."
   E2E_KUBE_CONTEXT="${KUBE_CONTEXT}" \
@@ -471,7 +537,7 @@ elif [[ "${RUN_E2E}" == "true" ]]; then
 else
   echo ""
   info "Setup complete! To run conformance tests:"
-  echo "  CONFORMANCE_KUBE_CONTEXT=${KUBE_CONTEXT} CONFORMANCE_TUNNEL_HOSTNAME=${CF_TUNNEL_HOSTNAME} go test -v -race -tags conformance -count=1 -timeout=30m ./test/conformance/..."
+  echo "  CONFORMANCE_KUBE_CONTEXT=${KUBE_CONTEXT} CONFORMANCE_TUNNEL_HOSTNAME=${CF_TUNNEL_HOSTNAME} CONFORMANCE_PER_GATEWAY_PLANES=${PER_GATEWAY_PLANES} go test -v -race -tags conformance -count=1 -timeout=${CONFORMANCE_TIMEOUT} -parallel ${CONFORMANCE_PARALLEL} ./test/conformance/..."
   echo ""
   info "To run E2E tests:"
   echo "  E2E_KUBE_CONTEXT=${KUBE_CONTEXT} E2E_TUNNEL_HOSTNAME=${CF_TUNNEL_HOSTNAME} E2E_TUNNEL_2_HOSTNAME=${CF_TUNNEL_2_HOSTNAME:-} go test -v -race -tags e2e -count=1 -timeout=15m ./test/e2e/..."

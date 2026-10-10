@@ -118,17 +118,28 @@ func collectDataPlaneClaims(gateways []*gatewayv1.Gateway) []dataPlaneClaim {
 // a cluster where namespaces are the tenancy boundary should not have one
 // tenant's object names reachable from another's status. Same rule as the
 // tunnel refusal, which never names the holding Gateway.
-func dataPlaneQuotaMessage(capacity int32) string {
-	remedy := "delete one, or drop spec.infrastructure.parametersRef to serve this Gateway " +
-		"from the shared data plane"
-	if capacity < 1 {
-		// There is nothing to delete: no Gateway in the namespace may hold a
-		// plane, so the shared one is the only way to be served at all.
-		remedy = "drop spec.infrastructure.parametersRef to serve this Gateway " +
-			"from the shared data plane"
+//
+// ownRef says whether the Gateway names its GatewayConfig itself. One on its
+// class's default plane has no parametersRef to drop.
+func dataPlaneQuotaMessage(capacity int32, ownRef bool) string {
+	return "this namespace " + dataPlaneQuotaLimit(capacity) + "; " + dataPlaneQuotaRemedy(capacity, ownRef)
+}
+
+func dataPlaneQuotaRemedy(capacity int32, ownRef bool) string {
+	const dropRef = "drop spec.infrastructure.parametersRef to serve this Gateway from the shared data plane"
+
+	// Below one there is nothing to delete: no Gateway in the namespace may
+	// hold a plane.
+	switch {
+	case capacity < 1 && ownRef:
+		return dropRef
+	case capacity < 1:
+		return "its GatewayClass gives every Gateway a dedicated data plane, so none can be served here"
+	case ownRef:
+		return "delete one, or " + dropRef
 	}
 
-	return "this namespace " + dataPlaneQuotaLimit(capacity) + "; " + remedy
+	return "delete one"
 }
 
 // dataPlaneQuotaLimit renders the cap as the phrase both tenant-facing surfaces

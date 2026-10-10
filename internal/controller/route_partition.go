@@ -359,15 +359,16 @@ func managedInfraGateways(
 	return managedGateways(ctx, cli, controllerName, true)
 }
 
-// managedGateways lists the managed Gateways that opted into a dedicated data
-// plane (infra) or the ones served from the shared plane (!infra).
+// managedGateways lists the managed Gateways with a dedicated data plane,
+// through their own parametersRef or their class's default (infra), or the
+// ones served from the shared plane (!infra).
 func managedGateways(
 	ctx context.Context,
 	cli client.Client,
 	controllerName string,
 	infra bool,
 ) ([]*gatewayv1.Gateway, error) {
-	classNames, err := managedClassNames(ctx, cli, controllerName)
+	classConfigs, err := managedClassConfigs(ctx, cli, controllerName)
 	if err != nil {
 		return nil, errors.Wrap(err, "listing managed gateway classes")
 	}
@@ -381,7 +382,7 @@ func managedGateways(
 
 	for i := range gateways.Items {
 		gateway := &gateways.Items[i]
-		if classNames[string(gateway.Spec.GatewayClassName)] && config.HasInfrastructureParametersRef(gateway) == infra {
+		if managed, dedicated := usesDedicatedPlane(gateway, classConfigs); managed && dedicated == infra {
 			out = append(out, gateway)
 		}
 	}

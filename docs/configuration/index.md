@@ -80,4 +80,5 @@ flowchart LR
 | `cloudflareCredentialsSecretRef` | GatewayClassConfig | API token Secret reference |
 | `allowSharedTunnels` | GatewayClassConfig | Permit dedicated data planes to share one tunnel across namespaces (default `false`; refused otherwise) |
 | `maxDataPlanesPerNamespace` | GatewayClassConfig | Cap on dedicated data planes per namespace (unset means no cap; `0` is rejected) |
+| `perGatewayDataPlanes.defaultGatewayConfigName` | GatewayClassConfig | GatewayConfig, in each Gateway's own namespace, that gives every Gateway of the class without its own `parametersRef` a dedicated data plane (unset keeps the shared plane) |
 | `proxy.tunnelTokenSecretRef` | Helm values | Tunnel token Secret reference (consumed by the proxy pod) |

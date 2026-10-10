@@ -81,8 +81,9 @@ type GatewayClassConfigSpec struct {
 	// Gateway opting in later, since the order is by creation timestamp rather
 	// than by when the plane was asked for.
 	//
-	// Counted per namespace over every Gateway carrying
-	// spec.infrastructure.parametersRef, including ones already refused for
+	// Counted per namespace over every Gateway with a dedicated data plane,
+	// whether it carries spec.infrastructure.parametersRef or gets one from
+	// PerGatewayDataPlanes, including ones already refused for
 	// something else and ones whose configuration does not currently resolve.
 	// Counting only the ones that resolve would let a tenant make a token
 	// unreadable to slip another Gateway under the cap.
@@ -95,6 +96,44 @@ type GatewayClassConfigSpec struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	MaxDataPlanesPerNamespace *int32 `json:"maxDataPlanesPerNamespace,omitempty"`
+
+	// PerGatewayDataPlanes makes a dedicated data plane the default for every
+	// Gateway of this class. Omitted, a Gateway without
+	// spec.infrastructure.parametersRef is served by the shared data plane.
+	// +optional
+	PerGatewayDataPlanes *PerGatewayDataPlanes `json:"perGatewayDataPlanes,omitempty"`
+}
+
+// PerGatewayDataPlanes configures the dedicated data plane a Gateway of the
+// class gets when it names no GatewayConfig itself.
+type PerGatewayDataPlanes struct {
+	// DefaultGatewayConfigName gives every Gateway of the class without
+	// spec.infrastructure.parametersRef a dedicated data plane, configured as
+	// if it referenced the GatewayConfig of this name in the Gateway's own
+	// namespace. Its connector token decides the tunnel, so Gateways in one
+	// namespace share a tunnel unless one names its own GatewayConfig.
+	//
+	// A Gateway whose namespace has no GatewayConfig of this name is refused
+	// with Accepted=False/InvalidParameters rather than served by the shared
+	// data plane. A Gateway's own parametersRef replaces this default; the
+	// two are never merged. Tunnel arbitration, AllowSharedTunnels and
+	// MaxDataPlanesPerNamespace apply to these Gateways as to any other with
+	// a dedicated data plane.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	DefaultGatewayConfigName string `json:"defaultGatewayConfigName,omitempty"`
+}
+
+// DefaultGatewayConfigName returns the class's default GatewayConfig name, or
+// "" when the class keeps the shared data plane as its default.
+func (s *GatewayClassConfigSpec) DefaultGatewayConfigName() string {
+	if s.PerGatewayDataPlanes == nil {
+		return ""
+	}
+
+	return s.PerGatewayDataPlanes.DefaultGatewayConfigName
 }
 
 // GatewayClassConfigStatus defines the observed state of GatewayClassConfig.

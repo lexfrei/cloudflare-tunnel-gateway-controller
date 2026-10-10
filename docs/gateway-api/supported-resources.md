@@ -41,7 +41,7 @@ The Gateway resource is fully processed. Listeners are used for route binding, s
 | `spec.tls.backend.clientCertificateRef` | Yes | `kubernetes.io/tls` Secret only; same-namespace or via ReferenceGrant; presented during backend TLS handshake **only** when the target Service has a BackendTLSPolicy (no client cert is sent over plaintext) |
 | `spec.tls.frontend` | No | Refused: a Gateway that sets it is `Accepted=False, Reason=Invalid` and none of its routes is served, because clients complete TLS with the Cloudflare edge ([client certificate validation](limitations.md#client-certificate-validation-spectlsfrontend-is-refused)) |
 | `spec.addresses` | Partial | Only the tunnel CNAME; other hostnames report `AddressNotUsable`, other types `UnsupportedAddress` |
-| `spec.infrastructure.parametersRef` | Yes | Opts the Gateway into a dedicated data plane (`GatewayConfig`, group `cf.k8s.lex.la`): its own proxy and tunnel |
+| `spec.infrastructure.parametersRef` | Yes | Opts the Gateway into a dedicated data plane (`GatewayConfig`, group `cf.k8s.lex.la`): its own proxy and tunnel. A GatewayClassConfig can name a default GatewayConfig for Gateways without one; an explicit ref replaces it |
 | `spec.infrastructure.labels` / `.annotations` | Yes | Propagated to the rendered per-Gateway resources, generated Secrets and pod template |
 
 !!! info "TLS Termination"
@@ -211,7 +211,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | --- | --- | --- | --- |
 | `Accepted` | `True` | `Accepted` | Gateway accepted by controller |
 | `Accepted` | `True` or `False` | `ListenersNotValid` | One or more own listeners are invalid (they conflict and carry `Conflicted=True`, use an unsupported protocol, or have an `allowedRoutes.namespaces.selector` that is missing or does not parse); `False` only when no listener is valid. The message names the conflicted listeners and the accepted ones |
-| `Accepted` | `False` | `InvalidParameters` | The configuration the Gateway depends on cannot be used: its GatewayClass `parametersRef` or `GatewayClassConfig` is missing or invalid, the managed GatewayClasses disagree on `parametersRef`, its `spec.infrastructure.parametersRef` cannot be resolved, a dedicated data plane has no proxy image, or its connector token claims a tunnel another Gateway holds or Cloudflare does not confirm. The message names the cause |
+| `Accepted` | `False` | `InvalidParameters` | The configuration the Gateway depends on cannot be used: its GatewayClass `parametersRef` or `GatewayClassConfig` is missing or invalid, the managed GatewayClasses disagree on `parametersRef`, its `spec.infrastructure.parametersRef` cannot be resolved, the default GatewayConfig its class names is missing from its namespace, a dedicated data plane has no proxy image, or its connector token claims a tunnel another Gateway holds or Cloudflare does not confirm. The message names the cause |
 | `Accepted` | `False` | `DataPlaneQuotaExceeded` | The namespace is at its cap of dedicated data planes (`Programmed=False, NoResources`) |
 | `Accepted` | `False` | `UnsupportedAddress` | `spec.addresses` holds an address type other than `Hostname` |
 | `Accepted` | `False` | `Invalid` | `spec.tls.frontend` is set ([client certificate validation](limitations.md#client-certificate-validation-spectlsfrontend-is-refused)) |

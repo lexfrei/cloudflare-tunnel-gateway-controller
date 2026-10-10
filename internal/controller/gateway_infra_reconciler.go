@@ -149,10 +149,8 @@ func (r *GatewayInfraReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, nil
 	}
 
-	if !config.HasInfrastructureParametersRef(&gateway) {
-		// Shared mode. Clean up anything a previous opt-in rendered — the
-		// Gateway is alive, so ownerRef GC alone cannot.
-		return ctrl.Result{}, r.cleanupRendered(ctx, &gateway)
+	if done, err := r.settleUndedicated(ctx, &gateway); done {
+		return ctrl.Result{}, err
 	}
 
 	// A refused plane is removed rather than merely left unconfigured, whether
@@ -207,6 +205,30 @@ func (r *GatewayInfraReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	return r.renderWithConfigTLS(ctx, &gateway, perGateway)
+}
+
+// settleUndedicated finishes the reconcile of a Gateway the shared plane
+// serves, or whose plane cannot be decided; done is false only for a Gateway
+// with a dedicated data plane.
+func (r *GatewayInfraReconciler) settleUndedicated(ctx context.Context, gateway *gatewayv1.Gateway) (bool, error) {
+	dedicated, err := r.ConfigResolver.UsesDedicatedPlane(ctx, gateway)
+
+	switch {
+	case errors.Is(err, config.ErrInvalidParameters):
+		// Only a Gateway without its own parametersRef reads its class here. A
+		// broken class says nothing about whether it keeps a plane, so a
+		// running one is left alone, and the class error is the Gateway
+		// reconciler's to report.
+		return true, nil
+	case err != nil:
+		return true, errors.Wrap(err, "deciding the gateway's data plane")
+	case !dedicated:
+		// Shared mode. Clean up anything a previous opt-in rendered — the
+		// Gateway is alive, so ownerRef GC alone cannot.
+		return true, r.cleanupRendered(ctx, gateway)
+	}
+
+	return false, nil
 }
 
 // renderWithConfigTLS secures the plane's config API certificate, when config
@@ -799,6 +821,11 @@ func (r *GatewayInfraReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(classConfigWatchPredicates()...),
 		).
 		Watches(
+			&gatewayv1.GatewayClass{},
+			handler.EnqueueRequestsFromMapFunc(r.gatewayClassInfraGateways),
+			builder.WithPredicates(predicate.GenerationChangedPredicate{}),
+		).
+		Watches(
 			&v1alpha1.GatewayConfig{},
 			handler.EnqueueRequestsFromMapFunc(r.namespaceInfraGateways),
 		).
@@ -857,32 +884,26 @@ func optedInGatewaysInNamespace(
 		return nil
 	}
 
-	requests := make([]reconcile.Request, 0)
+	if len(gateways.Items) == 0 {
+		return nil
+	}
 
-	// The class list is read only once the namespace has a candidate, so an
-	// event in a namespace without opted-in Gateways costs one List.
-	var classNames map[string]bool
+	// A Gateway without its own parametersRef may still have a plane through
+	// its class's default, so the classes are read for any candidate.
+	classConfigs, err := managedClassConfigs(ctx, cli, controllerName)
+	if err != nil {
+		log.FromContext(ctx).Error(err,
+			"listing GatewayClasses to map a watched object; re-render trigger dropped",
+			"namespace", namespace)
+
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0)
 
 	for i := range gateways.Items {
 		gateway := &gateways.Items[i]
-		if !config.HasInfrastructureParametersRef(gateway) {
-			continue
-		}
-
-		if classNames == nil {
-			var err error
-
-			classNames, err = managedClassNames(ctx, cli, controllerName)
-			if err != nil {
-				log.FromContext(ctx).Error(err,
-					"listing GatewayClasses to map a watched object; re-render trigger dropped",
-					"namespace", namespace)
-
-				return nil
-			}
-		}
-
-		if !classNames[string(gateway.Spec.GatewayClassName)] {
+		if _, dedicated := usesDedicatedPlane(gateway, classConfigs); !dedicated {
 			continue
 		}
 
@@ -901,9 +922,11 @@ func classConfigWatchPredicates() []predicate.Predicate {
 	return []predicate.Predicate{predicate.GenerationChangedPredicate{}}
 }
 
-// classConfigInfraGateways enqueues every opted-in Gateway when a
+// classConfigInfraGateways enqueues every managed Gateway when a
 // GatewayClassConfig referenced by one of this controller's classes changes,
-// the same gate GatewayReconciler applies to this watch.
+// the same gate GatewayReconciler applies to this watch. Gateways on the
+// shared plane are included: the class default can give them a plane or take
+// it away.
 func (r *GatewayInfraReconciler) classConfigInfraGateways(
 	ctx context.Context,
 	obj client.Object,
@@ -918,16 +941,50 @@ func (r *GatewayInfraReconciler) classConfigInfraGateways(
 		return nil
 	}
 
-	gateways, err := managedInfraGateways(ctx, r.Client, r.ControllerName)
+	dedicated, err := managedInfraGateways(ctx, r.Client, r.ControllerName)
 	if err != nil {
-		log.FromContext(ctx).Error(err, "listing opted-in Gateways for a GatewayClassConfig change; re-render trigger dropped")
+		log.FromContext(ctx).Error(err, "listing managed Gateways for a GatewayClassConfig change; re-render trigger dropped")
 
 		return nil
 	}
 
+	shared, err := managedGateways(ctx, r.Client, r.ControllerName, false)
+	if err != nil {
+		log.FromContext(ctx).Error(err, "listing managed Gateways for a GatewayClassConfig change; re-render trigger dropped")
+
+		return nil
+	}
+
+	gateways := slices.Concat(dedicated, shared)
+
 	requests := make([]reconcile.Request, 0, len(gateways))
 	for _, gateway := range gateways {
 		requests = append(requests, reconcile.Request{Name: gateway.Name, Namespace: gateway.Namespace})
+	}
+
+	return requests
+}
+
+// gatewayClassInfraGateways enqueues every Gateway of a changed GatewayClass,
+// whatever its controller: a new parametersRef can give its Gateways a plane or
+// take it away, and a class handed to another controller leaves planes here to
+// tear down.
+func (r *GatewayInfraReconciler) gatewayClassInfraGateways(ctx context.Context, obj client.Object) []reconcile.Request {
+	var gateways gatewayv1.GatewayList
+	if err := r.List(ctx, &gateways); err != nil {
+		log.FromContext(ctx).Error(err, "listing Gateways for a GatewayClass change; re-render trigger dropped")
+
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0)
+
+	for i := range gateways.Items {
+		if string(gateways.Items[i].Spec.GatewayClassName) == obj.GetName() {
+			requests = append(requests, reconcile.Request{
+				Name: gateways.Items[i].Name, Namespace: gateways.Items[i].Namespace,
+			})
+		}
 	}
 
 	return requests
