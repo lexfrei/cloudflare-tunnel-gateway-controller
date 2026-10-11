@@ -88,9 +88,13 @@ func TestBackendAppProtocolTLSWithoutPolicyFailsClosed(t *testing.T) {
 	// the proxy.
 	consecutive500 := 0
 
+	var outcome pollOutcome
+
 	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 90*time.Second, true,
 		func(pollCtx context.Context) (bool, error) {
-			_, resp, reqErr := makeRequest(pollCtx, t, httpClient, cfg.TunnelHostname, http.MethodGet, "/fail-closed", nil)
+			echo, resp, reqErr := makeRequest(pollCtx, t, httpClient, cfg.TunnelHostname, http.MethodGet, "/fail-closed", nil)
+			outcome.recordHTTP(echo, resp, reqErr)
+
 			if reqErr != nil {
 				consecutive500 = 0
 
@@ -112,7 +116,7 @@ func TestBackendAppProtocolTLSWithoutPolicyFailsClosed(t *testing.T) {
 			return consecutive500 >= 3, nil
 		},
 	)
-	require.NoError(t, err, "a TLS appProtocol without a BackendTLSPolicy must answer a stable 500, never reach the backend in cleartext")
+	require.NoError(t, err, "a TLS appProtocol without a BackendTLSPolicy must answer a stable 500, never reach the backend in cleartext (%s)", &outcome)
 }
 
 // errStrictFailClosed aborts the poll immediately: a 200 means the proxy

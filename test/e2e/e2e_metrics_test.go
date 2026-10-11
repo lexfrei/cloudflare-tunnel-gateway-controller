@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +54,8 @@ func TestProxyMetricsEndpoint(t *testing.T) {
 
 	var exposition string
 
+	var outcome pollOutcome
+
 	// ProxyGet load-balances across the proxy replicas, and only the replica
 	// that served the request carries the 2xx sample — so the poll condition
 	// must include EVERYTHING the assertions below require of one exposition
@@ -66,16 +69,20 @@ func TestProxyMetricsEndpoint(t *testing.T) {
 				ProxyGet("https", serviceName, "config-api", "/metrics", nil).
 				DoRaw(pollCtx)
 			if getErr != nil {
+				outcome.record("request failed: " + getErr.Error())
+
 				return false, nil //nolint:nilerr // transient proxy/API errors while polling
 			}
 
 			exposition = string(raw)
+			hasCounter := strings.Contains(exposition, "cftunnel_proxy_requests_total")
+			has2xx := strings.Contains(exposition, `status_class="2xx"`)
+			outcome.record(fmt.Sprintf("requests_total exposed: %t, 2xx counted: %t", hasCounter, has2xx))
 
-			return strings.Contains(exposition, "cftunnel_proxy_requests_total") &&
-				strings.Contains(exposition, `status_class="2xx"`), nil
+			return hasCounter && has2xx, nil
 		},
 	)
-	require.NoError(t, err, "proxy /metrics never exposed the data-plane instruments with a counted 2xx request")
+	require.NoError(t, err, "proxy /metrics never exposed the data-plane instruments with a counted 2xx request (%s)", &outcome)
 
 	assert.Contains(t, exposition, `cftunnel_proxy_requests_total`, "request counters must be exposed")
 	assert.Contains(t, exposition, `status_class="2xx"`, "the live request must have been counted")

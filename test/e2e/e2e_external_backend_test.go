@@ -76,11 +76,15 @@ func TestExternalBackendEndToEnd(t *testing.T) {
 		_ = k8sClient.Delete(context.Background(), route)
 	})
 
-	// waitForBackend polls until the route serves; the echo pod reports the
-	// path it RECEIVED, which must carry the ExternalBackend base path.
+	var outcome pollOutcome
+
+	// Poll until the route serves; the echo pod reports the path it
+	// RECEIVED, which must carry the ExternalBackend base path.
 	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 90*time.Second, true,
 		func(pollCtx context.Context) (bool, error) {
 			echo, resp, reqErr := makeRequest(pollCtx, t, httpClient, cfg.TunnelHostname, http.MethodGet, "/ext-backend", nil)
+			outcome.recordHTTP(echo, resp, reqErr)
+
 			if reqErr != nil || resp.StatusCode != http.StatusOK {
 				return false, nil //nolint:nilerr // transient edge/tunnel errors are expected while polling; retry until timeout
 			}
@@ -88,7 +92,7 @@ func TestExternalBackendEndToEnd(t *testing.T) {
 			return strings.HasPrefix(echo.Pod, "echo-v2-"), nil
 		},
 	)
-	require.NoError(t, err, "the ExternalBackend route never started serving")
+	require.NoError(t, err, "the ExternalBackend route never started serving (%s)", &outcome)
 
 	echo, resp, err := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/ext-backend", nil)
 	require.NoError(t, err)
