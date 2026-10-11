@@ -196,4 +196,8 @@
          <loc>https://cf.k8s.lex.la/dev/upgrading/v4-to-v5/</loc>
          <lastmod>2026-10-11</lastmod>
     </url>
+    <url>
+         <loc>https://cf.k8s.lex.la/dev/upgrading/v5-to-v6/</loc>
+         <lastmod>2026-10-11</lastmod>
+    </url>
 </urlset>
