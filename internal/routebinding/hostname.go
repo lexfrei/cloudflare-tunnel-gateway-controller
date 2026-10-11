@@ -91,6 +91,12 @@ func EffectiveListenerHostnames(listenerHostname *gatewayv1.Hostname, routeHostn
 	return out
 }
 
+// HostnamesOverlap reports whether two Gateway API hostnames can match a
+// common host. An empty hostname matches every host.
+func HostnamesOverlap(left, right string) bool {
+	return left == "" || right == "" || hostnameMatches(left, right)
+}
+
 // hostnameMatches checks if a listener hostname matches a route hostname.
 // Supports wildcard prefixes like *.example.com per Gateway API spec.
 // DNS names are case-insensitive, so comparison is done in lowercase.

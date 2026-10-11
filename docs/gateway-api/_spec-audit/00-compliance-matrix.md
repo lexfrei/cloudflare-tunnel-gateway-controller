@@ -16,14 +16,14 @@ Counts are the current `rows-*.md` verdicts (`cat rows-*.md | grep -E '^\| [A-Z]
 
 | Status | Count |
 | --- | --- |
-| MET | 281 |
+| MET | 284 |
 | PARTIAL | 19 |
 | REFUTED | 1 |
 | DOWNGRADE-NA | 1 |
 | DOWNGRADE-MET | 2 |
 | DOWNGRADE-CONDITIONAL | 1 |
 | DOWNGRADE-DOCUMENTED | 3 |
-| N/A (tunnel architecture / exempt / MAY not taken) | 89 |
+| N/A (tunnel architecture / exempt / MAY not taken) | 86 |
 
 DOWNGRADE-DOCUMENTED marks a recommendation the controller does not follow on purpose, with the reason in limitations.md: OR-03 (ExternalName Services), since the v1.6.2 sync BTLS-04 (a policy may list several targetRefs), and SH-78 (Pending with Accepted=False for a permanent refusal). It is the rows' spelling of DEVIATED-DOCUMENTED in the `shouldmay-*.md` tables.
 
@@ -44,13 +44,17 @@ The rows were re-read against the vendored v1.6.2 text and the code on master. F
 
 Since the sync, GW-88, GW-112 and LS-35 moved PARTIAL → MET: the ReferenceGrant is checked before the kind, and only a grant naming the reference's own kind allows it.
 
+Kept as recorded, pending a maintainer decision: GW-02 and GW-24 (listeners matched without their port), GW-101 and GW-103 (no OverlappingTLSConfig), GR-14 and GR-15 (HTTPRoute/GRPCRoute hostname conflict), SH-33 and SH-34 (an unparseable timeout or retry policy is reported as "Dropped Rule" while the rule keeps serving), SH-78 (Pending with Accepted=False), HR-62 (the scheme of a scheme-less redirect).
+
+Since then, maintainer decisions resolved most of those:
+
 SH-78 moved GAP → DOWNGRADE-DOCUMENTED: the retryable causes now report Accepted=Unknown, and only the permanent refusals keep Pending with Accepted=False.
 
 SH-33 and SH-34 stay MET with the pending note resolved: an unparseable timeout or retry policy now drops its rule instead of serving it without the field.
 
 GR-14 and GR-15 stay MET with the pending note resolved: the rejection follows the vendored godoc's MUST and is scoped to routes attached to the same listener, and the loser is rejected only on the Gateway carrying that listener.
 
-Kept as recorded, pending a maintainer decision: GW-02 and GW-24 (listeners matched without their port), GW-101 and GW-103 (no OverlappingTLSConfig), GR-14 and GR-15 (HTTPRoute/GRPCRoute hostname conflict), SH-33 and SH-34 (an unparseable timeout or retry policy is reported as "Dropped Rule" while the rule keeps serving), SH-78 (Pending with Accepted=False), HR-62 (the scheme of a scheme-less redirect).
+GW-101, GW-103 and GW-105 moved NA → MET: overlapping hostnames among HTTPS listeners on one port now raise OverlappingTLSConfig on every listener involved, and it is never written False.
 
 ## Baseline refreshes since v1.5.1
 

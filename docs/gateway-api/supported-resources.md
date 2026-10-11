@@ -232,6 +232,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | `Programmed` | `False` | `Invalid` | Listener has unresolved references, or is not `Accepted` |
 | `Programmed` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with another listener of the Gateway |
 | `Conflicted` | `True` | `HostnameConflict` / `ProtocolConflict` | Listener clashes with another listener on hostname (same port + hostname) or protocol (different protocol on the same port) |
+| `OverlappingTLSConfig` | `True` | `OverlappingHostnames` | An `HTTPS` listener whose hostname can match a host another `HTTPS` listener of the Gateway on the same port matches, ListenerSet entries included; a listener without a hostname overlaps all of them. Conflicted listeners and `TLS` listeners, which admit nothing here, take no part. Set on every listener of the overlap, never written `False`, and changes neither `Accepted` nor `Programmed`. Overlapping certificates are not checked. The Cloudflare edge serves its own certificate, so the overlap has no effect on traffic here |
 | `ResolvedRefs` | `True` | `ResolvedRefs` | References resolved |
 | `ResolvedRefs` | `False` | `InvalidCertificateRef` | TLS certificate reference invalid |
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace TLS ref denied by ReferenceGrant |

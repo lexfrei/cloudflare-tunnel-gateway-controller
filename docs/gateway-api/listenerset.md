@@ -153,6 +153,7 @@ spec:
 | `Programmed` | `True` | `Programmed` | Entry programmed; routes can bind |
 | `Conflicted` | `True` | `HostnameConflict` / `ProtocolConflict` | Conflict surfaced |
 | `Conflicted` | `False` | `NoConflicts` | Entry has no conflicts |
+| `OverlappingTLSConfig` | `True` | `OverlappingHostnames` | An `HTTPS` entry whose hostname overlaps another `HTTPS` listener of the parent Gateway on the same port, its own listeners and other ListenerSets' entries included. Advisory: changes neither `Accepted` nor `Programmed` |
 | `ResolvedRefs` | `True` | `ResolvedRefs` | Cert refs (if any) resolved |
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace cert ref denied by missing ReferenceGrant |
 | `ResolvedRefs` | `False` | `InvalidCertificateRef` | An allowed cert ref names a kind other than Secret, or the Secret is missing, has the wrong type, or lacks data |

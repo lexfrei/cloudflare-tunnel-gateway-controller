@@ -717,6 +717,8 @@ func buildListenerSetEntryStatuses(
 			conditions = append(conditions, permissiveHostnameCondition(generation, now))
 		}
 
+		conditions = appendOverlappingTLSCondition(conditions, merge, generation, now)
+
 		out = append(out, gatewayv1.ListenerEntryStatus{
 			Name:           entry.Name,
 			SupportedKinds: supportedKinds,
