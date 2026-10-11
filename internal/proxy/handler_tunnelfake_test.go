@@ -203,10 +203,11 @@ func (f *fakeCloudflaredRespWriter) Hijack() (net.Conn, *bufio.ReadWriter, error
 // Close is modelled as inert too, which is the HTTP/2 case rather than
 // the universal one: localProxyConnection.Close delegates, and over
 // HTTP/2 it reaches http2RespWriter.Close, which returns nil. Over QUIC
-// it reaches a wrapper that sets a flag failing later reads. Modelling
-// the weaker of the two is the safe direction for a double — a test
-// that needs a close to take effect fails here rather than passing here
-// and failing in production.
+// it reaches a wrapper that fails later reads and cancels the stream's
+// receive side, unblocking a pending read while the send side stays
+// writable. Modelling the weaker of the two is the safe direction for a
+// double — a test that needs a close to take effect fails here rather
+// than passing here and failing in production.
 //
 // Without any of this the fake hands out a raw net.Pipe end whose
 // deadlines and Close both work, and any teardown or timeout the proxy

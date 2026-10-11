@@ -116,13 +116,11 @@ func finishAttempt(resp *http.Response, err error, budgetSpent func() bool, canc
 
 	if err == nil {
 		err = held.forward()
-		if err != nil {
-			discardResponse(resp)
-		}
 	}
 
 	if err != nil {
 		cancel(nil)
+		discardResponse(resp)
 
 		return nil, fmt.Errorf("backend round trip: %w", err)
 	}
@@ -432,6 +430,9 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 }
 
 // cancelOnClose releases the attempt context once the response body is done.
+// The cancel comes first: an HTTP/2 body's Close waits for the request
+// stream, and attemptBody.Close cannot interrupt a writer parked reading a
+// client upload that is still open.
 type cancelOnClose struct {
 	io.ReadCloser
 
@@ -439,9 +440,9 @@ type cancelOnClose struct {
 }
 
 func (c *cancelOnClose) Close() error {
-	err := c.ReadCloser.Close()
 	c.cancel(nil)
 
+	err := c.ReadCloser.Close()
 	if err != nil {
 		return fmt.Errorf("closing response body: %w", err)
 	}

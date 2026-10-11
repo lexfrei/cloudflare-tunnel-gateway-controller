@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"net/textproto"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -271,6 +273,100 @@ func TestRetryTransport_RetriesOnceAProbeReadEndsEmpty(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, int32(2), next.calls.Load())
+}
+
+// TestRetryTransport_ReadAnswerToOpenUploadClosesPromptly covers an HTTP/2
+// response body whose Close waits for the request stream, while that
+// stream's writer is parked reading an upload the client has not finished.
+// Cancelling the attempt context first is what releases it.
+func TestRetryTransport_ReadAnswerToOpenUploadClosesPromptly(t *testing.T) {
+	t.Parallel()
+
+	backend := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(writer, "answer")
+	}))
+	backend.EnableHTTP2 = true
+	backend.StartTLS()
+	t.Cleanup(backend.Close)
+
+	src, writer := io.Pipe()
+	t.Cleanup(func() { _ = writer.Close() })
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, backend.URL, src)
+	req.ContentLength = -1
+
+	transport := &retryTransport{
+		next:   backend.Client().Transport,
+		policy: &RouteRetry{Attempts: 1, Codes: []int{http.StatusServiceUnavailable}},
+	}
+
+	resp, err := transport.RoundTrip(req)
+	require.NoError(t, err)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, "answer", string(body))
+
+	// Ending the upload is the only thing that frees a stuck Close, so the
+	// watchdog does that and records that it had to.
+	var stuck atomic.Bool
+
+	watchdog := time.AfterFunc(2*time.Second, func() {
+		stuck.Store(true)
+		_ = writer.Close()
+	})
+
+	_ = resp.Body.Close()
+
+	watchdog.Stop()
+	assert.False(t, stuck.Load(), "closing the answer waited for the client's body")
+}
+
+var errHookRefused = errors.New("refused")
+
+// TestRetryTransport_RefusedInformationalDiscardsPromptly covers the same
+// stuck HTTP/2 Close on the path that throws the answer away because the
+// client's 1xx hook refused a held informational response.
+func TestRetryTransport_RefusedInformationalDiscardsPromptly(t *testing.T) {
+	t.Parallel()
+
+	backend := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusEarlyHints)
+		_, _ = io.WriteString(writer, "answer")
+	}))
+	backend.EnableHTTP2 = true
+	backend.StartTLS()
+	t.Cleanup(backend.Close)
+
+	src, writer := io.Pipe()
+	t.Cleanup(func() { _ = writer.Close() })
+
+	ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{
+		Got1xxResponse: func(int, textproto.MIMEHeader) error { return errHookRefused },
+	})
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, backend.URL, src)
+	req.ContentLength = -1
+
+	transport := &retryTransport{
+		next:   backend.Client().Transport,
+		policy: &RouteRetry{Attempts: 1, Codes: []int{http.StatusServiceUnavailable}},
+	}
+
+	var stuck atomic.Bool
+
+	watchdog := time.AfterFunc(2*time.Second, func() {
+		stuck.Store(true)
+		_ = writer.Close()
+	})
+
+	resp, err := transport.RoundTrip(req)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+
+	watchdog.Stop()
+	require.Error(t, err)
+	assert.False(t, stuck.Load(), "discarding the answer waited for the client's body")
 }
 
 // TestRetryTransport_EarlyAnswerToOpenUploadIsNotHeldBack covers the case
