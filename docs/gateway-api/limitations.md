@@ -199,6 +199,12 @@ Listener ports are not compared. The tunnel does not tell the proxy which port o
 
 Isolation is per Gateway. A route attached to several Gateways on the same data plane answers a host when any of them gives the host to a listener the route is attached through.
 
+### HTTPRoute and GRPCRoute on one listener
+
+When an HTTPRoute and a GRPCRoute are attached to the same listener and their hostnames intersect, the older one by `creationTimestamp` (then `{namespace}/{name}`) is accepted, as the GRPCRoute spec requires, and the other reports `Accepted=False` with reason `Conflicted`. A ListenerSet entry is its own listener, and two listeners of one Gateway are two listeners, so routes on different listeners never conflict. With the port caveat above, routes of both types on two same-hostname listeners can therefore answer the same host.
+
+The losing route is rejected on every parent that binds it to the listener's Gateway, including a parent that attaches it through another listener of that Gateway, and stays accepted on its other Gateways. The proxy scopes a route to the Gateways it is accepted on, not to single listeners, so keeping such a parent would serve the route on the contested listener too.
+
 ### `spec.addresses` accepts only the tunnel hostname
 
 The only reachable address for a Cloudflare Tunnel is the tunnel CNAME (`<tunnel-id>.cfargotunnel.com`), which the controller assigns and reports in `status.addresses`. A Gateway cannot request any other address, the same constraint as the Gateway API `GatewayStaticAddresses` feature, which this implementation does not claim. The controller reports what it cannot serve:

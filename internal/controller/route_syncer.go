@@ -166,9 +166,7 @@ type routeBindingInfo struct {
 	bindingResults map[int]routebinding.BindingResult
 
 	// acceptedGateways is the set of managed Gateway keys ("namespace/name")
-	// this route is accepted on. It drives cross-route-type (HTTPRoute vs
-	// GRPCRoute) conflict resolution: two routes of different types conflict
-	// only when they share a Gateway and their hostnames intersect.
+	// this route is accepted on, which decides the data planes serving it.
 	acceptedGateways map[string]bool
 
 	// parentGateways maps ParentRef index to the managed Gateway key
@@ -177,6 +175,11 @@ type routeBindingInfo struct {
 	// RouteParentStatus is per-parent, so a multi-parent route with one
 	// refused and one healthy Gateway must not flip the healthy parent.
 	parentGateways map[int]string
+
+	// parentListeners maps an accepted ParentRef index to the listeners the
+	// route attaches through on that parent, as parentListenerKey values.
+	// Cross-route-type conflicts are scoped to a shared listener.
+	parentListeners map[int][]string
 
 	// parentPartitions maps ParentRef index to the key of the data-plane
 	// partition serving that parent, populated once the partitions are known.
@@ -1128,9 +1131,10 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	configVersion := proxy.NextConfigVersion()
 
 	// Resolve cross-route-type (HTTPRoute vs GRPCRoute) attachment conflicts
-	// before building any config or status: the loser is moved from accepted to
-	// rejected with Accepted=False/Conflicted so it is neither served nor
-	// reported as accepted.
+	// before building any config or status: the loser's parents on the contested
+	// Gateway go Accepted=False/Conflicted, and a loser with no accepted parent
+	// left moves to rejected, so it is neither served there nor reported as
+	// accepted.
 	resolveCrossTypeConflicts(httpResult, grpcResult)
 
 	// Partition by data plane (#479): the shared plane plus one partition per
@@ -2189,6 +2193,7 @@ func (s *RouteSyncer) bindOneParent(
 
 	if binding.Result.Accepted && binding.GatewayKey != "" {
 		bindingInfo.acceptedGateways[binding.GatewayKey] = true
+		recordParentListeners(bindingInfo, refIdx, ref, routeNamespace, binding.Result.MatchedListeners)
 	}
 
 	return true, binding.Result.Accepted
