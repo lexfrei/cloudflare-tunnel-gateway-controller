@@ -1113,6 +1113,11 @@ func (r *GatewayReconciler) buildOneListenerStatus(
 		conditions = append(conditions, permissiveHostnameCondition(gateway.Generation, now))
 	}
 
+	if gwView != nil {
+		conditions = appendOverlappingTLSCondition(conditions,
+			findMergedGatewayEntry(gwView.merged, listener.Name), gateway.Generation, now)
+	}
+
 	return gatewayv1.ListenerStatus{
 		Name:           listener.Name,
 		SupportedKinds: supportedKinds,

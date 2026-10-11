@@ -23,7 +23,7 @@ Gateway API v1.6.2 (originally audited at v1.5.1, re-checked against the v1.6.2 
 | GW-85 | SHOULD | HONOURED-TESTED | `gateway_controller.go` resolveGatewayConfig + handleResolveError → Accepted=False / InvalidParameters; `config/resolver_gateway.go` ErrInvalidParameters rejects missing/wrong-group/wrong-kind/garbled-token parametersRef; a valid ref provisions a per-Gateway proxy + tunnel (#479); tests `gateway_controller_pergateway_test.go`, `gatewayconfig_cel_envtest_test.go` | Covers referent-not-found, unsupported kind, and malformed-token paths, plus the now-implemented provisioning path. |
 | GW-86 | SHOULD | N-A | Reason AddressNotAssigned is never emitted; address is always assignable (tunnel CNAME, `gateway_controller.go` `updateStatus`) | The condition this clause governs is unreachable — addresses are auto-assigned and cannot fail to assign. Tied to GatewayStaticAddresses (exempt). |
 | GW-87 | SHOULD | HONOURED-TESTED | `gateway_controller.go` applyTopLevelGatewayConditions; test TestGatewayStatus_UnusableHostnameIsPrescriptive | The AddressNotUsable message names the requested hostname and the tunnel CNAME, and says how to fix the spec. |
-| GW-104 | SHOULD | N-A | OverlappingTLSConfig detection not implemented; listener certificateRefs are validated but never served (`limitations.md` "Gateway Listener Configuration") | Binds only a controller that detects both overlap reasons; this one detects neither. Pending maintainer decision on the paired MUST GW-101 (implement the condition or record a deviation); verdict kept as recorded. |
+| GW-104 | SHOULD | N-A | internal/listenermerge/merge.go `annotateOverlappingTLS` detects hostnames only | Binds only a controller that detects both overlap reasons; this one detects overlapping hostnames (GW-101) and not overlapping certificates (GW-102), so OverlappingHostnames is the only reason it sets. |
 | GW-114 | SHOULD | N-A | apiserver object-name validation | Advice to whoever names a Gateway (RFC 1035, at most 63 characters); nothing for the controller to do. A longer name is truncated where it becomes a label value (`render.GatewayLabelValue`). Added in the v1.6.2 sync. |
 
 ## TASK B — MAY (inventory)
@@ -41,7 +41,7 @@ Gateway API v1.6.2 (originally audited at v1.5.1, re-checked against the v1.6.2 
 | GW-61 | OMITTED-INTENTIONAL | No ListenerTLSConfig.Options consumed | Future-API-extension MAY; nothing to implement today. |
 | GW-63 | OMITTED-INTENTIONAL | FrontendTLSValidation exempt (`conformance_test.go` `TestGatewayAPIConformance` SupportGatewayFrontendClientCertificateValidation in ExemptFeatures) | Frontend client-cert validation not supported (edge-terminated). |
 | GW-68 | OMITTED-INTENTIONAL | Same as GW-63 | Multiple CA cert attachment is implementation-specific; frontend validation unsupported. |
-| GW-102 | OMITTED-INTENTIONAL | OverlappingTLSConfig overlapping-certificate detection not implemented (no HTTPS data plane) | The MAY half of the GW-101/102 pair; declined alongside the unsupported HTTPS listener surface. |
+| GW-102 | OMITTED-INTENTIONAL | OverlappingTLSConfig overlapping-certificate detection not implemented | The MAY half of the GW-101/102 pair. The edge terminates TLS with its own certificate, so listener certificates never reach a client and their overlap affects nothing. |
 
 ## Cross-checks against rows-GW.md
 

@@ -3,6 +3,7 @@ package proxy_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"testing"
 	"time"
 
@@ -123,14 +124,13 @@ func TestConvertHTTPRoutes_Retry(t *testing.T) {
 	}
 }
 
-// TestConvertHTTPRoutes_InvalidRetry_PartiallyInvalidDiagnostic pins
-// that an unparseable backoff drops the retry policy but keeps the rule
-// serving, reported as PartiallyInvalid like an unparseable timeout.
+// TestConvertHTTPRoutes_InvalidRetry_DropsRule pins that an unusable retry
+// policy drops its rule, like an unparseable timeout.
 //
 // A negative attempts or backoff gets the same treatment: an object stored
 // before the CRD gained its minimum can still carry one, and letting it
 // through would make the proxy refuse the whole pushed config.
-func TestConvertHTTPRoutes_InvalidRetry_PartiallyInvalidDiagnostic(t *testing.T) {
+func TestConvertHTTPRoutes_InvalidRetry_DropsRule(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -151,13 +151,13 @@ func TestConvertHTTPRoutes_InvalidRetry_PartiallyInvalidDiagnostic(t *testing.T)
 
 			require.Len(t, cfg.Rules, 1)
 			assert.Nil(t, cfg.Rules[0].Retry)
-			assert.Zero(t, cfg.Rules[0].UnavailableStatus)
+			assert.Equal(t, http.StatusInternalServerError, cfg.Rules[0].UnavailableStatus)
 			require.NoError(t, cfg.Validate(), "the converted config must stay pushable")
 
 			require.Len(t, cfg.Diagnostics, 1)
 			assert.Equal(t, proxy.DiagnosticAccepted, cfg.Diagnostics[0].Target)
 			assert.Equal(t, string(gatewayv1.RouteReasonUnsupportedValue), cfg.Diagnostics[0].Reason)
-			assert.False(t, cfg.Diagnostics[0].WholeRule)
+			assert.True(t, cfg.Diagnostics[0].WholeRule)
 			assert.Contains(t, cfg.Diagnostics[0].Message, "retry")
 		})
 	}

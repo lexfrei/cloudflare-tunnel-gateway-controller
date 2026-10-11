@@ -133,6 +133,12 @@ func (g *infraGateways) isBroken(key string) bool {
 	return g != nil && g.broken[key]
 }
 
+// isTransient reports whether the Gateway key failed to resolve for a
+// retryable reason. Nil-safe.
+func (g *infraGateways) isTransient(key string) bool {
+	return g != nil && g.transient[key]
+}
+
 // isRefused reports whether the Gateway key opted in and is refused as a
 // whole. Nil-safe.
 func (g *infraGateways) isRefused(key string) bool {

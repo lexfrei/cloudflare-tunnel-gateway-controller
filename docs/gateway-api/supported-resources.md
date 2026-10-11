@@ -232,6 +232,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 | `Programmed` | `False` | `Invalid` | Listener has unresolved references, or is not `Accepted` |
 | `Programmed` | `False` | `HostnameConflict` / `ProtocolConflict` | Listener conflicts with another listener of the Gateway |
 | `Conflicted` | `True` | `HostnameConflict` / `ProtocolConflict` | Listener clashes with another listener on hostname (same port + hostname) or protocol (different protocol on the same port) |
+| `OverlappingTLSConfig` | `True` | `OverlappingHostnames` | An `HTTPS` listener whose hostname can match a host another `HTTPS` listener of the Gateway on the same port matches, ListenerSet entries included; a listener without a hostname overlaps all of them. Conflicted listeners and `TLS` listeners, which admit nothing here, take no part. Set on every listener of the overlap, never written `False`, and changes neither `Accepted` nor `Programmed`. Overlapping certificates are not checked. The Cloudflare edge serves its own certificate, so the overlap has no effect on traffic here |
 | `ResolvedRefs` | `True` | `ResolvedRefs` | References resolved |
 | `ResolvedRefs` | `False` | `InvalidCertificateRef` | TLS certificate reference invalid |
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace TLS ref denied by ReferenceGrant |
@@ -239,7 +240,7 @@ True weighted traffic splitting across multiple backends is performed by the in-
 
 `InvalidCertificateRef` and `RefNotPermitted` are reported only for a reference the controller could read. When a certificate `Secret` or the `ReferenceGrant`s of its namespace cannot be read, or the ListenerSets attached to the Gateway cannot be listed, the controller leaves the Gateway's status as it was and retries.
 
-A listener's `attachedRoutes` counts each Route attached to it that is `Accepted` for the Gateway, once per listener. A conflicted listener counts a Route when the same parentRef also matches a usable listener. A Route whose only matching listeners are conflicted is rejected, so it counts nowhere. A Route that is `Accepted: False` with reason `Pending` is not counted either, for example one on a dedicated Gateway whose tunnel claim Cloudflare has not confirmed, so the count can drop while the Cloudflare API is unavailable. When the controller cannot finish a count, for example because a Route's namespace cannot be read for a `from: Selector` listener, every listener keeps the count it had and the controller counts again.
+A listener's `attachedRoutes` counts each Route attached to it that is `Accepted` for the Gateway, once per listener. A conflicted listener counts a Route when the same parentRef also matches a usable listener. A Route whose only matching listeners are conflicted is rejected, so it counts nowhere. A Route with reason `Pending`, whether `Accepted: False` or `Accepted: Unknown`, is not counted either, for example one on a dedicated Gateway whose tunnel claim Cloudflare has not confirmed, so the count can drop while the Cloudflare API is unavailable. When the controller cannot finish a count, for example because a Route's namespace cannot be read for a `from: Selector` listener, every listener keeps the count it had and the controller counts again.
 
 ### HTTPRoute/GRPCRoute Conditions
 
@@ -249,7 +250,7 @@ A listener's `attachedRoutes` counts each Route attached to it that is `Accepted
 | `Accepted` | `False` | `NoMatchingParent` | No listener or ListenerSet entry matches the parentRef's `sectionName` or `port`; every listener or entry it matches is conflicted; or the parent Gateway's `allowedListeners` refuses the parent ListenerSet, including when that selector is missing or does not parse |
 | `Accepted` | `False` | `NoMatchingListenerHostname` | Route hostnames don't intersect with the selected listeners, pinned or not |
 | `Accepted` | `False` | `NotAllowedByListeners` | Route namespace or kind not allowed by the selected listeners, pinned or not. A listener whose `allowedRoutes.namespaces.selector` does not parse is treated as not allowing the route and the other listeners are still evaluated; when none of them admits the route, the rejection message, whatever its reason, names that listener, and the parse error goes to the controller log |
-| `Accepted` | `False` | `Conflicted` | Route lost a cross-route-type conflict (HTTPRoute vs GRPCRoute on a shared Gateway with intersecting hostnames); the oldest Route by `creationTimestamp` is accepted |
+| `Accepted` | `False` | `Conflicted` | Route lost a cross-route-type conflict (HTTPRoute vs GRPCRoute attached to the same listener with intersecting hostnames); the oldest Route by `creationTimestamp` is accepted. Set on the loser's parents on that listener's Gateway only, see [HTTPRoute and GRPCRoute on one listener](limitations.md#httproute-and-grpcroute-on-one-listener) |
 | `ResolvedRefs` | `True` | `ResolvedRefs` | Backend references resolved |
 | `ResolvedRefs` | `False` | `RefNotPermitted` | Cross-namespace reference denied |
 | `ResolvedRefs` | `False` | `BackendNotFound` | Backend Service not found |

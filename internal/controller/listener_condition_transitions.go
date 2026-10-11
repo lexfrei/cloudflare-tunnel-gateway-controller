@@ -21,7 +21,8 @@ func isControllerOwnedListenerConditionType(condType string) bool {
 	case string(gatewayv1.ListenerConditionAccepted),
 		string(gatewayv1.ListenerConditionProgrammed),
 		string(gatewayv1.ListenerConditionResolvedRefs),
-		string(gatewayv1.ListenerConditionConflicted):
+		string(gatewayv1.ListenerConditionConflicted),
+		string(gatewayv1.ListenerConditionOverlappingTLSConfig):
 		return true
 	}
 

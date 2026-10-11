@@ -1479,7 +1479,7 @@ func TestHTTPRouteReconciler_UpdateRouteStatus_WithSyncError(t *testing.T) {
 	}
 
 	require.NotNil(t, acceptedCondition)
-	assert.Equal(t, metav1.ConditionFalse, acceptedCondition.Status)
+	assert.Equal(t, metav1.ConditionUnknown, acceptedCondition.Status, "a failed sync is retried")
 	assert.Equal(t, string(gatewayv1.RouteReasonPending), acceptedCondition.Reason)
 }
 

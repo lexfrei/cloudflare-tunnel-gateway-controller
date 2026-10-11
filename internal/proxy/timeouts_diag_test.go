@@ -2,6 +2,7 @@ package proxy_test
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,12 +13,11 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
 
-// TestConvertHTTPRoutes_InvalidTimeouts_PartiallyInvalidDiagnostic pins that a
-// rule whose timeouts fail to parse is still served (without the timeout), but
-// records an Accepted-target diagnostic with WholeRule=false so the controller
-// raises PartiallyInvalid rather than Accepted=False — the route still works,
-// only the timeout was dropped.
-func TestConvertHTTPRoutes_InvalidTimeouts_PartiallyInvalidDiagnostic(t *testing.T) {
+// TestConvertHTTPRoutes_InvalidTimeouts_DropsRule pins the spec's "Drop
+// Rule(s)" approach for PartiallyInvalid: a rule whose timeouts fail to parse
+// is not served without them, it fails closed, and the WholeRule diagnostic
+// is what the controller reports as "Dropped Rule".
+func TestConvertHTTPRoutes_InvalidTimeouts_DropsRule(t *testing.T) {
 	t.Parallel()
 
 	pathPrefix := gatewayv1.PathMatchPathPrefix
@@ -41,9 +41,9 @@ func TestConvertHTTPRoutes_InvalidTimeouts_PartiallyInvalidDiagnostic(t *testing
 	cfg := proxy.ConvertHTTPRoutes(context.Background(), routes, "cluster.local", nil, nil, nil, nil)
 
 	require.Len(t, cfg.Rules, 1)
-	assert.Nil(t, cfg.Rules[0].Timeouts, "an unparseable timeout is dropped")
-	assert.Zero(t, cfg.Rules[0].UnavailableStatus, "the rule still serves — a dropped timeout is not fail-closed")
-	require.Len(t, cfg.Rules[0].Backends, 1, "the backend is still routed")
+	assert.Equal(t, http.StatusInternalServerError, cfg.Rules[0].UnavailableStatus,
+		"a rule with an unparseable timeout must not serve without it")
+	require.NoError(t, cfg.Validate(), "the converted config must stay pushable")
 
 	require.Len(t, cfg.Diagnostics, 1)
 	diag := cfg.Diagnostics[0]
@@ -51,8 +51,8 @@ func TestConvertHTTPRoutes_InvalidTimeouts_PartiallyInvalidDiagnostic(t *testing
 	assert.Equal(t, 0, diag.RuleIndex)
 	assert.Equal(t, proxy.DiagnosticAccepted, diag.Target)
 	assert.Equal(t, string(gatewayv1.RouteReasonUnsupportedValue), diag.Reason)
-	assert.False(t, diag.WholeRule, "a dropped timeout leaves the rule servable")
-	assert.Contains(t, diag.Message, "timeout", "message must name what was dropped")
+	assert.True(t, diag.WholeRule, "the whole rule is dropped")
+	assert.Contains(t, diag.Message, "timeout", "message must name the field that failed")
 }
 
 // TestConvertHTTPRoutes_ValidTimeouts_NoDiagnostic confirms a parseable timeout

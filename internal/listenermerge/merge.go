@@ -39,6 +39,8 @@ import (
 	"slices"
 
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
+
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
 )
 
 // ParentKind tags a merged listener with the kind of resource it originated
@@ -83,6 +85,10 @@ type MergedListener struct {
 	// "message" field of the matching status condition. Empty when
 	// ConflictReason is empty.
 	ConflictMessage string
+
+	// OverlappingTLS reports an HTTPS listener whose hostname can match a host
+	// another HTTPS listener on the same port in the view matches.
+	OverlappingTLS bool
 }
 
 // MergeResult is the output of Merge.
@@ -111,6 +117,7 @@ func Merge(gateway *gatewayv1.Gateway, listenerSets []*gatewayv1.ListenerSet) *M
 	}
 
 	annotateConflicts(merged)
+	annotateOverlappingTLS(merged)
 
 	return &MergeResult{Listeners: merged}
 }
@@ -300,6 +307,31 @@ func markConflict(merged []MergedListener, owner, loser int, reason gatewayv1.Li
 
 	merged[loser].ConflictReason = reason
 	merged[loser].ConflictMessage = "Listener conflicts on " + field + " with a higher-precedence listener on the same port"
+}
+
+// annotateOverlappingTLS flags every HTTPS listener whose hostname overlaps
+// another's on the same port (ListenerConditionOverlappingTLSConfig).
+// Certificate overlap, the clause's MAY half, is not detected. A conflicted
+// listener admits nothing, and a TLS listener is not served here, so neither
+// carries TLS config that could overlap.
+func annotateOverlappingTLS(merged []MergedListener) {
+	for i := range merged {
+		if !servesTLS(&merged[i]) {
+			continue
+		}
+
+		for j := i + 1; j < len(merged); j++ {
+			if servesTLS(&merged[j]) && merged[i].Port == merged[j].Port &&
+				routebinding.HostnamesOverlap(hostnameValue(merged[i].Hostname), hostnameValue(merged[j].Hostname)) {
+				merged[i].OverlappingTLS = true
+				merged[j].OverlappingTLS = true
+			}
+		}
+	}
+}
+
+func servesTLS(listener *MergedListener) bool {
+	return listener.Protocol == gatewayv1.HTTPSProtocolType && listener.ConflictReason == ""
 }
 
 type hostnameKey struct {

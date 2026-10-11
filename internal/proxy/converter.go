@@ -293,6 +293,14 @@ func convertHTTPRouteRule(
 	return proxyRule
 }
 
+// dropRule fails the rule closed and records why as an UnsupportedValue
+// diagnostic covering the whole rule.
+func dropRule(proxyRule *RouteRule, sink *diagSink, message string) {
+	proxyRule.UnavailableStatus = http.StatusInternalServerError
+
+	sink.add(DiagnosticAccepted, string(gatewayv1.RouteReasonUnsupportedValue), message, true)
+}
+
 const incompatibleFiltersMessage = "rule combines RequestRedirect and URLRewrite filters (at rule or backendRef level); " +
 	"matching requests receive HTTP 500. Keep only one of the two on the rule."
 
@@ -1580,21 +1588,20 @@ func buildServiceURL(name, namespace string, port int32, clusterDomain string) s
 	return fmt.Sprintf("%s://%s.%s.svc.%s:%d", scheme, name, namespace, clusterDomain, port)
 }
 
-// convertTimeouts parses Gateway API timeout values into Go durations.
-// NOTE: Gateway API Duration (GEP-2257) is a subset of Go's time.Duration
-// format (only s, ms, h, m are specified). Using time.ParseDuration is
-// intentionally permissive — Kubernetes admission webhooks validate the
-// format before it reaches the controller.
 // invalidTimeoutsMessage builds the actionable status message for a rule whose
-// timeouts could not be parsed. The rule still serves without the timeout.
+// timeouts could not be parsed.
 func invalidTimeoutsMessage(err error) string {
 	return fmt.Sprintf(
-		"The rule's timeout could not be parsed (%v); the rule is served without it. "+
+		"The rule's timeout could not be parsed (%v); the rule is dropped and its requests receive HTTP 500. "+
 			"Use a GEP-2257 duration (e.g. \"10s\", \"500ms\") or remove the timeout.",
 		err,
 	)
 }
 
+// convertTimeouts parses Gateway API timeout values into Go durations.
+// Gateway API Duration (GEP-2257) is a subset of Go's time.Duration format,
+// so time.ParseDuration is deliberately permissive: the CRD validates the
+// format before it reaches the controller.
 func convertTimeouts(timeouts *gatewayv1.HTTPRouteTimeouts) (*RouteTimeouts, error) {
 	result := &RouteTimeouts{}
 
@@ -1620,10 +1627,10 @@ func convertTimeouts(timeouts *gatewayv1.HTTPRouteTimeouts) (*RouteTimeouts, err
 }
 
 // invalidRetryMessage builds the status message for a rule whose retry policy
-// is unusable. The rule still serves, without retries.
+// is unusable.
 func invalidRetryMessage(err error) string {
 	return fmt.Sprintf(
-		"The rule's retry policy is invalid (%v); the rule is served without retries. "+
+		"The rule's retry policy is invalid (%v); the rule is dropped and its requests receive HTTP 500. "+
 			"Use codes within 400-599, a non-negative attempts value and a GEP-2257 duration (e.g. \"100ms\") for the backoff.",
 		err,
 	)
@@ -1660,19 +1667,15 @@ func convertRetry(retry *gatewayv1.HTTPRouteRetry) (*RouteRetry, error) {
 }
 
 // applyRuleTiming copies a rule's timeouts and retry policy onto proxyRule.
-// An unparseable value is dropped with a PartiallyInvalid diagnostic: the rule
-// still serves, so WholeRule stays false.
+// An unparseable value drops the whole rule, the spec's "Drop Rule(s)"
+// approach to PartiallyInvalid: serving the rule without the field would
+// apply a policy nobody wrote.
 func applyRuleTiming(rule *gatewayv1.HTTPRouteRule, proxyRule *RouteRule, sink *diagSink) {
 	if rule.Timeouts != nil {
 		timeouts, err := convertTimeouts(rule.Timeouts)
 		if err != nil {
-			sink.add(
-				DiagnosticAccepted,
-				string(gatewayv1.RouteReasonUnsupportedValue),
-				invalidTimeoutsMessage(err),
-				false,
-			)
-			slog.Warn("dropping invalid route timeouts", "error", err)
+			dropRule(proxyRule, sink, invalidTimeoutsMessage(err))
+			slog.Warn("dropping rule with invalid timeouts", "error", err)
 		} else {
 			proxyRule.Timeouts = timeouts
 		}
@@ -1681,13 +1684,8 @@ func applyRuleTiming(rule *gatewayv1.HTTPRouteRule, proxyRule *RouteRule, sink *
 	if rule.Retry != nil {
 		retry, err := convertRetry(rule.Retry)
 		if err != nil {
-			sink.add(
-				DiagnosticAccepted,
-				string(gatewayv1.RouteReasonUnsupportedValue),
-				invalidRetryMessage(err),
-				false,
-			)
-			slog.Warn("dropping invalid route retry", "error", err)
+			dropRule(proxyRule, sink, invalidRetryMessage(err))
+			slog.Warn("dropping rule with invalid retry", "error", err)
 		} else {
 			proxyRule.Retry = retry
 		}

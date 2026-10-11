@@ -15,56 +15,54 @@ import (
 // analogous GEP-713 BackendTLSPolicy precedence loss.
 const routeReasonConflicted gatewayv1.RouteConditionReason = "Conflicted"
 
-const crossTypeConflictMessage = "Conflicts with a Route of the other type (HTTPRoute/GRPCRoute) on a shared " +
-	"Gateway with intersecting hostnames; the oldest Route by creationTimestamp is accepted"
+const crossTypeConflictMessage = "Conflicts with a Route of the other type (HTTPRoute/GRPCRoute) attached to the " +
+	"same listener with intersecting hostnames; the oldest Route by creationTimestamp is accepted"
 
 // crossTypeRoute is a lightweight descriptor of an accepted route used for
 // cross-route-type conflict resolution, decoupled from the concrete HTTP/GRPC
 // type so the pairwise comparison can be written once.
 type crossTypeRoute struct {
-	key       string
-	created   metav1.Time
-	gateways  map[string]bool
+	key     string
+	created metav1.Time
+	// listeners maps each listener the route attaches through to the key of
+	// the Gateway it belongs to.
+	listeners map[string]string
 	hostnames []gatewayv1.Hostname
 }
 
 // resolveCrossTypeConflicts implements the Gateway API cross-route-type conflict
-// rule (grpcroute_types.go:129-138): when an HTTPRoute and a GRPCRoute attach to
-// the same Gateway and their hostnames intersect, the implementation MUST accept
-// exactly one of them — the oldest by creationTimestamp, then the first
+// rule (GRPCRouteSpec.Hostnames): when an HTTPRoute and a GRPCRoute attach to
+// the same listener and their hostnames intersect, the implementation MUST
+// accept exactly one of them — the oldest by creationTimestamp, then the first
 // alphabetically by {namespace}/{name} — and set Accepted=False on the loser.
 //
-// Scope note: a loser is rejected on every parent it was accepted on (whole-route
-// rejection), not just the conflicting Gateway. The single flattened tunnel
-// ingress has no per-listener serving boundary, so a route accepted anywhere
-// would otherwise still serve the conflicting hostname; whole-route rejection is
-// the faithful behaviour for this data plane. The multi-Gateway partial case is
-// not exercised by the conformance suite.
+// The loser is rejected on every parent that binds it to the Gateway carrying
+// the contested listener, and keeps its other Gateways. Narrower is not
+// possible: the proxy config scopes a route to the Gateways it is accepted on,
+// so a sibling parent through an uncontested listener of the same Gateway
+// would serve it on the contested listener too.
 func resolveCrossTypeConflicts(httpResult *httpRouteResult, grpcResult *grpcRouteResult) {
-	httpRoutes := httpCrossTypeRoutes(httpResult)
-	grpcRoutes := grpcCrossTypeRoutes(grpcResult)
+	httpRoutes := crossTypeRoutes(httpResult.accepted, httpResult.bindings, httpCrossTypeMeta)
+	grpcRoutes := crossTypeRoutes(grpcResult.accepted, grpcResult.bindings, grpcCrossTypeMeta)
 
-	httpLosers := make(map[string]bool)
-	grpcLosers := make(map[string]bool)
+	httpLosers := make(map[string]map[string]bool)
+	grpcLosers := make(map[string]map[string]bool)
 
 	// Conflict resolution is pairwise per the spec ("accept exactly one of these
-	// two routes"). A route that loses any pairing is rejected; in a transitive
-	// 3-way conflict the globally-oldest survives and the rest are rejected
-	// without re-pairing, which the spec neither mandates nor forbids.
+	// two routes"). A route that loses any pairing is rejected there; in a
+	// transitive 3-way conflict the globally-oldest survives and the rest are
+	// rejected without re-pairing, which the spec neither mandates nor forbids.
 	for _, httpRoute := range httpRoutes {
 		for _, grpcRoute := range grpcRoutes {
-			if !gatewaysIntersect(httpRoute.gateways, grpcRoute.gateways) {
-				continue
-			}
-
-			if !hostnamesIntersect(httpRoute.hostnames, grpcRoute.hostnames) {
+			gateways := sharedListenerGateways(httpRoute.listeners, grpcRoute.listeners)
+			if len(gateways) == 0 || !hostnamesIntersect(httpRoute.hostnames, grpcRoute.hostnames) {
 				continue
 			}
 
 			if routeWins(httpRoute, grpcRoute) {
-				grpcLosers[grpcRoute.key] = true
+				addLoserGateways(grpcLosers, grpcRoute.key, gateways)
 			} else {
-				httpLosers[httpRoute.key] = true
+				addLoserGateways(httpLosers, httpRoute.key, gateways)
 			}
 		}
 	}
@@ -79,36 +77,114 @@ func resolveCrossTypeConflicts(httpResult *httpRouteResult, grpcResult *grpcRout
 		})
 }
 
-func httpCrossTypeRoutes(result *httpRouteResult) []crossTypeRoute {
-	out := make([]crossTypeRoute, 0, len(result.accepted))
-	for i := range result.accepted {
-		route := &result.accepted[i]
-		key := route.Namespace + "/" + route.Name
+func httpCrossTypeMeta(route *gatewayv1.HTTPRoute) (metav1.ObjectMeta, []gatewayv1.Hostname) {
+	return route.ObjectMeta, route.Spec.Hostnames
+}
+
+func grpcCrossTypeMeta(route *gatewayv1.GRPCRoute) (metav1.ObjectMeta, []gatewayv1.Hostname) {
+	return route.ObjectMeta, route.Spec.Hostnames
+}
+
+func crossTypeRoutes[T any](
+	accepted []T,
+	bindings map[string]routeBindingInfo,
+	meta func(*T) (metav1.ObjectMeta, []gatewayv1.Hostname),
+) []crossTypeRoute {
+	out := make([]crossTypeRoute, 0, len(accepted))
+
+	for i := range accepted {
+		objectMeta, hostnames := meta(&accepted[i])
+		key := objectMeta.Namespace + "/" + objectMeta.Name
+		binding := bindings[key]
+
+		listeners := make(map[string]string)
+
+		for idx, keys := range binding.parentListeners {
+			if !binding.bindingResults[idx].Accepted {
+				continue
+			}
+
+			for _, listener := range keys {
+				listeners[listener] = binding.parentGateways[idx]
+			}
+		}
+
 		out = append(out, crossTypeRoute{
 			key:       key,
-			created:   route.CreationTimestamp,
-			gateways:  result.bindings[key].acceptedGateways,
-			hostnames: route.Spec.Hostnames,
+			created:   objectMeta.CreationTimestamp,
+			listeners: listeners,
+			hostnames: hostnames,
 		})
 	}
 
 	return out
 }
 
-func grpcCrossTypeRoutes(result *grpcRouteResult) []crossTypeRoute {
-	out := make([]crossTypeRoute, 0, len(result.accepted))
-	for i := range result.accepted {
-		route := &result.accepted[i]
-		key := route.Namespace + "/" + route.Name
-		out = append(out, crossTypeRoute{
-			key:       key,
-			created:   route.CreationTimestamp,
-			gateways:  result.bindings[key].acceptedGateways,
-			hostnames: route.Spec.Hostnames,
-		})
+// sharedListenerGateways returns the Gateways of the listeners both routes
+// attach through.
+func sharedListenerGateways(left, right map[string]string) map[string]bool {
+	var out map[string]bool
+
+	for listener, gateway := range left {
+		if _, ok := right[listener]; !ok {
+			continue
+		}
+
+		if out == nil {
+			out = make(map[string]bool)
+		}
+
+		out[gateway] = true
 	}
 
 	return out
+}
+
+func addLoserGateways(losers map[string]map[string]bool, key string, gateways map[string]bool) {
+	if losers[key] == nil {
+		losers[key] = make(map[string]bool, len(gateways))
+	}
+
+	for gateway := range gateways {
+		losers[key][gateway] = true
+	}
+}
+
+// parentListenerKey identifies one listener: a Gateway listener or a
+// ListenerSet entry, by its parent object and section name.
+func parentListenerKey(kind gatewayv1.Kind, namespace, name string, section gatewayv1.SectionName) string {
+	return string(kind) + "/" + namespace + "/" + name + "/" + string(section)
+}
+
+// recordParentListeners records the listeners an accepted parentRef attaches
+// the route through.
+func recordParentListeners(
+	info *routeBindingInfo,
+	refIdx int,
+	ref gatewayv1.ParentReference,
+	routeNamespace string,
+	matched []gatewayv1.SectionName,
+) {
+	kind := gatewayv1.Kind(kindGateway)
+	if ref.Kind != nil && *ref.Kind != "" {
+		kind = *ref.Kind
+	}
+
+	namespace := routeNamespace
+	if ref.Namespace != nil {
+		namespace = string(*ref.Namespace)
+	}
+
+	keys := make([]string, 0, len(matched))
+	for _, section := range matched {
+		keys = append(keys, parentListenerKey(kind, namespace, string(ref.Name), section))
+	}
+
+	if info.parentListeners == nil {
+		info.parentListeners = make(map[int][]string)
+	}
+
+	info.parentListeners[refIdx] = keys
 }
 
 // routeWins reports whether left should be accepted over right: the oldest by
@@ -122,13 +198,14 @@ func routeWins(left, right crossTypeRoute) bool {
 	return left.key < right.key
 }
 
-// rejectCrossTypeLosers moves every accepted route whose key is in losers into
-// the rejected slice (via appendRejected) and flips its accepted bindings to
-// Accepted=False/Conflicted. Returns the trimmed accepted slice.
+// rejectCrossTypeLosers flips each loser's parents on the Gateways it lost on
+// to Accepted=False/Conflicted, and moves a route left with no accepted parent
+// into the rejected slice (via keyAndRejected). Returns the trimmed accepted
+// slice.
 func rejectCrossTypeLosers[T any](
 	accepted []T,
 	bindings map[string]routeBindingInfo,
-	losers map[string]bool,
+	losers map[string]map[string]bool,
 	keyAndRejected func(T) (string, *[]T),
 ) []T {
 	if len(losers) == 0 {
@@ -139,10 +216,8 @@ func rejectCrossTypeLosers[T any](
 
 	for _, route := range accepted {
 		key, rejected := keyAndRejected(route)
-		if losers[key] {
+		if gateways, lost := losers[key]; lost && !markBindingConflicted(bindings, key, gateways) {
 			*rejected = append(*rejected, route)
-
-			markBindingConflicted(bindings, key)
 		} else {
 			kept = append(kept, route)
 		}
@@ -152,41 +227,32 @@ func rejectCrossTypeLosers[T any](
 }
 
 // markBindingConflicted flips every accepted parent binding of the keyed route
-// to Accepted=False with Reason=Conflicted, so the route status writer surfaces
-// the rejection on the route's RouteParentStatus.
-func markBindingConflicted(bindings map[string]routeBindingInfo, key string) {
+// on one of gateways to Accepted=False with Reason=Conflicted, and drops those
+// Gateways from the route's accepted set. Reports whether the route is still
+// accepted on another parent.
+func markBindingConflicted(bindings map[string]routeBindingInfo, key string, gateways map[string]bool) bool {
 	info, ok := bindings[key]
 	if !ok {
-		return
+		return false
 	}
 
 	for idx, result := range info.bindingResults {
-		if !result.Accepted {
+		if !result.Accepted || !gateways[info.parentGateways[idx]] {
 			continue
 		}
 
 		result.Accepted = false
+		result.Incomplete = false
 		result.Reason = routeReasonConflicted
 		result.Message = crossTypeConflictMessage
 		info.bindingResults[idx] = result
 	}
-}
 
-// gatewaysIntersect reports whether two routes share at least one accepted
-// managed Gateway.
-func gatewaysIntersect(left, right map[string]bool) bool {
-	// Iterate the smaller set for a cheap membership test.
-	if len(right) < len(left) {
-		left, right = right, left
+	for gateway := range gateways {
+		delete(info.acceptedGateways, gateway)
 	}
 
-	for gw := range left {
-		if right[gw] {
-			return true
-		}
-	}
-
-	return false
+	return info.hasAcceptedParent()
 }
 
 // hostnamesIntersect reports whether two hostname lists overlap. An empty list

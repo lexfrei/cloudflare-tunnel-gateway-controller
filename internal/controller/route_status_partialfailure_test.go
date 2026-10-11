@@ -53,7 +53,8 @@ func TestBuildAcceptedCondition_PerParentSyncError(t *testing.T) {
 
 // TestBuildAcceptedCondition_GlobalSyncErrAppliesToAllParents pins the
 // early-error path: when the whole sync failed before partitioning (global
-// syncErr, no per-gateway map), every parent reports Pending.
+// syncErr, no per-gateway map), every parent reports Pending, Unknown since
+// the sync is retried.
 func TestBuildAcceptedCondition_GlobalSyncErrAppliesToAllParents(t *testing.T) {
 	t.Parallel()
 
@@ -63,7 +64,7 @@ func TestBuildAcceptedCondition_GlobalSyncErrAppliesToAllParents(t *testing.T) {
 	}
 
 	cond := buildAcceptedCondition(1, metav1.Now(), binding, 0, errTunnelGroupFailed, nil)
-	assert.Equal(t, metav1.ConditionFalse, cond.Status)
+	assert.Equal(t, metav1.ConditionUnknown, cond.Status)
 	assert.Equal(t, string(gatewayv1.RouteReasonPending), cond.Reason)
 }
 

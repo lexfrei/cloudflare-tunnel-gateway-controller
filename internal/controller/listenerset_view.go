@@ -358,3 +358,27 @@ func mergeViewFingerprint(gateway *gatewayv1.Gateway, candidates []*gatewayv1.Li
 
 	return builder.String()
 }
+
+// appendOverlappingTLSCondition adds ListenerConditionOverlappingTLSConfig to
+// a listener whose hostname overlaps another HTTPS listener's on the same
+// port in the merged view. It is advisory: the spec ties it to connection coalescing on the
+// client, and gates neither Accepted nor Programmed on it.
+func appendOverlappingTLSCondition(
+	conditions []metav1.Condition,
+	entry *listenermerge.MergedListener,
+	generation int64,
+	now metav1.Time,
+) []metav1.Condition {
+	if entry == nil || !entry.OverlappingTLS {
+		return conditions
+	}
+
+	return append(conditions, metav1.Condition{
+		Type:               string(gatewayv1.ListenerConditionOverlappingTLSConfig),
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: generation,
+		LastTransitionTime: now,
+		Reason:             string(gatewayv1.ListenerReasonOverlappingHostnames),
+		Message:            "Listener hostname overlaps the hostname of another HTTPS listener of the Gateway on the same port",
+	})
+}

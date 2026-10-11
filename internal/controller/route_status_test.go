@@ -130,9 +130,9 @@ func TestBuildAcceptedCondition_OnlySyncErrorTriggersPending(t *testing.T) {
 	assert.Equal(t, metav1.ConditionTrue, cond.Status)
 	assert.Equal(t, string(gatewayv1.RouteReasonAccepted), cond.Reason)
 
-	// Cloudflare sync failure → Accepted=False, Reason=Pending.
+	// A failed sync is retried → Accepted=Unknown, Reason=Pending.
 	cond = buildAcceptedCondition(1, now, routeBindingInfo{}, 0, errCloudflareSync, nil)
-	assert.Equal(t, metav1.ConditionFalse, cond.Status)
+	assert.Equal(t, metav1.ConditionUnknown, cond.Status)
 	assert.Equal(t, string(gatewayv1.RouteReasonPending), cond.Reason)
 	assert.Equal(t, errCloudflareSync.Error(), cond.Message)
 
@@ -168,7 +168,12 @@ func TestBuildAcceptedCondition_OnlySyncErrorTriggersPending(t *testing.T) {
 func TestBuildAcceptedCondition_BrokenDataPlaneAttributesReasonToGateway(t *testing.T) {
 	t.Parallel()
 
-	cond := buildAcceptedCondition(1, metav1.Now(), routeBindingInfo{}, 0, errBrokenDataPlane, nil)
+	binding := routeBindingInfo{
+		parentGateways:   map[int]string{0: "team-a/gw"},
+		syncErrByGateway: map[string]error{"team-a/gw": errBrokenDataPlane},
+	}
+
+	cond := buildAcceptedCondition(1, metav1.Now(), binding, 0, nil, nil)
 
 	assert.Equal(t, metav1.ConditionFalse, cond.Status)
 	assert.Equal(t, string(gatewayv1.RouteReasonPending), cond.Reason,
