@@ -16,9 +16,12 @@ on:
       - hack/conformance-setup_test.sh
       - hack/verify-ci-bundle.sh
       - hack/pull-ci-image.sh
+      - hack/conformance-images.sh
       - hack/verify-manifest-children.sh
       - hack/find-ci-run.sh
       - hack/probe-ttlsh.sh
+      - hack/release-changelog.sh
+      - hack/release-changelog_test.sh
       - .github/workflows/pr.yaml
       - .github/workflows/pr-privileged.yaml
       # labels.yml is included so the drift-pin tests
@@ -43,9 +46,12 @@ on:
       - hack/conformance-setup_test.sh
       - hack/verify-ci-bundle.sh
       - hack/pull-ci-image.sh
+      - hack/conformance-images.sh
       - hack/verify-manifest-children.sh
       - hack/find-ci-run.sh
       - hack/probe-ttlsh.sh
+      - hack/release-changelog.sh
+      - hack/release-changelog_test.sh
       - .github/workflows/pr.yaml
       - .github/workflows/pr-privileged.yaml
       # labels.yml is included so the drift-pin tests
@@ -134,3 +140,14 @@ jobs:
       # on a Linux runner.
       - name: Run conformance-setup guard tests
         run: bash hack/conformance-setup_test.sh
+
+  release-changelog:
+    name: Release-changelog test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Pins the commit-subject parser both changelog steps in release.yaml call.
+      - name: Run release-changelog tests
+        run: bash hack/release-changelog_test.sh

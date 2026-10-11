@@ -8,7 +8,8 @@
 #   4. Installs Gateway API CRDs (channel selectable via --channel)
 #   5. Builds controller + proxy images   (--use-ci-images pulls them by
 #                                          digest in Step 1b instead)
-#   6. Loads images into kind
+#   6. Loads images into kind, together with the suites' own images
+#      (pulled in Step 1c)
 #   7. Creates secrets from .env
 #   8. Deploys controller via helm        (local chart, or the PR run's chart)
 #   9. Waits for readiness
@@ -35,8 +36,8 @@
 #     alternatively (CI) the same variables already exported in the environment.
 #     Optional: CF_TUNNEL_2_TOKEN and CF_TUNNEL_2_HOSTNAME for a second test
 #     tunnel in the same account; the e2e tests that need two tunnels skip without them
-#   - docker, kind, helm, kubectl, go, xxd, curl installed; colima additionally on macOS;
-#     gh and jq additionally for --use-ci-images
+#   - docker (with buildx), kind, helm, kubectl, go, xxd, curl, jq installed;
+#     colima additionally on macOS; gh additionally for --use-ci-images
 #
 # colima is the macOS docker backend; every other host uses its native docker
 # daemon directly and is not asked for it.
@@ -194,22 +195,20 @@ fi
 # GitHub Actions runner -- has a native docker daemon, so the requirement (and
 # the start step below) applies to macOS only.
 info "Checking prerequisites..."
-TOOLS=(docker kind helm kubectl go xxd curl)
+TOOLS=(docker kind helm kubectl go xxd curl jq)
 if [[ "$(uname -s)" == "Darwin" ]]; then
   TOOLS+=(colima)
 fi
 if [[ -n "${CI_PR_NUMBER}" ]]; then
-  TOOLS+=(gh jq)
+  TOOLS+=(gh)
 fi
 for tool in "${TOOLS[@]}"; do
   check_tool "${tool}"
 done
-# The CI images are resolved out of their indexes with `docker buildx`, a
+# Every preloaded image is resolved out of its index with `docker buildx`, a
 # plugin that check_tool cannot find on PATH.
-if [[ -n "${CI_PR_NUMBER}" ]]; then
-  docker buildx version >/dev/null 2>&1 \
-    || die "docker buildx is not installed; --use-ci-images needs it to read the CI image indexes"
-fi
+docker buildx version >/dev/null 2>&1 \
+  || die "docker buildx is not installed; the image preload needs it to read image indexes"
 
 CLUSTER_SUFFIX="$(head -c 4 /dev/urandom | xxd -plain)"
 CLUSTER_NAME="v2-test-${CLUSTER_SUFFIX}"
@@ -298,14 +297,48 @@ fi
 # outliving the images buys nothing: once ttl.sh drops the blobs those
 # references point at nothing. "Artifacts present, images gone" is the failure
 # this flag hits, and it must not cost a cluster to discover.
+HOST_ARCH="$(go env GOARCH)"
 if [[ -n "${CI_PR_NUMBER}" ]]; then
   info "Pulling PR #${CI_PR_NUMBER}'s images by digest..."
-  ci_arch="$(go env GOARCH)"
-  "${REPO_ROOT}/hack/pull-ci-image.sh" "${CI_CONTROLLER_REF}" "${CONTROLLER_IMAGE}" "${ci_arch}" \
+  "${REPO_ROOT}/hack/pull-ci-image.sh" "${CI_CONTROLLER_REF}" "${CONTROLLER_IMAGE}" "${HOST_ARCH}" \
     || die "Cannot pull ${CI_CONTROLLER_REF}. Either ttl.sh is unreachable or the image has expired there -- in the latter case re-run PR #${CI_PR_NUMBER}'s CI to republish."
-  "${REPO_ROOT}/hack/pull-ci-image.sh" "${CI_PROXY_REF}" "${PROXY_IMAGE}" "${ci_arch}" \
+  "${REPO_ROOT}/hack/pull-ci-image.sh" "${CI_PROXY_REF}" "${PROXY_IMAGE}" "${HOST_ARCH}" \
     || die "Cannot pull ${CI_PROXY_REF}. Either ttl.sh is unreachable or the image has expired there -- in the latter case re-run PR #${CI_PR_NUMBER}'s CI to republish."
 fi
+
+# --- Step 1c: Pull the suites' images on the host ---
+# Left to the kind node, these pulls happen inside the suite's own readiness
+# wait, and a slow registry surfaces as a namespace timeout far from its cause.
+# Pulled here, each one is bounded, retried and named when it fails, and the
+# host keeps the layers, so later runs only re-check the manifests. Like
+# Step 1b, this runs before Step 2 deletes any cluster.
+suite_image_list="$("${REPO_ROOT}/hack/conformance-images.sh")" \
+  || die "Cannot list the suites' images"
+SUITE_IMAGES=()
+while IFS= read -r image; do SUITE_IMAGES+=("${image}"); done <<< "${suite_image_list}"
+PULL_TIMEOUT_SECONDS="${PULL_TIMEOUT_SECONDS:-300}"
+[[ "${PULL_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]*$ ]] \
+  || die "PULL_TIMEOUT_SECONDS must be a whole number of seconds, got '${PULL_TIMEOUT_SECONDS}'"
+# shortcut: unbounded on a host without coreutils `timeout` (stock macOS).
+bounded() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${PULL_TIMEOUT_SECONDS}" "$@"
+  else
+    "$@"
+  fi
+}
+info "Pulling ${#SUITE_IMAGES[@]} suite images (up to 3 attempts of ${PULL_TIMEOUT_SECONDS}s each)..."
+preload_started="${SECONDS}"
+for image in "${SUITE_IMAGES[@]}"; do
+  for attempt in 1 2 3; do
+    # pull-ci-image.sh stores the host's single platform under the tag, which
+    # is what `kind load` needs from a multi-arch index.
+    bounded "${REPO_ROOT}/hack/pull-ci-image.sh" "${image}" "${image}" "${HOST_ARCH}" >/dev/null && break
+    [[ "${attempt}" -lt 3 ]] || die "Cannot pull ${image} after 3 attempts. Its registry is unreachable or too slow; the suite would stall on this image, so nothing was deployed."
+    warn "Pulling ${image} failed (attempt ${attempt}/3); retrying"
+  done
+done
+info "Suite images pulled in $((SECONDS - preload_started))s"
 
 # --- Step 2: Delete old v2-test-* clusters ---
 for old_cluster in $(kind get clusters 2>/dev/null | grep "^v2-test" || true); do
@@ -356,6 +389,7 @@ fi
 info "Loading images into kind cluster..."
 kind load docker-image "${CONTROLLER_IMAGE}" --name "${CLUSTER_NAME}"
 kind load docker-image "${PROXY_IMAGE}" --name "${CLUSTER_NAME}"
+kind load docker-image "${SUITE_IMAGES[@]}" --name "${CLUSTER_NAME}"
 
 # --- Step 7: Create namespace and secrets ---
 info "Creating namespace '${NAMESPACE}'..."

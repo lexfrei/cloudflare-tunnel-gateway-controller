@@ -463,41 +463,16 @@ jobs:
           CHANGELOG_FILE=$(mktemp)
           echo "[]" > "$CHANGELOG_FILE"
 
-          while IFS= read -r commit; do
-            # Skip empty lines
-            [ -z "$commit" ] && continue
+          ENTRIES_FILE=$(mktemp)
+          printf '%s\n' "$COMMITS" | hack/release-changelog.sh artifacthub > "$ENTRIES_FILE"
 
-            # Parse: type(scope): description OR type: description
-            if [[ "$commit" =~ ^(feat|fix|security|refactor|docs|perf|build)(\([^\)]+\))?:\ (.+)$ ]]; then
-              TYPE="${BASH_REMATCH[1]}"
-              SCOPE="${BASH_REMATCH[2]}"
-              DESC="${BASH_REMATCH[3]}"
-
-              # Remove parentheses from scope
-              SCOPE="${SCOPE#\(}"
-              SCOPE="${SCOPE%\)}"
-
-              # Map type to Artifact Hub kind
-              case "$TYPE" in
-                feat) KIND="added" ;;
-                fix) KIND="fixed" ;;
-                security) KIND="security" ;;
-                *) KIND="changed" ;;
-              esac
-
-              # Format description with scope
-              if [ -n "$SCOPE" ]; then
-                FULL_DESC="${SCOPE}: ${DESC}"
-              else
-                FULL_DESC="${DESC}"
-              fi
-
-              # Use yq with strenv() to safely add entry (handles all special characters)
-              export KIND FULL_DESC
-              yq eval '. += [{"kind": strenv(KIND), "description": strenv(FULL_DESC)}]' \
-                --inplace "$CHANGELOG_FILE"
-            fi
-          done <<< "$COMMITS"
+          while IFS=$'\t' read -r KIND FULL_DESC; do
+            # Use yq with strenv() to safely add entry (handles all special characters)
+            export KIND FULL_DESC
+            yq eval '. += [{"kind": strenv(KIND), "description": strenv(FULL_DESC)}]' \
+              --inplace "$CHANGELOG_FILE"
+          done < "$ENTRIES_FILE"
+          rm "$ENTRIES_FILE"
 
           # Check if changelog is empty (only chore/ci/test commits)
           if [ "$(cat "$CHANGELOG_FILE")" = "[]" ]; then
@@ -674,30 +649,7 @@ jobs:
           fi
 
           # Build changelog with emojis
-          CHANGELOG_SECTION=""
-          while IFS= read -r commit; do
-            [ -z "$commit" ] && continue
-
-            if [[ "$commit" =~ ^(feat|fix|security|refactor|docs|perf|build)(\([^\)]+\))?:\ (.+)$ ]]; then
-              TYPE="${BASH_REMATCH[1]}"
-              SCOPE="${BASH_REMATCH[2]}"
-              DESC="${BASH_REMATCH[3]}"
-              SCOPE="${SCOPE#\(}"; SCOPE="${SCOPE%\)}"
-
-              case "$TYPE" in
-                feat) emoji="✨" ;;
-                fix) emoji="🐛" ;;
-                security) emoji="🔒" ;;
-                *) emoji="🔄" ;;
-              esac
-
-              if [ -n "$SCOPE" ]; then
-                CHANGELOG_SECTION="${CHANGELOG_SECTION}- ${emoji} ${SCOPE}: ${DESC}"$'\n'
-              else
-                CHANGELOG_SECTION="${CHANGELOG_SECTION}- ${emoji} ${DESC}"$'\n'
-              fi
-            fi
-          done <<< "$COMMITS"
+          CHANGELOG_SECTION="$(printf '%s\n' "$COMMITS" | hack/release-changelog.sh markdown)"
 
           # Fallback for empty changelog
           if [ -z "$CHANGELOG_SECTION" ]; then
@@ -709,6 +661,7 @@ jobs:
             echo "## Changelog"
             echo ""
             echo "${CHANGELOG_SECTION}"
+            echo ""
             echo "## Installation"
             echo ""
             echo "\`\`\`bash"

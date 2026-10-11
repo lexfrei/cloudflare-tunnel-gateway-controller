@@ -294,11 +294,13 @@ Conformance tests validate that the controller implements the Gateway API specif
 - Cloudflare Tunnel configured and working
 - GatewayClass `cloudflare-tunnel` created
 
-`hack/conformance-setup.sh` builds that cluster for you. It needs `docker`, `kind`, `helm`, `kubectl`, `go`, `xxd` and `curl`; on macOS it also needs `colima`, which is where the docker daemon comes from there. Other hosts use their native daemon and are not asked for it.
+`hack/conformance-setup.sh` builds that cluster for you. It needs `docker` with the `buildx` plugin, `kind`, `helm`, `kubectl`, `go`, `xxd`, `curl` and `jq`; on macOS it also needs `colima`, which is where the docker daemon comes from there. Other hosts use their native daemon and are not asked for it.
+
+Before it touches any cluster, the script pulls every image named in the vendored conformance manifests and the e2e suite (the list comes from `hack/conformance-images.sh`, and is a superset of what one run uses) on the host and later loads them into kind, so no suite pod waits on a registry. Each pull gets three attempts of `PULL_TIMEOUT_SECONDS` (default 300) seconds; a registry that stays slow stops the run there, naming the image. The time limit needs coreutils `timeout`; on a host without it, such as stock macOS, each attempt runs unbounded. Layers stay cached on the host, so later runs only re-check the manifests with each registry.
 
 ### Deploying a Pull Request's CI Build
 
-`hack/conformance-setup.sh --use-ci-images <PR>` deploys what that PR's CI already built instead of building locally. It additionally needs `gh` (authenticated for this repository), `jq`, and the `docker buildx` plugin, which reads the CI image indexes.
+`hack/conformance-setup.sh --use-ci-images <PR>` deploys what that PR's CI already built instead of building locally. It additionally needs `gh`, authenticated for this repository.
 
 The chart comes from the CI run's own artifacts and the images are pulled by the digest that run recorded, so nothing on this path is addressed by a tag. That matters because CI also publishes to `ttl.sh`, an anonymous registry where the PR tag is writable by anyone, and the cluster this script builds holds real Cloudflare credentials.
 

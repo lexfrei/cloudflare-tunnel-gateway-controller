@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# pull-ci-image.sh — pull one CI image for this host's platform and tag it.
+# pull-ci-image.sh — pull one image for this host's platform and tag it.
 #
 # `kind load docker-image` runs `docker save | ctr images import
 # --all-platforms`. If the local tag carries a multi-arch index, ctr demands
 # blobs for every platform in it, including the ones this host never fetched,
 # and the import dies on the first foreign manifest. So resolve the host's own
-# manifest out of the index the caller already verified and pull that: what
+# manifest out of the index the caller named and pull that: what
 # ends up under the local tag is a single platform.
 #
-# The index digest stays the root of trust -- the platform digest is read out
-# of that index, not resolved from a tag.
+# Given a repo@sha256 index digest, as for the CI images, that digest stays the
+# root of trust -- the platform digest is read out of that index, not resolved
+# from a tag. Given a repo:tag, as for the suites' upstream images, the tag is
+# trusted as it stands.
 #
-# Usage: pull-ci-image.sh <repo@sha256:index-digest> <local-tag> <goarch>
+# Usage: pull-ci-image.sh <repo@sha256:index-digest | repo:tag> <local-tag> <goarch>
 
 set -euo pipefail
 
@@ -44,5 +46,8 @@ digest="${digests}"
 [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] \
   || die "${ref} carries no linux/${arch} manifest"
 
-docker pull "${ref%@*}@${digest}"
-docker tag "${ref%@*}@${digest}" "${local_tag}"
+repo="${ref%@*}"
+# Only a colon after the last slash is a tag; one before it is a registry port.
+[[ "${ref}" == *@* || "${repo##*/}" != *:* ]] || repo="${repo%:*}"
+docker pull "${repo}@${digest}"
+docker tag "${repo}@${digest}" "${local_tag}"
