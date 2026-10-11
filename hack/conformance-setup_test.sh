@@ -36,7 +36,7 @@ stubs="${tmp}/stubs"
 mkdir -p "${sandbox}/hack" "${stubs}"
 cp "${setup}" "${sandbox}/hack/"
 
-for stub in docker kind helm kubectl go; do
+for stub in docker kind helm kubectl go jq; do
   printf '#!/usr/bin/env bash\nexit 0\n' > "${stubs}/${stub}"
   chmod +x "${stubs}/${stub}"
 done
@@ -85,13 +85,11 @@ else
   flunk "macOS host still requires colima"
 fi
 
-# --use-ci-images reads image indexes with `docker buildx`, a plugin the tool
-# check cannot see by name. Missing, it surfaced much later as an unreadable
-# index plus advice to re-run CI.
-for stub in gh jq; do
-  printf '#!/usr/bin/env bash\nexit 0\n' > "${stubs}/${stub}"
-  chmod +x "${stubs}/${stub}"
-done
+# Every image the script pulls is read out of its index with `docker buildx`,
+# a plugin the tool check cannot see by name. Missing, it surfaced much later
+# as an unreadable index.
+printf '#!/usr/bin/env bash\nexit 0\n' > "${stubs}/gh"
+chmod +x "${stubs}/gh"
 mkdir -p "${tmp}/nobuildx"
 cat > "${tmp}/nobuildx/docker" <<'STUB'
 #!/usr/bin/env bash
@@ -100,12 +98,15 @@ exit 0
 STUB
 chmod +x "${tmp}/nobuildx/docker"
 
-nobuildx_out="$(extra_stubs="${tmp}/nobuildx" run_prereq Linux --use-ci-images 733)"
-if grep --quiet "docker buildx is not installed" <<< "${nobuildx_out}"; then
-  pass "--use-ci-images requires docker buildx"
-else
-  flunk "--use-ci-images requires docker buildx (got: ${nobuildx_out##*$'\n'})"
-fi
+for mode in "" "--use-ci-images 733"; do
+  # shellcheck disable=SC2086 # mode is deliberately split into flag and value
+  nobuildx_out="$(extra_stubs="${tmp}/nobuildx" run_prereq Linux ${mode})"
+  if grep --quiet "docker buildx is not installed" <<< "${nobuildx_out}"; then
+    pass "docker buildx is required (${mode:-default mode})"
+  else
+    flunk "docker buildx is required (${mode:-default mode}) (got: ${nobuildx_out##*$'\n'})"
+  fi
+done
 if grep --quiet ".env file not found" <<< "$(run_prereq Linux --use-ci-images 733)"; then
   pass "--use-ci-images with docker buildx reaches the credential check"
 else
@@ -303,13 +304,15 @@ index_with_arches() {
   } > "${out}"
 }
 
-# run_pull <fixture> <arch> -> exit code; DOCKER_LOG holds the recorded calls
+# DOCKER_LOG holds the calls the last run_pull recorded.
+# run_pull <fixture> <arch> [image-ref local-tag]
 run_pull() {
   local fixture="$1" arch="$2"
+  local ref="${3:-ttl.sh/cf-tunnel-gateway-ctrl@sha256:$(printf 'e%.0s' {1..64})}" local_tag="${4:-controller:dev}"
   : > "${tmp}/docker.log"
   PATH="${pull_stub_dir}:/usr/bin:/bin" FIXTURE_INDEX="${fixture}" DOCKER_LOG="${tmp}/docker.log" \
     PULL_CI_IMAGE_RETRY_DELAY=0 \
-    bash "${puller}" "ttl.sh/cf-tunnel-gateway-ctrl@sha256:$(printf 'e%.0s' {1..64})" controller:dev "${arch}" \
+    bash "${puller}" "${ref}" "${local_tag}" "${arch}" \
     >/dev/null 2>&1
 }
 
@@ -337,6 +340,29 @@ if grep --quiet "pull ttl.sh/cf-tunnel-gateway-ctrl@sha256:${amd64_digest}$" "${
   pass "the local tag points at one platform, not at the index"
 else
   flunk "the local tag points at one platform, not at the index (log: $(tr '\n' '; ' < "${tmp}/docker.log"))"
+fi
+
+# The suites' upstream images come as repo:tag; the tag must not reach the
+# pull, and a registry port must survive its removal.
+tag_ref="registry.example:5000/echo:v1"
+if run_pull "${tmp}/index.json" amd64 "${tag_ref}" "${tag_ref}" \
+  && grep --quiet --line-regexp "pull registry.example:5000/echo@sha256:${amd64_digest}" "${tmp}/docker.log" \
+  && grep --quiet --line-regexp "tag registry.example:5000/echo@sha256:${amd64_digest} ${tag_ref}" "${tmp}/docker.log"; then
+  pass "a repo:tag reference is pulled by its host-platform digest and keeps its tag"
+else
+  flunk "a repo:tag reference is pulled by its host-platform digest and keeps its tag (log: $(tr '\n' '; ' < "${tmp}/docker.log"))"
+fi
+if run_pull "${tmp}/index.json" amd64 registry.example:5000/echo echo:local \
+  && grep --quiet --line-regexp "pull registry.example:5000/echo@sha256:${amd64_digest}" "${tmp}/docker.log"; then
+  pass "a tagless reference keeps its registry port"
+else
+  flunk "a tagless reference keeps its registry port (log: $(tr '\n' '; ' < "${tmp}/docker.log"))"
+fi
+printf '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json"}\n' > "${tmp}/single.json"
+if run_pull "${tmp}/single.json" amd64 "${tag_ref}" "${tag_ref}"; then
+  flunk "a repo:tag reference to a single-platform manifest is rejected"
+else
+  pass "a repo:tag reference to a single-platform manifest is rejected"
 fi
 
 index_with_arches "${tmp}/index-arm.json" "${arm64_digest}:arm64"
@@ -860,6 +886,159 @@ if grep --quiet --extended-regexp '\$\{REPO_ROOT\}/hack/find-ci-run\.sh' "${setu
   pass "conformance-setup.sh resolves the run through the finder"
 else
   flunk "conformance-setup.sh resolves the run through the finder"
+fi
+
+# --- conformance-images.sh -------------------------------------------------
+#
+# The suites' pods only skip the registry when every image they run was
+# preloaded, so the list must cover what they reference and nothing may slip
+# past the two sources the lister reads.
+lister="${script_dir}/conformance-images.sh"
+e2e_image="$(sed -n 's/^const echoBasicImage = "\(.*\)"$/\1/p' "${repo_root}/test/e2e/setup_test.go")"
+images_status=0
+images="$(bash "${lister}" 2>&1)" || images_status=$?
+if [[ "${images_status}" -eq 0 ]] && grep --quiet --line-regexp --fixed-strings "${e2e_image:-unset}" <<< "${images}"; then
+  pass "the image list carries the e2e echo image"
+else
+  flunk "the image list carries the e2e echo image (exit ${images_status}, got: ${images})"
+fi
+manifest_images="$(grep --recursive --no-filename --extended-regexp '^[[:space:]]+image: ' \
+  "${repo_root}/vendor/sigs.k8s.io/gateway-api/conformance" | awk '{print $2}' | sort --unique)"
+if [[ -n "${manifest_images}" ]] \
+  && [[ -z "$(comm -23 <(printf '%s\n' "${manifest_images}") <(sort <<< "${images}"))" ]]; then
+  pass "the image list carries every image the vendored conformance manifests run"
+else
+  flunk "the image list carries every image the vendored conformance manifests run"
+fi
+if grep --quiet --invert-match --extended-regexp '^[a-z0-9./-]+:[A-Za-z0-9._-]+$' <<< "${images}"; then
+  flunk "every listed image is a plain name:tag reference (got: ${images})"
+else
+  pass "every listed image is a plain name:tag reference"
+fi
+
+# An image set anywhere but echoBasicImage would be pulled by the node at pod
+# start, which is the stall the preload exists to remove.
+stray_e2e="$(grep --line-number --extended-regexp '\bImage:' "${repo_root}"/test/e2e/*.go \
+  | grep --invert-match --extended-regexp '\bImage:[[:space:]]+echoBasicImage,' || true)"
+if [[ -z "${stray_e2e}" ]]; then
+  pass "every e2e container runs echoBasicImage"
+else
+  flunk "every e2e container runs echoBasicImage (stray: ${stray_e2e})"
+fi
+stray_conformance="$(grep --recursive --line-number --extended-regexp \
+  '"[a-z0-9.-]+\.[a-z]+/[^" ]+:[^" ]+"' --include='*.go' \
+  "${repo_root}/vendor/sigs.k8s.io/gateway-api/conformance" || true)"
+if [[ -z "${stray_conformance}" ]]; then
+  pass "the vendored conformance Go code names no image of its own"
+else
+  flunk "the vendored conformance Go code names no image of its own (stray: ${stray_conformance})"
+fi
+
+# A source the lister cannot read must stop the run, not shrink the list.
+mkdir -p "${tmp}/nosource/hack"
+cp "${lister}" "${tmp}/nosource/hack/"
+nosource_status=0
+bash "${tmp}/nosource/hack/conformance-images.sh" >/dev/null 2>&1 || nosource_status=$?
+if [[ "${nosource_status}" -ne 0 ]]; then
+  pass "the lister refuses a tree without its sources"
+else
+  flunk "the lister refuses a tree without its sources (exit 0)"
+fi
+
+# --- suite image preload ---------------------------------------------------
+#
+# The setup script runs end to end against stubs here, with the lister and the
+# puller replaced, so the retry loop is driven by a puller that fails on cue.
+preload_root="${tmp}/preload"
+preload_stubs="${tmp}/preload-stubs"
+mkdir -p "${preload_root}/hack" "${preload_stubs}"
+cp "${setup}" "${preload_root}/hack/"
+printf '#!/usr/bin/env bash\necho registry.example/echo:v1\n' > "${preload_root}/hack/conformance-images.sh"
+cat > "${preload_root}/hack/pull-ci-image.sh" <<'STUB'
+#!/usr/bin/env bash
+# PULL_FAILURES is how many calls fail before one succeeds; with PULL_HANGS
+# set, a failing call hangs instead of exiting.
+count=$(( $(cat "${PULL_COUNT}" 2>/dev/null || echo 0) + 1 ))
+echo "${count}" > "${PULL_COUNT}"
+[[ "${count}" -gt "${PULL_FAILURES}" ]] && exit 0
+[[ -n "${PULL_HANGS:-}" ]] && sleep 30
+exit 1
+STUB
+for stub in docker helm kubectl go jq; do
+  printf '#!/usr/bin/env bash\nexit 0\n' > "${preload_stubs}/${stub}"
+done
+printf '#!/usr/bin/env bash\necho Linux\n' > "${preload_stubs}/uname"
+printf '#!/usr/bin/env bash\necho 200\n' > "${preload_stubs}/curl"
+cat > "${preload_stubs}/kind" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "${KIND_LOG}"
+[[ "$*" == "get clusters" ]] && echo v2-test-old
+exit 0
+STUB
+chmod +x "${preload_root}/hack/"*.sh "${preload_stubs}/"*
+
+# run_preload <failures> [hang] -> stdout+stderr of the setup script, exit code ignored
+run_preload() {
+  rm -f "${tmp}/pull-count"
+  : > "${tmp}/kind.log"
+  PATH="${preload_stubs}:/usr/bin:/bin" PULL_FAILURES="$1" PULL_COUNT="${tmp}/pull-count" \
+  PULL_HANGS="${2:-}" PULL_TIMEOUT_SECONDS="${preload_timeout:-1}" \
+  KIND_LOG="${tmp}/kind.log" GITHUB_ACTIONS='' CF_API_TOKEN=t CF_ACCOUNT_ID=a \
+  CF_TUNNEL_ID=i CF_TUNNEL_TOKEN=k CF_TUNNEL_HOSTNAME=h.example CF_TUNNEL_2_TOKEN='' \
+    bash "${preload_root}/hack/conformance-setup.sh" 2>&1 || true
+}
+
+flaky_out="$(run_preload 1)"
+if [[ "$(grep --count 'retrying' <<< "${flaky_out}")" -eq 1 ]] \
+  && grep --quiet 'Suite images pulled' <<< "${flaky_out}" \
+  && grep --quiet --line-regexp 'load docker-image registry.example/echo:v1 --name v2-test-.*' "${tmp}/kind.log"; then
+  pass "a pull that fails once is retried and the image is loaded into kind"
+else
+  flunk "a pull that fails once is retried and the image is loaded into kind (got: ${flaky_out##*$'\n'})"
+fi
+
+# A registry that accepts the connection and then stalls is the failure the
+# timeout exists for: the hung attempt must be cut off and retried.
+hung_started="${SECONDS}"
+hung_out="$(run_preload 1 hang)"
+if [[ "$((SECONDS - hung_started))" -lt 20 ]] \
+  && [[ "$(grep --count 'retrying' <<< "${hung_out}")" -eq 1 ]] \
+  && grep --quiet 'Suite images pulled' <<< "${hung_out}"; then
+  pass "a hung pull is cut off by the timeout and retried"
+else
+  flunk "a hung pull is cut off by the timeout and retried (took $((SECONDS - hung_started))s, got: ${hung_out##*$'\n'})"
+fi
+
+# timeout rejects a malformed duration at once, which three attempts would
+# then report as a dead registry.
+badtimeout_out="$(preload_timeout=abc run_preload 0)"
+if grep --quiet 'PULL_TIMEOUT_SECONDS must be a whole number of seconds' <<< "${badtimeout_out}" \
+  && ! grep --quiet 'Pulling' <<< "${badtimeout_out}"; then
+  pass "a malformed PULL_TIMEOUT_SECONDS is refused before any pull"
+else
+  flunk "a malformed PULL_TIMEOUT_SECONDS is refused before any pull (got: ${badtimeout_out##*$'\n'})"
+fi
+
+dead_out="$(run_preload 3)"
+if [[ "$(grep --count 'retrying' <<< "${dead_out}")" -eq 2 ]] \
+  && grep --quiet --fixed-strings 'Cannot pull registry.example/echo:v1 after 3 attempts' <<< "${dead_out}"; then
+  pass "a registry that fails three times stops the run naming the image"
+else
+  flunk "a registry that fails three times stops the run naming the image (got: ${dead_out##*$'\n'})"
+fi
+if grep --quiet --extended-regexp '^(delete|create) cluster' "${tmp}/kind.log"; then
+  flunk "a failed preload touches no cluster (kind: $(tr '\n' '; ' < "${tmp}/kind.log"))"
+else
+  pass "a failed preload touches no cluster"
+fi
+
+# The preload depends on registries outside this repository's control too, so
+# its pull has to come before the script deletes the operator's clusters.
+preload_line="$( (grep --line-number --fixed-strings 'conformance-images.sh' "${setup}" || true) | head -1 | cut -d: -f1)"
+if [[ -n "${preload_line}" && "${preload_line}" -lt "${delete_line}" ]]; then
+  pass "suite images are pulled before old clusters are deleted"
+else
+  flunk "suite images are pulled before old clusters are deleted (preload ${preload_line:-absent}, delete ${delete_line})"
 fi
 
 if [[ "${fail}" -ne 0 ]]; then

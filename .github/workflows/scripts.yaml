@@ -16,6 +16,7 @@ on:
       - hack/conformance-setup_test.sh
       - hack/verify-ci-bundle.sh
       - hack/pull-ci-image.sh
+      - hack/conformance-images.sh
       - hack/verify-manifest-children.sh
       - hack/find-ci-run.sh
       - hack/probe-ttlsh.sh
@@ -45,6 +46,7 @@ on:
       - hack/conformance-setup_test.sh
       - hack/verify-ci-bundle.sh
       - hack/pull-ci-image.sh
+      - hack/conformance-images.sh
       - hack/verify-manifest-children.sh
       - hack/find-ci-run.sh
       - hack/probe-ttlsh.sh
