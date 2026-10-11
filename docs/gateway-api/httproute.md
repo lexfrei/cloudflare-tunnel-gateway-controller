@@ -17,7 +17,7 @@ All matching and filter behavior is performed by the in-process L7 proxy that th
 | RequestHeaderModifier filter | ✅ | Of `set` or `add` entries whose names differ only in case, the first is used |
 | ResponseHeaderModifier filter | ✅ | Of `set` or `add` entries whose names differ only in case, the first is used |
 | RequestRedirect filter | ✅ | A `ReplacePrefixMatch` path is built the same way as in URLRewrite |
-| URLRewrite filter | ✅ | Replaces the matched prefix and leaves the remaining segments unchanged, dot segments included |
+| URLRewrite filter | ✅ | Replaces the matched prefix and leaves the remaining segments unchanged |
 | RequestMirror filter | ✅ | |
 | Per-route timeouts | ✅ | |
 | Retries | ✅ | Experimental channel; see [Retries](limitations.md#retries) |
@@ -97,6 +97,10 @@ spec:
 | `PathPrefix` | Matches paths starting with value, element by element | A trailing `/` on the value is ignored: `/abc` and `/abc/` both match `/abc`, `/abc/` and `/abc/def`, and neither matches `/abcd`. Being the same prefix, `/abc` and `/abc/` tie on path length, so the remaining precedence rules decide between them |
 | `Exact` | Matches exact path only | |
 | `RegularExpression` | Matches path against regex pattern (RE2) | |
+
+Every request path is first brought to its canonical form as defined by RFC 3986: percent-encoded unreserved characters are decoded, the remaining escapes are upper-cased, and `.` and `..` segments are resolved. Repeated slashes are kept. Matching, the URLRewrite and RequestRedirect filters, and the backend all work on that one path.
+
+`PathPrefix` and `Exact` compare the path with its escapes decoded, except an encoded slash (`%2F`) and an encoded `%` (`%25`). A request for `/users/%40me` matches `/users/@me`, a value such as `/caf%C3%A9` matches whichever hex case the client sends, and an encoded slash is part of its segment rather than a separator, so `/a%2Fb` does not match the prefix `/a`. `RegularExpression` matches the fully decoded path. A `ReplaceFullPath` or `ReplacePrefixMatch` value is an escaped path, and the rest of the path reaches the backend in its canonical form.
 
 The controller compiles every match before programming a route. A rule it cannot compile is dropped, and the route that carries it reports `PartiallyInvalid=True` naming the rule and the compile error, or `Accepted=False` with reason `UnsupportedValue` when no rule of that route compiles. Routes on the same data plane keep their configuration either way, which is the point: the pattern belongs to whoever wrote it.
 

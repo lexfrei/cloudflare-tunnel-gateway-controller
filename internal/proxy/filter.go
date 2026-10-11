@@ -181,7 +181,7 @@ func (f *requestRedirect) ProcessResponse(_ *http.Response) {}
 
 func (f *requestRedirect) buildRedirectURL(req *http.Request) string {
 	result := buildRedirectBase(req, f.config)
-	result.Path = buildRedirectPath(req, f.config)
+	setEscapedPath(result, buildRedirectPath(req, f.config))
 	result.RawQuery = req.URL.RawQuery
 
 	return result.String()
@@ -230,10 +230,11 @@ func isSchemeDefaultPort(scheme string, port int32) bool {
 	return (scheme == schemeHTTP && port == 80) || (scheme == schemeHTTPS && port == 443)
 }
 
-// buildRedirectPath resolves the redirect path from the config and request.
+// buildRedirectPath resolves the escaped redirect path from the config and
+// request.
 func buildRedirectPath(req *http.Request, config *RedirectConfig) string {
 	if config.Path == nil {
-		return req.URL.Path
+		return req.URL.EscapedPath()
 	}
 
 	switch config.Path.Type {
@@ -242,13 +243,13 @@ func buildRedirectPath(req *http.Request, config *RedirectConfig) string {
 	case RedirectPathPrefixReplace:
 		matchedPrefix := getMatchedPrefix(req)
 		if matchedPrefix != "" {
-			suffix := strings.TrimPrefix(req.URL.Path, matchedPrefix)
+			suffix := trimMatchedPrefix(req.URL.EscapedPath(), matchedPrefix)
 
 			return joinPathSegments(config.Path.Value, suffix)
 		}
 	}
 
-	return req.URL.Path
+	return req.URL.EscapedPath()
 }
 
 // stripPort removes the port suffix from a host string, preserving IPv6 brackets.
@@ -268,15 +269,11 @@ func stripPort(host string) string {
 // after the matched prefix, which a prefix carrying its own trailing
 // "/" already consumed; the single separator between the two halves is
 // normalised either way, so neither a trailing "/" on the replacement
-// nor a leading one on the suffix doubles it up.
-//
-// The result is a substitution and nothing more — dot segments the
-// client sent survive into it untouched. Resolving them here would
-// take a request the route selected by its prefix and move it outside
-// the replacement: "/public/../admin" under prefix "/public" and
-// replacement "/internal" resolves to "/admin", which is not what the
-// spec's table describes.
+// nor a leading one on the suffix doubles it up. Both halves are escaped
+// paths; a replacement that does not unescape is taken as literal.
 func joinPathSegments(replacement, suffix string) string {
+	replacement = escapedPathValue(replacement)
+
 	if suffix == "" {
 		// The whole path was the matched prefix. An empty replacement
 		// leaves nothing to forward, and the spec's table maps that to
@@ -321,14 +318,14 @@ func (f *urlRewriter) rewritePath(req *http.Request) {
 	switch f.config.Path.Type {
 	case URLRewriteFullPath:
 		if f.config.Path.ReplaceFullPath != nil {
-			req.URL.Path = *f.config.Path.ReplaceFullPath
+			setEscapedPath(req.URL, *f.config.Path.ReplaceFullPath)
 		}
 	case URLRewritePrefixMatch:
 		if f.config.Path.ReplacePrefixMatch != nil {
 			matchedPrefix := getMatchedPrefix(req)
 			if matchedPrefix != "" {
-				suffix := strings.TrimPrefix(req.URL.Path, matchedPrefix)
-				req.URL.Path = joinPathSegments(*f.config.Path.ReplacePrefixMatch, suffix)
+				suffix := trimMatchedPrefix(req.URL.EscapedPath(), matchedPrefix)
+				setEscapedPath(req.URL, joinPathSegments(*f.config.Path.ReplacePrefixMatch, suffix))
 			}
 		}
 	}

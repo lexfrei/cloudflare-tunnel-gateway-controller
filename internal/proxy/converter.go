@@ -478,9 +478,13 @@ func convertPathMatch(pathMatch *gatewayv1.HTTPPathMatch) *PathMatch {
 	// PathMatchPathPrefix: "When specified, a trailing `/` is ignored", so
 	// /abc/ matches /abc like /abc does. Trimming here, not in the shared
 	// matcher, keeps the gRPC service-only /{service}/ prefix intact, and
-	// hands ReplacePrefixMatch the same prefix the matcher compared.
+	// hands ReplacePrefixMatch the same prefix the matcher compared. The
+	// value is canonicalised first, as a trailing dot segment leaves a "/".
 	if result.Type == PathMatchPathPrefix && len(result.Value) > 1 {
-		result.Value = strings.TrimSuffix(result.Value, "/")
+		result.Value = canonicalEscapedPath(result.Value)
+		if len(result.Value) > 1 {
+			result.Value = strings.TrimSuffix(result.Value, "/")
+		}
 	}
 
 	return result

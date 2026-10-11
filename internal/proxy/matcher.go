@@ -14,18 +14,20 @@ type RequestMatcher interface {
 	Match(r *http.Request) bool
 }
 
-// exactPathMatcher matches requests with an exactly equal URL path.
+// exactPathMatcher matches requests with an exactly equal URL path. Exact and
+// prefix matchers compare paths in matchForm, where an escaped "/" belongs to
+// its segment.
 type exactPathMatcher struct {
 	path string
 }
 
 // NewExactPathMatcher creates a matcher that requires exact path equality.
 func NewExactPathMatcher(path string) RequestMatcher {
-	return &exactPathMatcher{path: path}
+	return &exactPathMatcher{path: matchForm(canonicalEscapedPath(path))}
 }
 
 func (m *exactPathMatcher) Match(r *http.Request) bool {
-	return r.URL.Path == m.path
+	return matchForm(r.URL.EscapedPath()) == m.path
 }
 
 // prefixPathMatcher matches requests whose URL path starts with the given prefix.
@@ -35,11 +37,11 @@ type prefixPathMatcher struct {
 
 // NewPrefixPathMatcher creates a matcher for path prefix matching.
 func NewPrefixPathMatcher(prefix string) RequestMatcher {
-	return &prefixPathMatcher{prefix: prefix}
+	return &prefixPathMatcher{prefix: matchForm(canonicalEscapedPath(prefix))}
 }
 
 func (m *prefixPathMatcher) Match(r *http.Request) bool {
-	path := r.URL.Path
+	path := matchForm(r.URL.EscapedPath())
 
 	if !strings.HasPrefix(path, m.prefix) {
 		return false

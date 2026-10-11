@@ -71,7 +71,7 @@ func TestHTTPRoutePathPrefix_TrailingSlashIgnored(t *testing.T) {
 		{"/abcd", false},
 	}
 
-	for _, prefix := range []string{"/abc", "/abc/"} {
+	for _, prefix := range []string{"/abc", "/abc/", "/abc/%2e", "/abc/def/%2E%2E"} {
 		cfg := proxy.ConvertHTTPRoutes(context.Background(),
 			[]*gatewayv1.HTTPRoute{prefixRoute(prefix, "svc")}, "cluster.local", nil, nil, nil, nil)
 
@@ -309,4 +309,15 @@ func TestConvertHTTPRoutes_PathPrefixValue(t *testing.T) {
 		require.Len(t, cfg.Rules, 1)
 		assert.Equal(t, want, cfg.Rules[0].Matches[0].Path.Value, configured)
 	}
+}
+
+func TestHTTPRoutePathPrefix_DotSegmentValueResolvesToRoot(t *testing.T) {
+	t.Parallel()
+
+	cfg := proxy.ConvertHTTPRoutes(context.Background(),
+		[]*gatewayv1.HTTPRoute{prefixRoute("/%2e", "svc")}, "cluster.local", nil, nil, nil, nil)
+
+	require.NoError(t, cfg.Validate())
+	assert.NotNil(t, routeOf(t, cfg, "/"))
+	assert.NotNil(t, routeOf(t, cfg, "/x"))
 }

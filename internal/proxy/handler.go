@@ -427,6 +427,9 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
 
 	defer finishInstrumentation()
 
+	// After instrumentation, so the access log and span keep the path as sent.
+	canonicalizeRequestPath(req.URL)
+
 	result := h.router.Route(req)
 	if result == nil {
 		// A gRPC client reads its status from the grpc-status trailer, not the

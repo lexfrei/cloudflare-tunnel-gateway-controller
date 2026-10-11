@@ -265,6 +265,9 @@ func canonicalMatchKey(match *RouteMatch) string {
 	// A match without a path matches as the spec default, PathPrefix "/".
 	if norm.Path == nil {
 		norm.Path = &PathMatch{Type: PathMatchPathPrefix, Value: "/"}
+	} else if norm.Path.Type != PathMatchRegularExpression {
+		// Spellings the path matchers treat as equal must collide here too.
+		norm.Path = &PathMatch{Type: norm.Path.Type, Value: matchForm(canonicalEscapedPath(norm.Path.Value))}
 	}
 
 	encoded, err := json.Marshal(norm)

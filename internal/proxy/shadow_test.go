@@ -66,6 +66,46 @@ func TestDetectShadowedRules_ExactDuplicateAcrossRoutes(t *testing.T) {
 	assert.Contains(t, diag.Message, "app.example.com")
 }
 
+func TestDetectShadowedRules_EquivalentPathSpellingsCollide(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		winner proxy.RouteMatch
+		loser  proxy.RouteMatch
+		want   int
+	}{
+		{name: "escaped unreserved character", winner: pathPrefixMatch("/app"), loser: pathPrefixMatch("/%61pp"), want: 1},
+		{name: "escaped reserved character", winner: pathExactMatch("/users/@me"), loser: pathExactMatch("/users/%40me"), want: 1},
+		{name: "hex case", winner: pathExactMatch("/caf%C3%A9"), loser: pathExactMatch("/caf%c3%a9"), want: 1},
+		{name: "escaped slash is a different path", winner: pathExactMatch("/a/b"), loser: pathExactMatch("/a%2Fb"), want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &proxy.Config{
+				Rules: []proxy.RouteRule{
+					{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{tt.winner}},
+					{Hostnames: []string{"app.example.com"}, Matches: []proxy.RouteMatch{tt.loser}},
+				},
+				Provenance: []proxy.RuleProvenance{
+					prov("HTTPRoute", "team-a", "app", shadowT0, 0),
+					prov("HTTPRoute", "team-b", "other", shadowT1, 0),
+				},
+			}
+
+			diags := proxy.DetectShadowedRules(cfg)
+			require.Len(t, diags, tt.want)
+
+			if tt.want > 0 {
+				assert.Equal(t, "team-b", diags[0].Namespace)
+			}
+		})
+	}
+}
+
 // TestDetectShadowedRules_DuplicateMatchesEmitOneDiagnostic pins that a losing
 // rule with duplicate (hostname, match) claims — two identical matches in one
 // rule, which the CRD list-map-key dedup does NOT catch for path-only matches —

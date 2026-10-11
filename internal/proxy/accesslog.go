@@ -202,10 +202,11 @@ func (c *countingResponseWriter) serverFailure() bool {
 }
 
 // accessLogSnapshot captures the request fields the access log
-// emits, taken BEFORE filters run. URL rewrite filters mutate
-// req.URL.Path in place (filter.go writeRewritePathFilter), so a
-// deferred closure that re-reads req at emission time would log
-// the rewritten path and lose the client-observable original.
+// emits, taken BEFORE the path is canonicalised and filters run.
+// Both mutate req.URL in place (canonicalizeRequestPath,
+// urlRewriter.rewritePath), so a deferred closure that re-reads req
+// at emission time would log the rewritten path and lose the
+// client-observable original.
 // Snapshotting in ServeHTTP keeps the log faithful to what the
 // client actually sent.
 type accessLogSnapshot struct {
