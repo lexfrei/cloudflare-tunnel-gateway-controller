@@ -31,6 +31,7 @@ import (
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/referencegrant"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/routebinding"
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/tunnelownership"
 )
 
 // RouteSyncer provides unified synchronization of HTTPRoute and GRPCRoute
@@ -1029,8 +1030,8 @@ func (s *RouteSyncer) buildResultForError(ctx context.Context) *SyncResult {
 	grpcResult, _ := s.getRelevantGRPCRoutes(ctx, views)
 
 	// Cross-route-type conflict resolution is intentionally NOT applied here: on
-	// the config-error path a sync error drives every route to
-	// Accepted=False/Pending (which dominates the Conflicted reason), so resolving
+	// the config-error path a sync error drives every route to Pending (which
+	// dominates the Conflicted reason), so resolving
 	// conflicts would only mask which routes reference us without changing any
 	// surfaced status.
 
@@ -1645,6 +1646,25 @@ var errBrokenDataPlane = errors.New(
 	"the Gateway's dedicated data plane is unavailable; the route is not programmed " +
 		"(see the Gateway's Accepted condition, which reports InvalidParameters)")
 
+// notYetReconciledError is a route parent refusal that the controller retries
+// on its own, so the parent reports Accepted=Unknown rather than False: the
+// spec pairs Reason=Pending with Unknown for a route not yet reconciled.
+type notYetReconciledError struct {
+	message string
+}
+
+func (e notYetReconciledError) Error() string {
+	return e.message
+}
+
+// errDataPlaneUnresolvedYet is the retryable twin of errBrokenDataPlane: the
+// Gateway's configuration could not be read, which says nothing about its
+// validity, so the Gateway reports no InvalidParameters to point at.
+var errDataPlaneUnresolvedYet = notYetReconciledError{
+	message: "the Gateway's dedicated data plane configuration could not be read; " +
+		"the route is not programmed and the controller retries",
+}
+
 // injectPlaneRefusals records, on each route binding, the error of each
 // Gateway the route is accepted on whose dedicated data plane was refused or
 // did not resolve, so its routes are served nowhere. It is attributed per
@@ -1712,14 +1732,19 @@ func (s *RouteSyncer) applyPlaneRefusals(
 
 // gatewayPlaneError returns the refusal affecting a route accepted on
 // gatewayKey: a refused tunnel claim, a namespace over its data-plane quota, a
-// Gateway refused as a whole, or the broken-data-plane sentinel for an
-// opted-in Gateway that failed to resolve; nil when the Gateway is served.
+// Gateway refused as a whole, errDataPlaneUnresolvedYet for an opted-in
+// Gateway whose resolve failed transiently, or the broken-data-plane sentinel
+// for one that failed to resolve otherwise; nil when the Gateway is served.
 func gatewayPlaneError(gatewayKey string, infra *infraGateways) error {
 	// A refused tunnel claim is checked before the generic broken case: both
 	// fail closed, but "your data plane is unavailable" would send the tenant
 	// hunting an outage instead of fixing the tunnel their Gateway named.
 	if rejection, ok := infra.tunnelRejection(gatewayKey); ok {
 		if rejection.Unproven {
+			if rejection.Proof == tunnelownership.ProofUnknown {
+				return notYetReconciledError{message: unprovenClaimRouteMessage(rejection)}
+			}
+
 			return errors.New(unprovenClaimRouteMessage(rejection))
 		}
 
@@ -1739,6 +1764,10 @@ func gatewayPlaneError(gatewayKey string, infra *infraGateways) error {
 	if infra.isRefused(gatewayKey) {
 		return errors.New("the Gateway is not accepted; the route is not programmed " +
 			"(see the Gateway's Accepted condition)")
+	}
+
+	if infra.isTransient(gatewayKey) {
+		return errDataPlaneUnresolvedYet
 	}
 
 	if infra.isBroken(gatewayKey) {

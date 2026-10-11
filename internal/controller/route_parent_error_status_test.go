@@ -19,8 +19,8 @@ import (
 
 // TestRouteStatus_ErroredParentIsNotAccepted pins the status of a parent whose
 // ListenerSet cannot be read, next to a Gateway that admits the route. The
-// route stays accepted through the first parent, while the second is Pending
-// and not reported Accepted=True.
+// route stays accepted through the first parent, while the second is
+// Unknown/Pending and not reported Accepted=True.
 func TestRouteStatus_ErroredParentIsNotAccepted(t *testing.T) {
 	t.Parallel()
 
@@ -36,8 +36,8 @@ func TestRouteStatus_ErroredParentIsNotAccepted(t *testing.T) {
 	binding := result.bindings["default/r"]
 
 	accepted := buildAcceptedCondition(1, metav1.Now(), binding, 1, nil, nil)
-	assert.Equal(t, metav1.ConditionFalse, accepted.Status,
-		"a parent whose binding could not be evaluated must not be reported Accepted=True")
+	assert.Equal(t, metav1.ConditionUnknown, accepted.Status,
+		"a parent whose binding could not be evaluated is not yet reconciled")
 	assert.Equal(t, string(gatewayv1.RouteReasonPending), accepted.Reason)
 	assert.True(t, binding.unevaluated)
 

@@ -18,15 +18,14 @@ Counts are the current `rows-*.md` verdicts (`cat rows-*.md | grep -E '^\| [A-Z]
 | --- | --- |
 | MET | 281 |
 | PARTIAL | 19 |
-| GAP | 1 |
 | REFUTED | 1 |
 | DOWNGRADE-NA | 1 |
 | DOWNGRADE-MET | 2 |
 | DOWNGRADE-CONDITIONAL | 1 |
-| DOWNGRADE-DOCUMENTED | 2 |
+| DOWNGRADE-DOCUMENTED | 3 |
 | N/A (tunnel architecture / exempt / MAY not taken) | 89 |
 
-DOWNGRADE-DOCUMENTED marks a recommendation the controller does not follow on purpose, with the reason in limitations.md: OR-03 (ExternalName Services) and, since the v1.6.2 sync, BTLS-04 (a policy may list several targetRefs). It is the rows' spelling of DEVIATED-DOCUMENTED in the `shouldmay-*.md` tables.
+DOWNGRADE-DOCUMENTED marks a recommendation the controller does not follow on purpose, with the reason in limitations.md: OR-03 (ExternalName Services), since the v1.6.2 sync BTLS-04 (a policy may list several targetRefs), and SH-78 (Pending with Accepted=False for a permanent refusal). It is the rows' spelling of DEVIATED-DOCUMENTED in the `shouldmay-*.md` tables.
 
 Conformance ground truth (v1.5.1 run): 76 top-level subtests PASS, 54 SKIP (documented TLS/TCP/UDP/Mesh/WebSocket/GRPCRouteWeight/HTTPS-listener), **0 FAIL** (`go test ... ok 293s`). GRPCRouteWeight and HTTPRouteBackendProtocolWebSocket were among the SKIPs at that run; both are de-skipped in the current suite configuration (`test/conformance/conformance_test.go`, pinned by `TestStaleSkipsStayLifted`) now that gateway-api v1.6.0 added the injectable `suite.GRPCClient` / `suite.WebSocketDialer` hooks those tests needed, so the current skip categories are TLS/TCP/UDP/Mesh/HTTPS-listener plus the BackendTLSPolicy-gated tests. Conformance ground truth (v1.6.1 run): 77 top-level subtests PASS, 76 SKIP, **0 FAIL** (`go test ... ok 487s`, kind + real Cloudflare Tunnel). Both runs were green; the audit's value is the normative surface the suite does not exercise.
 
@@ -44,6 +43,8 @@ The rows were re-read against the vendored v1.6.2 text and the code on master. F
 - MET → PARTIAL: GW-88 and LS-35, with the new GW-112: a cross-namespace certificate reference of a kind other than Secret is reported InvalidCertificateRef (InvalidClientCertificateRef for the client certificate) before any grant check, where the clause asks for RefNotPermitted when no ReferenceGrant allows it.
 
 Since the sync, GW-88, GW-112 and LS-35 moved PARTIAL → MET: the ReferenceGrant is checked before the kind, and only a grant naming the reference's own kind allows it.
+
+SH-78 moved GAP → DOWNGRADE-DOCUMENTED: the retryable causes now report Accepted=Unknown, and only the permanent refusals keep Pending with Accepted=False.
 
 Kept as recorded, pending a maintainer decision: GW-02 and GW-24 (listeners matched without their port), GW-101 and GW-103 (no OverlappingTLSConfig), GR-14 and GR-15 (HTTPRoute/GRPCRoute hostname conflict), SH-33 and SH-34 (an unparseable timeout or retry policy is reported as "Dropped Rule" while the rule keeps serving), SH-78 (Pending with Accepted=False), HR-62 (the scheme of a scheme-less redirect).
 
@@ -99,7 +100,7 @@ The v1.6.0 baseline bump was audited against the verified upstream tag diff; v1.
 - spec.addresses accepts only the tunnel hostname (the tunnel address is not user-selectable; same basis as the exempt static-addresses feature); anything else is reported with UnsupportedAddress or AddressNotUsable — recorded in limitations.md "`spec.addresses` accepts only the tunnel hostname".
 - ExternalName Service support now cites CVE-2021-25740 in its existing trust-boundary rationale.
 - Case-variant duplicate header match names (`Foo` vs `foo`) bypass the case-sensitive CRD listMapKey and are ANDed rather than first-wins — negligible header-only edge (query-param names are exact-match, so unaffected); recorded under Route Conflict Resolution.
-- A route bound only to a Gateway that cannot serve it reports `Accepted=False` with `Reason=Pending`, where the spec lists `Pending` under `Accepted=Unknown` for a route not yet reconciled (SH-78). The polarity is deliberate for the permanent causes — a refused tunnel claim, or a dedicated data plane whose resolve failed deterministically — since the condition stands until the Gateway is fixed and `Unknown` would read as "not looked at yet". The retryable cause, a transient resolve failure, carries the same reason without that justification, which is what keeps the row a GAP.
+- A route bound only to a Gateway that refuses to serve it reports `Accepted=False` with `Reason=Pending`, where the spec lists `Pending` under `Accepted=Unknown` for a route not yet reconciled (SH-78). The polarity is deliberate for the permanent causes — a refused tunnel claim, a namespace over its data-plane quota, or a dedicated data plane whose resolve failed deterministically — since the condition stands until the Gateway is fixed and `Unknown` would read as "not looked at yet". The retryable causes report `Accepted=Unknown`.
 
 ## SHOULD / MAY tiers (verified)
 

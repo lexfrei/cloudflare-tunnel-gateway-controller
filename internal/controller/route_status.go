@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
+	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/config"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/ingress"
 	"github.com/lexfrei/cloudflare-tunnel-gateway-controller/internal/proxy"
 )
@@ -727,17 +728,30 @@ func droppedConfigMessage(diagnostics []proxy.RouteDiagnostic, partial bool) str
 // while a per-Gateway data-plane refusal overrides it for that parent only —
 // so a healthy parent of a multi-parent route stays Accepted when a sibling
 // parent's Gateway is refused.
-func perParentSyncErr(bindingInfo routeBindingInfo, refIdx int, globalErr error) error {
+// The first result reports whether the error is the parent's own.
+func perParentSyncErr(bindingInfo routeBindingInfo, refIdx int, globalErr error) (bool, error) {
 	gwKey, ok := bindingInfo.parentGateways[refIdx]
 	if !ok {
-		return globalErr
+		return false, globalErr
 	}
 
 	if perParent, present := bindingInfo.syncErrByGateway[gwKey]; present {
-		return perParent
+		return true, perParent
 	}
 
-	return globalErr
+	return false, globalErr
+}
+
+// syncErrRetried reports whether a parent's sync error is retried by the
+// controller on its own, so the parent is not yet reconciled. A per-parent
+// refusal says so by its type. The global error of a sync that failed before
+// partitioning is retried unless it names an invalid configuration.
+func syncErrRetried(err error, perParent bool) bool {
+	if perParent {
+		return errors.HasType(err, notYetReconciledError{})
+	}
+
+	return !errors.Is(err, config.ErrInvalidParameters)
 }
 
 func buildAcceptedCondition(
@@ -760,10 +774,18 @@ func buildAcceptedCondition(
 		// parent that could not be evaluated is already Pending, and the sync
 		// that recorded it is retried.
 		status = metav1.ConditionFalse
+		if bindingResult.Incomplete {
+			status = metav1.ConditionUnknown
+		}
+
 		reason = string(bindingResult.Reason)
 		message = bindingResult.Message
-	} else if effectiveErr := perParentSyncErr(bindingInfo, refIdx, syncErr); effectiveErr != nil {
+	} else if perParent, effectiveErr := perParentSyncErr(bindingInfo, refIdx, syncErr); effectiveErr != nil {
 		status = metav1.ConditionFalse
+		if syncErrRetried(effectiveErr, perParent) {
+			status = metav1.ConditionUnknown
+		}
+
 		reason = string(gatewayv1.RouteReasonPending)
 		// Bounded in practice (Cloudflare-API / sentinel strings), but route it
 		// through the same cap as the diagnostic/shadowed paths for consistency

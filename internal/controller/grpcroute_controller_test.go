@@ -1114,7 +1114,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_QuicUnsupportedProtocol(t *testin
 			name:       "sync error takes precedence over the quic incompatibility",
 			protocol:   "quic",
 			syncErr:    assert.AnError,
-			wantStatus: metav1.ConditionFalse,
+			wantStatus: metav1.ConditionUnknown,
 			wantReason: string(gatewayv1.RouteReasonPending),
 		},
 	}
@@ -1526,7 +1526,7 @@ func TestGRPCRouteReconciler_UpdateRouteStatus_WithSyncError(t *testing.T) {
 	}
 
 	require.NotNil(t, acceptedCond)
-	assert.Equal(t, metav1.ConditionFalse, acceptedCond.Status)
+	assert.Equal(t, metav1.ConditionUnknown, acceptedCond.Status, "a failed sync is retried")
 	assert.Equal(t, string(gatewayv1.RouteReasonPending), acceptedCond.Reason)
 }
 
