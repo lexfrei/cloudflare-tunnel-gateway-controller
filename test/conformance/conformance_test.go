@@ -47,9 +47,88 @@ func TestGatewayAPIConformance(t *testing.T) {
 		suite.GatewayGRPCConformanceProfileName,
 	}
 
-	// --- Supported features ---
-	// Features the v3 in-process L7 proxy implements.
-	opts.SupportedFeatures = []features.FeatureName{
+	opts.SupportedFeatures = claimedFeatures()
+
+	channelOnly, err := channelFeatures(t.Context(), opts.Client)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	opts.SupportedFeatures = append(opts.SupportedFeatures, channelOnly...)
+
+	opts.ExemptFeatures = exemptFeatures()
+
+	// --- Skip tests ---
+	// Tests that fail due to Cloudflare Tunnel semantics, not missing features.
+	// Also skip tests for unsupported protocols/features that ExemptFeatures
+	// does not reliably filter (conformance suite runs all profile tests).
+	opts.SkipTests = conformanceSkipTests()
+
+	perGatewayPlanes, err := envBool(envPerGatewayPlanes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	applyRunMode(&opts, perGatewayPlanes)
+
+	// --- Timeouts ---
+	// Increase timeouts for tunnel latency (Cloudflare edge round-trip).
+	timeouts := config.DefaultTimeoutConfig()
+	timeouts.RequestTimeout = 30 * time.Second
+	timeouts.MaxTimeToConsistency = 90 * time.Second
+	timeouts.HTTPRouteMustHaveCondition = 120 * time.Second
+	timeouts.GatewayMustHaveAddress = 300 * time.Second
+	timeouts.GatewayMustHaveCondition = 300 * time.Second
+	timeouts.LatestObservedGenerationSet = 120 * time.Second
+	timeouts.RouteMustHaveParents = 120 * time.Second
+	opts.TimeoutConfig = timeouts
+
+	// --- Custom RoundTripper ---
+	// Routes requests through Cloudflare edge via HTTPS instead of plain HTTP.
+	opts.RoundTripper = &TunnelRoundTripper{
+		Debug:         true,
+		TimeoutConfig: timeouts,
+	}
+
+	// --- Custom gRPC client ---
+	// The default gRPC client dials the Gateway address directly; that
+	// address is a tunnel CNAME (Cloudflare ULA, unroutable from a test
+	// runner). TunnelGRPCClient routes every RPC through the edge instead,
+	// mirroring TunnelRoundTripper.
+	opts.GRPCClient = &TunnelGRPCClient{
+		Debug:         true,
+		TimeoutConfig: timeouts,
+	}
+
+	// --- Custom WebSocket dialer ---
+	// The default dialer connects to the Gateway address directly (a tunnel
+	// CNAME, unroutable from a test runner). TunnelWebSocketDialer routes the
+	// handshake through the edge instead, mirroring TunnelRoundTripper and
+	// TunnelGRPCClient (upstream gateway-api v1.6.0 injectable dialer,
+	// kubernetes-sigs/gateway-api#4936 / #5003).
+	opts.WebSocketDialer = &TunnelWebSocketDialer{}
+
+	// --- Implementation metadata ---
+	opts.Implementation = confv1.Implementation{
+		Organization: "lexfrei",
+		Project:      "cloudflare-tunnel-gateway-controller",
+		URL:          "https://github.com/lexfrei/cloudflare-tunnel-gateway-controller",
+		Version:      envOrDefault("CONTROLLER_VERSION", "dev"),
+		Contact:      []string{"@lexfrei"},
+	}
+
+	// --- Report output ---
+	if path := os.Getenv("CONFORMANCE_REPORT_OUTPUT"); path != "" {
+		opts.ReportOutputPath = path
+	}
+
+	conformance.RunConformanceWithOptions(t, opts)
+}
+
+// claimedFeatures returns the features the v3 in-process L7 proxy implements
+// in every run mode.
+func claimedFeatures() []features.FeatureName {
+	return []features.FeatureName{
 		// Core
 		features.SupportGateway,
 		features.SupportHTTPRoute,
@@ -141,17 +220,12 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportHTTPRoute307RedirectStatusCode,
 		features.SupportHTTPRoute308RedirectStatusCode,
 	}
+}
 
-	channelOnly, err := channelFeatures(t.Context(), opts.Client)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	opts.SupportedFeatures = append(opts.SupportedFeatures, channelOnly...)
-
-	// --- Exempt features ---
-	// Features that don't apply to tunnel architecture — skip silently.
-	opts.ExemptFeatures = []features.FeatureName{
+// exemptFeatures returns the features that don't apply to tunnel
+// architecture.
+func exemptFeatures() []features.FeatureName {
+	return []features.FeatureName{
 		// Gateway: tunnel has no static IPs, no multi-port. GatewayInfrastructure
 		// depends on the run mode, see applyRunMode.
 		features.SupportGatewayStaticAddresses,
@@ -167,72 +241,6 @@ func TestGatewayAPIConformance(t *testing.T) {
 		features.SupportUDPRoute,
 		features.SupportMesh,
 	}
-
-	// --- Skip tests ---
-	// Tests that fail due to Cloudflare Tunnel semantics, not missing features.
-	// Also skip tests for unsupported protocols/features that ExemptFeatures
-	// does not reliably filter (conformance suite runs all profile tests).
-	opts.SkipTests = conformanceSkipTests()
-
-	perGatewayPlanes, err := envBool(envPerGatewayPlanes)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	applyRunMode(&opts, perGatewayPlanes)
-
-	// --- Timeouts ---
-	// Increase timeouts for tunnel latency (Cloudflare edge round-trip).
-	timeouts := config.DefaultTimeoutConfig()
-	timeouts.RequestTimeout = 30 * time.Second
-	timeouts.MaxTimeToConsistency = 90 * time.Second
-	timeouts.HTTPRouteMustHaveCondition = 120 * time.Second
-	timeouts.GatewayMustHaveAddress = 300 * time.Second
-	timeouts.GatewayMustHaveCondition = 300 * time.Second
-	timeouts.LatestObservedGenerationSet = 120 * time.Second
-	timeouts.RouteMustHaveParents = 120 * time.Second
-	opts.TimeoutConfig = timeouts
-
-	// --- Custom RoundTripper ---
-	// Routes requests through Cloudflare edge via HTTPS instead of plain HTTP.
-	opts.RoundTripper = &TunnelRoundTripper{
-		Debug:         true,
-		TimeoutConfig: timeouts,
-	}
-
-	// --- Custom gRPC client ---
-	// The default gRPC client dials the Gateway address directly; that
-	// address is a tunnel CNAME (Cloudflare ULA, unroutable from a test
-	// runner). TunnelGRPCClient routes every RPC through the edge instead,
-	// mirroring TunnelRoundTripper.
-	opts.GRPCClient = &TunnelGRPCClient{
-		Debug:         true,
-		TimeoutConfig: timeouts,
-	}
-
-	// --- Custom WebSocket dialer ---
-	// The default dialer connects to the Gateway address directly (a tunnel
-	// CNAME, unroutable from a test runner). TunnelWebSocketDialer routes the
-	// handshake through the edge instead, mirroring TunnelRoundTripper and
-	// TunnelGRPCClient (upstream gateway-api v1.6.0 injectable dialer,
-	// kubernetes-sigs/gateway-api#4936 / #5003).
-	opts.WebSocketDialer = &TunnelWebSocketDialer{}
-
-	// --- Implementation metadata ---
-	opts.Implementation = confv1.Implementation{
-		Organization: "lexfrei",
-		Project:      "cloudflare-tunnel-gateway-controller",
-		URL:          "https://github.com/lexfrei/cloudflare-tunnel-gateway-controller",
-		Version:      envOrDefault("CONTROLLER_VERSION", "dev"),
-		Contact:      []string{"@lexfrei"},
-	}
-
-	// --- Report output ---
-	if path := os.Getenv("CONFORMANCE_REPORT_OUTPUT"); path != "" {
-		opts.ReportOutputPath = path
-	}
-
-	conformance.RunConformanceWithOptions(t, opts)
 }
 
 // envPerGatewayPlanes is set by hack/conformance-setup.sh --per-gateway-planes,
