@@ -60,8 +60,6 @@ func TestGatewayAPIConformance(t *testing.T) {
 
 	// --- Skip tests ---
 	// Tests that fail due to Cloudflare Tunnel semantics, not missing features.
-	// Also skip tests for unsupported protocols/features that ExemptFeatures
-	// does not reliably filter (conformance suite runs all profile tests).
 	opts.SkipTests = conformanceSkipTests()
 
 	perGatewayPlanes, err := envBool(envPerGatewayPlanes)
@@ -304,46 +302,13 @@ func conformanceSkipTests() []string {
 		// address reaches Gateway B's dedicated backend. This is a per-Gateway
 		// ADDRESS isolation gap, not a hostname-matching one: both Gateways share
 		// one tunnel CNAME so requests carry no per-Gateway signal on the wire.
-		// Hard per-Gateway isolation requires the opt-in dedicated data plane
-		// (separate tunnel per Gateway), which the shared-plane conformance run
-		// does not exercise.
+		// Hard per-Gateway isolation requires a separate tunnel per Gateway,
+		// which neither run mode provides: the per-Gateway planes run
+		// registers every plane on the one test tunnel.
 		"HTTPRouteMultipleGateways",
 
 		// Cloudflare terminates TLS at edge — we don't control certs.
 		"HTTPRouteHTTPSListener",
-		"HTTPRouteHTTPSListenerDetectMisdirectedRequests",
-
-		// Mesh: not supported — tunnel architecture, no service mesh.
-		"MeshBasic",
-		"MeshConsumerRoute",
-		"MeshFrontend",
-		"MeshFrontendHostname",
-		"MeshPorts",
-		"MeshTrafficSplit",
-		"MeshGRPCRouteWeight",
-		"MeshHTTPRoute303Redirect",
-		"MeshHTTPRoute307Redirect",
-		"MeshHTTPRoute308Redirect",
-		"MeshHTTPRouteBackendRequestHeaderModifier",
-		"MeshHTTPRouteMatching",
-		"MeshHTTPRouteNamedRule",
-		"MeshHTTPRouteQueryParamMatching",
-		"MeshHTTPRouteRedirectHostAndStatus",
-		"MeshHTTPRouteRedirectPath",
-		"MeshHTTPRouteRedirectPort",
-		"MeshHTTPRouteRequestHeaderModifier",
-		"MeshHTTPRouteRewritePath",
-		"MeshHTTPRouteSchemeRedirect",
-		"MeshHTTPRouteSimpleSameNamespace",
-		"MeshHTTPRouteWeight",
-
-		// Gateway features not applicable to tunnel architecture.
-		"GatewayStaticAddresses",
-		"GatewayFrontendClientCertificateValidation",
-		"GatewayFrontendClientCertificateValidationInsecureFallback",
-		"GatewayFrontendInvalidDefaultClientCertificateValidation",
-		"GatewayInvalidFrontendClientCertificateValidation",
-		"GatewayWithAttachedRoutesWithPort8080",
 	}
 }
 
@@ -387,9 +352,8 @@ func TestGRPCConformanceTestsRunThroughTunnelClient(t *testing.T) {
 		}
 
 		// Mesh gRPC tests (e.g. MeshGRPCRouteWeight) also carry
-		// SupportGRPCRoute but stay in the general mesh skip — this controller
-		// is north-south tunnel ingress, not a service mesh. Only the
-		// north-south GRPCRoute tests run through TunnelGRPCClient.
+		// SupportGRPCRoute but never run: Mesh is not claimed — this
+		// controller is north-south tunnel ingress, not a service mesh.
 		if slices.Contains(ct.Features, features.SupportMesh) {
 			continue
 		}

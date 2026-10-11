@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/gateway-api/conformance/tests"
 	"sigs.k8s.io/gateway-api/conformance/utils/suite"
 	"sigs.k8s.io/gateway-api/pkg/features"
@@ -55,4 +56,44 @@ func TestGatewayInfrastructureTestsAreNotSkipped(t *testing.T) {
 	}
 
 	assert.Positive(t, gated, "expected the vendored suite to gate tests on GatewayInfrastructure")
+}
+
+// The suite already reports a test whose features are not all claimed as
+// unsupported, so a skip entry for it changes nothing and hides the real
+// reason. The one exception is the upstream -run-test flag, which bypasses
+// feature gating for the named test. Only a test that some run mode would
+// actually run belongs in the skip list.
+func TestSkipListNamesOnlyRunnableTests(t *testing.T) {
+	t.Parallel()
+
+	runModes := []bool{false, true}
+	modes := make([]sets.Set[features.FeatureName], 0, len(runModes))
+
+	for _, perGatewayPlanes := range runModes {
+		opts := suite.ConformanceOptions{
+			SupportedFeatures: append(claimedFeatures(), experimentalChannelFeatures()...),
+			ExemptFeatures:    exemptFeatures(),
+		}
+		applyRunMode(&opts, perGatewayPlanes)
+
+		modes = append(modes, sets.New(opts.SupportedFeatures...).Difference(sets.New(opts.ExemptFeatures...)))
+	}
+
+	byName := make(map[string]suite.ConformanceTest, len(tests.ConformanceTests))
+	for _, ct := range tests.ConformanceTests {
+		byName[ct.ShortName] = ct
+	}
+
+	for _, name := range conformanceSkipTests() {
+		ct, ok := byName[name]
+		if !assert.Truef(t, ok, "skip entry %q names no test in the vendored suite", name) {
+			continue
+		}
+
+		runsInSomeMode := slices.ContainsFunc(modes, func(claimed sets.Set[features.FeatureName]) bool {
+			return claimed.HasAll(ct.Features...)
+		})
+		assert.Truef(t, runsInSomeMode,
+			"skip entry %q is redundant: no run mode claims all of %v, so the suite never runs it", name, ct.Features)
+	}
 }
