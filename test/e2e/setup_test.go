@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -80,13 +81,16 @@ func newClientset(t *testing.T, kubeContext string) *kubernetes.Clientset {
 // app=<appLabel> in the given namespace. The echo-basic server logs each
 // request it receives, so this is used to verify a mirror copy actually
 // reached the mirror backend, mirroring the conformance suite's DumpEchoLogs.
-func backendPodLogs(ctx context.Context, t *testing.T, clientset *kubernetes.Clientset, namespace, appLabel string) string {
+// A failed pod listing comes back as an error so a polling caller can retry.
+func backendPodLogs(ctx context.Context, t *testing.T, clientset *kubernetes.Clientset, namespace, appLabel string) (string, error) {
 	t.Helper()
 
 	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "app=" + appLabel,
 	})
-	require.NoError(t, err, "failed to list pods for app=%s", appLabel)
+	if err != nil {
+		return "", fmt.Errorf("listing pods for app=%s: %w", appLabel, err)
+	}
 
 	var builder strings.Builder
 
@@ -115,7 +119,7 @@ func backendPodLogs(ctx context.Context, t *testing.T, clientset *kubernetes.Cli
 		builder.Write(data)
 	}
 
-	return builder.String()
+	return builder.String(), nil
 }
 
 // setupEchoBackends deploys the echo-v1, echo-v2, and echo-v3 backends using

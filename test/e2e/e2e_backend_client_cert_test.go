@@ -319,9 +319,13 @@ func buildMTLSRoute(cfg testConfig, path string, parents []gatewayv1.ParentRefer
 func waitForClientCertCN(ctx context.Context, t *testing.T, httpClient *http.Client, host, path, wantCN string) {
 	t.Helper()
 
+	var outcome pollOutcome
+
 	err := wait.PollUntilContextTimeout(ctx, 3*time.Second, 3*time.Minute, true,
 		func(pollCtx context.Context) (bool, error) {
 			echo, resp, reqErr := makeRequest(pollCtx, t, httpClient, host, http.MethodGet, path, nil)
+			outcome.recordHTTP(echo, resp, reqErr)
+
 			if reqErr != nil || resp.StatusCode != http.StatusOK {
 				return false, nil //nolint:nilerr // the route is still rolling out; retry until timeout
 			}
@@ -329,7 +333,7 @@ func waitForClientCertCN(ctx context.Context, t *testing.T, httpClient *http.Cli
 			return peerCertCommonName(t, echo) == wantCN, nil
 		},
 	)
-	require.NoError(t, err, "backend never received client certificate %s on %s", wantCN, path)
+	require.NoError(t, err, "backend never received client certificate %s on %s (%s)", wantCN, path, &outcome)
 }
 
 func peerCertCommonName(t *testing.T, echo *echoResponse) string {
