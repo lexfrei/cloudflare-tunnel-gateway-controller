@@ -2,7 +2,7 @@
 
 | ID | Keyword | Class | Status | Evidence | Notes |
 | --- | --- | --- | --- | --- | --- |
-| GR-01 | MUST | CTRL | MET | test/conformance/conformance_test.go `TestGatewayAPIConformance` | SupportGRPCRoute is claimed, so all GRPCRoute MUSTs are in force; served by the in-process proxy. |
+| GR-01 | MUST | CTRL | MET | test/conformance/conformance_test.go `claimedFeatures` | SupportGRPCRoute is claimed, so all GRPCRoute MUSTs are in force; served by the in-process proxy. |
 | GR-02 | MUST | N/A | NA | docs/gateway-api/limitations.md "Gateway Listener Configuration" | ALPN HTTP/2 negotiation for HTTPS listeners is owned by the Cloudflare edge, not this controller; the proxy receives requests over the tunnel from cloudflared. |
 | GR-03 | MUST | N/A | NA | internal/controller/gateway_controller.go `buildListenerAcceptedCondition` | Per-protocol UnsupportedProtocol on listeners is handled, but ALPN negotiation itself is edge-owned; HTTPS listeners are served. |
 | GR-04 | MAY | N/A | NA | — | HTTP/1 upgrade is edge-owned (Cloudflare); optional clause, not applicable to this data plane. |

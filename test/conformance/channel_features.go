@@ -34,9 +34,13 @@ func channelFeatures(ctx context.Context, cl client.Client) ([]features.FeatureN
 		return nil, nil
 	}
 
+	return experimentalChannelFeatures(), nil
+}
+
+func experimentalChannelFeatures() []features.FeatureName {
 	return []features.FeatureName{
 		features.SupportHTTPRouteRetry,
 		features.SupportHTTPRouteRetryBackendTimeout,
 		features.SupportHTTPRouteRetryConnectionError,
-	}, nil
+	}
 }
