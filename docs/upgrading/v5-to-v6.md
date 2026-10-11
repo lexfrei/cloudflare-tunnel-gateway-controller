@@ -1,6 +1,6 @@
 # Upgrading from v5 to v6
 
-v6 matches each request to a listener by port and scheme as well as by hostname, as the Gateway API requires. The chart values, the CRDs, RBAC, the Kubernetes floor (1.31) and the Gateway API bundle (v1.6.x) are the same as in v5, so the upgrade itself is a plain `helm upgrade`. What changes is which listener, and so which routes, a request reaches.
+v6 matches each request to a listener by port and scheme as well as by hostname, as the Gateway API requires. The chart values, the CRDs, RBAC, the Kubernetes floor (1.31) and the Gateway API bundle (v1.6.x) are the same as in v5, so the upgrade itself is a plain `helm upgrade`. What changes is which listener, and so which routes, a request reaches. v6 also drops the `--gateway-class-name` controller flag, which has done nothing since v2.
 
 Each section headed "Breaking" describes something that works on v5 and can serve differently, or stop, after the upgrade, names who it reaches, how to check, and what to change. Read them before running `helm upgrade`, then follow the [upgrade procedure](#upgrade-procedure) at the end.
 
@@ -80,6 +80,12 @@ The port in `Host` is the client's to choose: the edge forwards a `Host` naming 
 A `RequestRedirect` that sets neither `scheme` nor `port` now keeps the scheme and port of the request, as the Gateway API requires. On v5 the controller picked them from the listeners the route was attached to, preferring `https` when the route sat on both an `HTTP` and an `HTTPS` listener. A route on both listeners now redirects a plain-HTTP request to `http://`, so a redirect meant to move clients to HTTPS must set `scheme: https`. The scheme's default port is left out of `Location` as before.
 
 Affected: redirect filters without `scheme` on routes attached to an `HTTP` listener. To force a scheme, set it on the filter. [Redirect port](../gateway-api/limitations.md#redirect-port) has the rule.
+
+## Breaking: the `--gateway-class-name` flag is removed
+
+The controller no longer accepts `--gateway-class-name`. The flag has done nothing since v2, because GatewayClasses are matched by `spec.controllerName`. A controller started with it now exits at once with `unknown flag: --gateway-class-name`.
+
+Affected: controllers deployed from raw manifests or a patched Deployment whose container `args` or `command` still carry the flag. The chart never passes it. To check, run `kubectl get deployment --all-namespaces --output json | jq --raw-output '.items[] | select(any(.spec.template.spec.containers[] | (.command // []) + (.args // []) | .[]; startswith("--gateway-class-name"))) | "\(.metadata.namespace)/\(.metadata.name)"'`, then remove the flag before upgrading.
 
 ## Behaviour change: shadowed routes are reported per port and scheme
 

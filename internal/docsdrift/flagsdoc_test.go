@@ -35,20 +35,9 @@ func TestControllerFlagsDocumented(t *testing.T) {
 		t.Fatal("no flag definitions found in root.go — the extraction regex has drifted from the registration style")
 	}
 
-	// Hidden+deprecated flags are deliberately undocumented: they exist only
-	// so old manifests keep starting, and documenting them would advertise
-	// removal candidates.
-	undocumented := map[string]bool{
-		"gateway-class-name": true,
-	}
-
 	docText := string(doc)
 
 	for _, match := range matches {
-		if undocumented[match[1]] {
-			continue
-		}
-
 		flag := "--" + match[1]
 		if !regexp.MustCompile(regexp.QuoteMeta(flag) + `\b`).MatchString(docText) {
 			t.Errorf("flag %s is registered in cmd/controller/cmd/root.go but missing from docs/configuration/controller.md", flag)

@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"testing"
 	"time"
 
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -256,6 +258,17 @@ func TestRootCmd_Flags(t *testing.T) {
 	flag = flags.Lookup("proxy-config-api-port")
 	require.NotNil(t, flag)
 	assert.Equal(t, "8081", flag.DefValue)
+}
+
+func TestRootCmd_RejectsGatewayClassNameFlag(t *testing.T) {
+	flags := pflag.NewFlagSet("controller", pflag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.AddFlagSet(rootCmd.Flags())
+	flags.AddFlagSet(rootCmd.PersistentFlags())
+
+	err := flags.Parse([]string{"--gateway-class-name=cloudflare-tunnel"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown flag: --gateway-class-name")
 }
 
 func TestRootCmd_PersistentFlags(t *testing.T) {

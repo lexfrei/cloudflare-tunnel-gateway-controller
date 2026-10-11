@@ -602,8 +602,8 @@ tests:
             name: ndots
             value: "2"
 
-  # Deprecated flag should not be present
-  - it: should not pass deprecated --gateway-class-name flag
+  # The controller rejects this flag as unknown and would not start
+  - it: should not pass the removed --gateway-class-name flag
     asserts:
       - template: deployment.yaml
         notContains:
