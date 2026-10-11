@@ -696,7 +696,11 @@ func rankMatch(match *RouteMatch) matchRank {
 		rank.grpcMethod = len(match.GRPCMethod.Method)
 	case match.Path != nil:
 		rank.pathType = pathTypeRank(match.Path.Type)
+
 		rank.pathLen = len(match.Path.Value)
+		if match.Path.Type != PathMatchRegularExpression {
+			rank.pathLen = len(matchForm(canonicalEscapedPath(match.Path.Value)))
+		}
 	default:
 		// A match without a path matches as the spec's default, PathPrefix "/".
 		rank.pathType = pathRankPrefix
@@ -774,7 +778,7 @@ func getMatchedPathPrefix(rule *RouteRule, matchIdx int) string {
 	}
 
 	if path := rule.Matches[matchIdx].Path; path.Type == PathMatchPathPrefix {
-		return path.Value
+		return canonicalEscapedPath(path.Value)
 	}
 
 	return ""

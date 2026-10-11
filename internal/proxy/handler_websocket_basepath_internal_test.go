@@ -41,6 +41,18 @@ func TestBuildBackendUpgradeRequest_BasePath(t *testing.T) {
 			reqPath:    "/ws",
 			wantPath:   "/ws",
 		},
+		{
+			name:       "escaped slash kept",
+			backendURL: "http://svc.default.svc.cluster.local:80",
+			reqPath:    "/ws/a%2Fb",
+			wantPath:   "/ws/a%2Fb",
+		},
+		{
+			name:       "escaped slash kept under a base path",
+			backendURL: "https://api.example.com:8443/v1",
+			reqPath:    "/ws/a%2Fb",
+			wantPath:   "/v1/ws/a%2Fb",
+		},
 	}
 
 	for _, tt := range tests {
@@ -54,7 +66,7 @@ func TestBuildBackendUpgradeRequest_BasePath(t *testing.T) {
 
 			out := buildBackendUpgradeRequest(req, backendURL)
 
-			assert.Equal(t, tt.wantPath, out.URL.Path)
+			assert.Equal(t, tt.wantPath, out.URL.EscapedPath())
 		})
 	}
 }

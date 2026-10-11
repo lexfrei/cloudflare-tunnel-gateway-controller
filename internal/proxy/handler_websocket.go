@@ -371,6 +371,7 @@ func buildBackendUpgradeRequest(req *http.Request, backendURL *url.URL) *http.Re
 		Scheme:   backendURL.Scheme,
 		Host:     backendURL.Host,
 		Path:     req.URL.Path,
+		RawPath:  req.URL.RawPath,
 		RawQuery: req.URL.RawQuery,
 	}
 	// Prepend the backend's base path and merge its query (e.g. an

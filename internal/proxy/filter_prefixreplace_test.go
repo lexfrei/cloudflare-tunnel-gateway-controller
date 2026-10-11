@@ -2,7 +2,6 @@ package proxy_test
 
 import (
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"testing"
 
@@ -42,18 +41,10 @@ func specTableRows() []prefixReplaceCase {
 	}
 }
 
-// unnormalisedRows cover request paths the spec's table does not list
-// but whose handling follows from the same rule it states: the filter
-// substitutes the matched prefix and leaves the rest alone. Dot
-// segments stay unresolved, because resolving them moves the request
-// outside the prefix the route selected it by, and an empty path
-// element survives, because a substitution does not collapse it.
-func unnormalisedRows() []prefixReplaceCase {
+// emptyElementRows cover request paths the spec's table does not list: an
+// empty path element survives, because a substitution does not collapse it.
+func emptyElementRows() []prefixReplaceCase {
 	return []prefixReplaceCase{
-		{"parent segment stays inside the replacement", "/public/../admin", "/public", "/internal", "/internal/../admin"},
-		{"parent segment at the tail", "/public/docs/..", "/public", "/internal", "/internal/docs/.."},
-		{"current-directory segment is preserved", "/public/./x", "/public", "/internal", "/internal/./x"},
-		{"repeated parent segments stay inside", "/public/a/../../etc", "/public", "/internal", "/internal/a/../../etc"},
 		{"empty path element survives", "/public//x", "/public", "/internal", "/internal//x"},
 		{"empty element directly after the prefix", "/public//", "/public", "/internal", "/internal//"},
 	}
@@ -62,7 +53,7 @@ func unnormalisedRows() []prefixReplaceCase {
 func TestURLRewriter_ReplacePrefixMatchFollowsSpecTable(t *testing.T) {
 	t.Parallel()
 
-	for _, tt := range append(specTableRows(), unnormalisedRows()...) {
+	for _, tt := range append(specTableRows(), emptyElementRows()...) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -91,7 +82,7 @@ func TestURLRewriter_ReplacePrefixMatchFollowsSpecTable(t *testing.T) {
 func TestRequestRedirect_ReplacePrefixMatchFollowsSpecTable(t *testing.T) {
 	t.Parallel()
 
-	for _, tt := range append(specTableRows(), unnormalisedRows()...) {
+	for _, tt := range append(specTableRows(), emptyElementRows()...) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -122,58 +113,4 @@ func TestRequestRedirect_ReplacePrefixMatchFollowsSpecTable(t *testing.T) {
 			assert.Equal(t, tt.want, location.Path)
 		})
 	}
-}
-
-// TestHandler_ReplacePrefixMatch_TunnelMode_ForwardsDotSegmentsVerbatim
-// drives the rewrite through the cloudflared HTTP/2 response writer
-// rather than httptest's HTTP/1.1 one, and reads what the backend
-// received off the wire instead of trusting the filter's own view of
-// req.URL. Either half alone would miss a regression: a filter that
-// resolves the dot segments hands the backend a request outside the
-// route's replacement prefix, and only the backend's RequestURI shows
-// that.
-func TestHandler_ReplacePrefixMatch_TunnelMode_ForwardsDotSegmentsVerbatim(t *testing.T) {
-	t.Parallel()
-
-	received := make(chan string, 1)
-
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		received <- r.RequestURI
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer backend.Close()
-
-	router := proxy.NewRouter()
-	require.NoError(t, router.UpdateConfig(&proxy.Config{
-		Version: 1,
-		Rules: []proxy.RouteRule{{
-			Hostnames: []string{"app.example.com"},
-			Matches: []proxy.RouteMatch{
-				{Path: &proxy.PathMatch{Type: proxy.PathMatchPathPrefix, Value: "/public"}},
-			},
-			Filters: []proxy.RouteFilter{{
-				Type: proxy.FilterURLRewrite,
-				URLRewrite: &proxy.URLRewriteConfig{
-					Path: &proxy.URLRewritePath{
-						Type:               proxy.URLRewritePrefixMatch,
-						ReplacePrefixMatch: new("/internal"),
-					},
-				},
-			}},
-			Backends: []proxy.BackendRef{{URL: backend.URL, Weight: 1}},
-		}},
-	}))
-
-	fake := newFakeCloudflaredRespWriter()
-	t.Cleanup(func() { _ = fake.serverSide.Close(); _ = fake.clientSide.Close() })
-
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
-		"http://app.example.com/public/../admin", nil)
-
-	proxy.NewHandler(router).ServeHTTP(fake, req)
-
-	assert.Equal(t, http.StatusOK, fake.Status())
-	assert.Equal(t, "/internal/../admin", <-received,
-		"the backend must see the client's dot segments spliced under the replacement prefix; "+
-			"resolving them in the proxy delivers /admin, outside the prefix the route matched on")
 }

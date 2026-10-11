@@ -536,7 +536,7 @@ func TestHandler_AccessLog_EmitsForStatus200_DirectPath(t *testing.T) {
 // TestHandler_AccessLog_PathSnapshotPredatesURLRewrite pins that
 // the access log records the path the client ASKED FOR, not the
 // rewritten path the backend SAW. URL rewrite filters mutate
-// req.URL.Path in place (filter.go writeRewritePathFilter); a naive
+// req.URL.Path in place (urlRewriter.rewritePath); a naive
 // deferred closure re-reading req at emission time would log
 // `/new` instead of `/old`, hiding the operator-visible signal
 // they actually need for triage.
