@@ -571,8 +571,7 @@ func buildGatewayFakeClient(t *testing.T, objs ...client.Object) client.Client {
 // higher-precedence Gateway listener on the same port claims the same
 // hostname), that entry is not programmed, so the route must NOT inherit its
 // hostname. Without the conflict drop the route would wrongly serve the
-// conflicted listener's hostname. The redirect-scheme path has a sibling test;
-// both callers of nonConflictedSections need independent coverage.
+// conflicted listener's hostname.
 func TestWithEffectiveHostnames_ListenerSetConflictedEntryNotInherited(t *testing.T) {
 	t.Parallel()
 

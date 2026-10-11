@@ -146,10 +146,15 @@ func claimedFeatures() []features.FeatureName {
 		// contract. (Distinct from SupportGatewayStaticAddresses, exempt below:
 		// the tunnel address is not user-supplied.)
 		features.SupportGatewayAddressEmpty,
-		// Extended Gateway: a host is answered only through routes attached to
-		// the most specific listener matching it. Listener ports are not
-		// compared, which the test's single-port Gateway does not exercise.
+		// Extended Gateway: a request is answered only through routes attached
+		// to the most specific listener matching its host and port.
 		features.SupportGatewayHTTPListenerIsolation,
+		// GatewayPort8080 and HTTPRouteParentRefPort are not claimed. Their
+		// traffic tests reach plain-HTTP listeners on 8080 and 8090, which the
+		// test zone redirects to HTTPS on 443 before the tunnel or does not
+		// proxy at all, so they would pass only on the X-Original-Proto and
+		// X-Original-Port harness headers. The e2e suite proves listener port
+		// and scheme matching through the edge on HTTPS ports instead.
 
 		// Extended HTTPRoute (Standard channel feature gates; v1 CRD fields)
 		features.SupportHTTPRouteQueryParamMatching,
@@ -164,12 +169,6 @@ func claimedFeatures() []features.FeatureName {
 		features.SupportHTTPRouteRequestMirror,
 		features.SupportHTTPRouteRequestTimeout,
 		features.SupportHTTPRouteBackendTimeout,
-		// HTTPRouteParentRefPort is not claimed: its main test,
-		// HTTPRouteListenerPortMatching, routes by the port in Host, and the
-		// tunnel gives the proxy no port to route by. Its other test,
-		// HTTPRouteInvalidParentRefSectionNameNotMatchingPort, stops running
-		// too; routebinding unit tests cover that binding. parentRef.port is
-		// still honoured for binding.
 		features.SupportHTTPRouteBackendProtocolH2C,
 		features.SupportHTTPRouteBackendProtocolWebSocket,
 		features.SupportHTTPRouteRequestMultipleMirrors,
@@ -224,10 +223,9 @@ func claimedFeatures() []features.FeatureName {
 // architecture.
 func exemptFeatures() []features.FeatureName {
 	return []features.FeatureName{
-		// Gateway: tunnel has no static IPs, no multi-port. GatewayInfrastructure
-		// depends on the run mode, see applyRunMode.
+		// Gateway: tunnel has no static IPs. GatewayInfrastructure depends on
+		// the run mode, see applyRunMode.
 		features.SupportGatewayStaticAddresses,
-		features.SupportGatewayPort8080,
 		features.SupportGatewayFrontendClientCertificateValidation,
 		features.SupportGatewayFrontendClientCertificateValidationInsecureFallback,
 		features.SupportGatewayHTTPSListenerDetectMisdirectedRequests,
@@ -382,6 +380,21 @@ func TestGRPCConformanceTestsRunThroughTunnelClient(t *testing.T) {
 	// Guard against a vacuous pass: if the vendored suite ever stops tagging
 	// gRPC tests with SupportGRPCRoute, the loop above would assert nothing.
 	assert.Positive(t, grpcChecked, "expected at least one SupportGRPCRoute conformance test in the vendored suite")
+}
+
+// TestPortFeaturesStayUnclaimed pins two features whose tests pass only on
+// harness headers: plain HTTP on 8080 and 8090 never reaches the tunnel on
+// the test zone, which has Always Use HTTPS on, and 8090 is not an edge port.
+func TestPortFeaturesStayUnclaimed(t *testing.T) {
+	t.Parallel()
+
+	claimed := sets.New(claimedFeatures()...)
+
+	for _, feature := range []features.FeatureName{features.SupportGatewayPort8080, features.SupportHTTPRouteParentRefPort} {
+		assert.Falsef(t, claimed.Has(feature),
+			"%s passes only on X-Original-Proto / X-Original-Port, not through the edge; "+
+				"see docs/gateway-api/limitations.md \"Listener ports and schemes\" before claiming it", feature)
+	}
 }
 
 // TestStaleSkipsStayLifted pins the conformance tests that were de-skipped

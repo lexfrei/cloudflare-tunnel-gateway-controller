@@ -44,6 +44,50 @@ type TunnelRoundTripper struct {
 // Shared by TunnelRoundTripper (HTTP) and TunnelGRPCClient (gRPC).
 const originalHostHeader = "X-Original-Host"
 
+// originalProtoHeader carries the scheme the test meant, "http" or "https".
+// Every request reaches the edge over HTTPS, since the test zone redirects
+// plain HTTP, and the edge sets X-Forwarded-Proto to match, so without it the
+// proxy would match a request meant for an HTTP listener as HTTPS on port 443.
+// Same opt-in as originalHostHeader.
+const originalProtoHeader = "X-Original-Proto"
+
+// suiteScheme maps the scheme of a URL the suite built to the one the proxy
+// matches listeners by.
+func suiteScheme(scheme string) string {
+	switch scheme {
+	case schemeHTTPS, schemeWSS:
+		return schemeHTTPS
+	default:
+		return "http"
+	}
+}
+
+const (
+	schemeHTTPS = "https"
+	schemeWSS   = "wss"
+)
+
+// originalPortHeader carries the port the test connected to. A test may name
+// another port in Host, and the Gateway API matches the listener by the
+// connection's port, which the edge hides behind its own. Same opt-in as
+// originalHostHeader.
+const originalPortHeader = "X-Original-Port"
+
+// suitePort returns the port of a host the suite dials, or the default port
+// of its scheme when it names none.
+func suitePort(hostport, scheme string) string {
+	_, port, err := net.SplitHostPort(hostport)
+	if err == nil && port != "" {
+		return port
+	}
+
+	if suiteScheme(scheme) == schemeHTTPS {
+		return "443"
+	}
+
+	return "80"
+}
+
 // envTunnelHostname names the env var that carries the edge hostname the
 // conformance suite routes through (TLS SNI + the wire Host; the test's intended
 // host rides X-Original-Host). TestGatewayAPIConformance enforces it is set via
@@ -128,7 +172,7 @@ func buildEdgeRequest(
 	// Target the tunnel hostname (for DNS resolution) but preserve the
 	// original path and query from the test request.
 	cfURL := url.URL{
-		Scheme:   "https",
+		Scheme:   schemeHTTPS,
 		Host:     edgeHost,
 		Path:     request.URL.Path,
 		RawQuery: request.URL.RawQuery,
@@ -148,6 +192,8 @@ func buildEdgeRequest(
 		req.Header.Set(originalHostHeader, host)
 	}
 
+	req.Header.Set(originalProtoHeader, suiteScheme(request.URL.Scheme))
+	req.Header.Set(originalPortHeader, suitePort(request.URL.Host, request.URL.Scheme))
 	req.Host = edgeHost
 
 	for name, values := range request.Headers {

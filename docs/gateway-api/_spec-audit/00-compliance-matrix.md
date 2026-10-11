@@ -16,8 +16,8 @@ Counts are the current `rows-*.md` verdicts (`cat rows-*.md | grep -E '^\| [A-Z]
 
 | Status | Count |
 | --- | --- |
-| MET | 284 |
-| PARTIAL | 19 |
+| MET | 285 |
+| PARTIAL | 18 |
 | REFUTED | 1 |
 | DOWNGRADE-NA | 1 |
 | DOWNGRADE-MET | 2 |
@@ -55,6 +55,8 @@ SH-33 and SH-34 stay MET with the pending note resolved: an unparseable timeout 
 GR-14 and GR-15 stay MET with the pending note resolved: the rejection follows the vendored godoc's MUST and is scoped to routes attached to the same listener, and the loser is rejected only on the Gateway carrying that listener.
 
 GW-101, GW-103 and GW-105 moved NA → MET: overlapping hostnames among HTTPS listeners on one port now raise OverlappingTLSConfig on every listener involved, and it is never written False.
+
+GW-02 and GW-24 stay MET with the pending note resolved, and HR-59 and HR-62 moved PARTIAL → MET: the proxy matches each request to a listener by hostname, the port the edge keeps in `Host` and the scheme it sets in `X-Forwarded-Proto`, and a scheme-less redirect keeps the request's scheme and port. HR-01 moved MET → PARTIAL with it: the port named in `Host` selects the listener, since the edge carries the connection port nowhere else.
 
 ## Baseline refreshes since v1.5.1
 

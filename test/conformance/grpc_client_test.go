@@ -31,7 +31,7 @@ func TestBuildOutgoingMetadata(t *testing.T) {
 		wantForwardedPairs map[string][]string
 	}{
 		{
-			name:             "nil metadata carries nothing",
+			name:             "nil metadata carries only the scheme",
 			meta:             nil,
 			wantOriginalHost: nil,
 		},
@@ -61,10 +61,14 @@ func TestBuildOutgoingMetadata(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			md := buildOutgoingMetadata(tt.meta)
+			md := buildOutgoingMetadata("gw.cfargotunnel.example:8080", tt.meta)
 
 			assert.Equal(t, tt.wantOriginalHost, md.Get(originalHostHeader),
 				"x-original-host must mirror RequestMetadata.Authority")
+			assert.Equal(t, []string{"http"}, md.Get(originalProtoHeader),
+				"the suite dials gRPC in plaintext, so the proxy must match it on an HTTP listener")
+			assert.Equal(t, []string{"8080"}, md.Get(originalPortHeader),
+				"the port the suite dials picks the listener")
 
 			for key, want := range tt.wantForwardedPairs {
 				assert.Equal(t, want, md.Get(key), "test metadata %q must be forwarded", key)

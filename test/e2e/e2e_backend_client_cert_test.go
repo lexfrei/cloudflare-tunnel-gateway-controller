@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"net/http"
 	"strings"
@@ -70,6 +71,8 @@ func TestBackendClientCertSelectionEndToEnd(t *testing.T) {
 		path    string
 		parents []gatewayv1.ParentReference
 		wantCN  string
+		// port, when set, is the port the request names in Host.
+		port int
 	}{
 		{
 			name: "accepted on both Gateways",
@@ -95,6 +98,7 @@ func TestBackendClientCertSelectionEndToEnd(t *testing.T) {
 				{Kind: new(gatewayv1.Kind("ListenerSet")), Name: gatewayv1.ObjectName(listenerSet.Name)},
 			},
 			wantCN: mtlsClientA,
+			port:   listenerSetEntryPort,
 		},
 	}
 
@@ -104,11 +108,16 @@ func TestBackendClientCertSelectionEndToEnd(t *testing.T) {
 
 		t.Cleanup(func() { _ = k8sClient.Delete(context.Background(), route) })
 
+		host := cfg.TunnelHostname
+		if tt.port != 0 {
+			host = fmt.Sprintf("%s:%d", host, tt.port)
+		}
+
 		t.Run(tt.name, func(t *testing.T) {
-			waitForClientCertCN(ctx, t, httpClient, cfg.TunnelHostname, tt.path, tt.wantCN)
+			waitForClientCertCN(ctx, t, httpClient, host, tt.path, tt.wantCN)
 
 			for range mtlsSamples {
-				echo, resp, err := makeRequest(ctx, t, httpClient, cfg.TunnelHostname, http.MethodGet, tt.path, nil)
+				echo, resp, err := makeRequest(ctx, t, httpClient, host, http.MethodGet, tt.path, nil)
 				require.NoError(t, err)
 				require.Equal(t, http.StatusOK, resp.StatusCode)
 				assert.Equal(t, tt.wantCN, peerCertCommonName(t, echo), "pod %s", echo.Pod)
@@ -279,18 +288,18 @@ func buildMTLSGateway(namespace, name, clientCertSecret string) *gatewayv1.Gatew
 	}
 }
 
-// buildMTLSListenerSet attaches a catch-all HTTP entry on another port to the
-// shared Gateway, so it neither conflicts with nor narrows the Gateway's own
-// listener.
+// buildMTLSListenerSet attaches a catch-all HTTPS entry on another port to
+// the shared Gateway, so it neither conflicts with nor narrows the Gateway's
+// own listener.
 func buildMTLSListenerSet(namespace string) *gatewayv1.ListenerSet {
 	return &gatewayv1.ListenerSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "mtls-ls", Namespace: namespace},
 		Spec: gatewayv1.ListenerSetSpec{
 			ParentRef: gatewayv1.ParentGatewayReference{Name: mtlsSharedGateway},
 			Listeners: []gatewayv1.ListenerEntry{{
-				Name:     "http",
-				Port:     80,
-				Protocol: gatewayv1.HTTPProtocolType,
+				Name:     "https",
+				Port:     listenerSetEntryPort,
+				Protocol: gatewayv1.HTTPSProtocolType,
 				AllowedRoutes: &gatewayv1.AllowedRoutes{
 					Namespaces: &gatewayv1.RouteNamespaces{From: new(gatewayv1.NamespacesFromSame)},
 				},
