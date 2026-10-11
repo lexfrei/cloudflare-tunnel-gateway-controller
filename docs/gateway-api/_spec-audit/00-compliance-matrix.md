@@ -46,6 +46,8 @@ Since the sync, GW-88, GW-112 and LS-35 moved PARTIAL → MET: the ReferenceGran
 
 SH-78 moved GAP → DOWNGRADE-DOCUMENTED: the retryable causes now report Accepted=Unknown, and only the permanent refusals keep Pending with Accepted=False.
 
+SH-33 and SH-34 stay MET with the pending note resolved: an unparseable timeout or retry policy now drops its rule instead of serving it without the field.
+
 Kept as recorded, pending a maintainer decision: GW-02 and GW-24 (listeners matched without their port), GW-101 and GW-103 (no OverlappingTLSConfig), GR-14 and GR-15 (HTTPRoute/GRPCRoute hostname conflict), SH-33 and SH-34 (an unparseable timeout or retry policy is reported as "Dropped Rule" while the rule keeps serving), SH-78 (Pending with Accepted=False), HR-62 (the scheme of a scheme-less redirect).
 
 ## Baseline refreshes since v1.5.1
