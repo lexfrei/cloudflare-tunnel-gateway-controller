@@ -110,13 +110,6 @@ func init() {
 	rootCmd.Flags().String("tracing-endpoint", "", "OTLP/gRPC collector endpoint. Bare host:port uses plaintext gRPC; an http:// or https:// prefix selects plaintext vs TLS. Empty defers to the standard OTEL_EXPORTER_OTLP_ENDPOINT variables.")
 	rootCmd.Flags().Float64("tracing-sample-rate", 1.0, "Head-sampling probability in [0,1], applied at the trace root via ParentBased(TraceIDRatioBased).")
 
-	// Deprecated: --gateway-class-name is no longer used. The controller discovers
-	// GatewayClasses by spec.controllerName, not by name.
-	rootCmd.Flags().String("gateway-class-name", "", "DEPRECATED: no longer used, will be removed in a future release")
-	_ = rootCmd.Flags().MarkHidden("gateway-class-name")
-	_ = rootCmd.Flags().MarkDeprecated("gateway-class-name",
-		"the controller now discovers GatewayClasses by spec.controllerName; this flag is ignored")
-
 	_ = viper.BindPFlags(rootCmd.Flags())
 	_ = viper.BindPFlags(rootCmd.PersistentFlags())
 }
