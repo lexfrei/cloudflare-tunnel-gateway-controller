@@ -200,6 +200,8 @@ Only Gateways with a dedicated data plane count, whether through their own `spec
 
 A Gateway refused for claiming a tunnel it does not own also holds its slot, even though it gets no plane. The two rules are deliberately independent, so neither verdict moves when the other changes; the wasted slot is the refused tenant's own.
 
+A Gateway refused as a whole, because it sets `spec.tls.frontend` or requests an unsupported `spec.addresses` type, also loses its plane and keeps both its slot and its tunnel claim. The claim matters more: dropping a refused Gateway from tunnel arbitration would let another namespace take its tunnel the moment the refusal lands, and the Gateway would find the tunnel gone once its spec is fixed. Fix the spec to get the plane back, or delete the Gateway to free the slot and the tunnel.
+
 A Gateway being deleted holds its slot until it is gone. The controller adds no finalizer of its own, so the window is normally milliseconds — a Gateway held back by someone else's finalizer keeps its slot for as long as that lasts. The alternative under-counts planes whose pods are still running.
 
 A Gateway counts even when its configuration does not currently resolve — a missing `GatewayConfig`, an unreadable connector-token Secret. It is asking for a plane either way, and counting only the ones that resolve would let a tenant free a slot by making one of their tokens unreadable.

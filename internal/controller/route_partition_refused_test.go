@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
@@ -46,4 +47,30 @@ func TestApplyGatewayRefusals_RouteServesNowhere(t *testing.T) {
 			assert.Error(t, gatewayPlaneError("default/infra-gw", infra), "the parent's status says why it is not served")
 		})
 	}
+}
+
+// TestApplyGatewayRefusals_RefusedGatewayKeepsItsSlot pins that a Gateway
+// refused as a whole still counts against its namespace's data-plane cap.
+// Dropping it from the count would also drop it from arbitration, and another
+// namespace could take its tunnel the moment it is refused.
+func TestApplyGatewayRefusals_RefusedGatewayKeepsItsSlot(t *testing.T) {
+	t.Parallel()
+
+	refused := gatewayWithAge("team-a", "refused", 0)
+	refused.Spec.Addresses = []gatewayv1.GatewaySpecAddress{{Value: "192.0.2.1"}}
+	sibling := gatewayWithAge("team-a", "sibling", 1)
+
+	infra := &infraGateways{
+		resolved: map[string]*infraGateway{"team-a/sibling": {gateway: sibling}},
+		broken:   map[string]bool{},
+		listed:   []*gatewayv1.Gateway{&refused, &sibling},
+	}
+
+	applyGatewayRefusals(infra)
+	applyDataPlaneQuota(infra, new(int32(1)), collectDataPlaneClaims(infra.listed))
+
+	require.True(t, infra.isRefused("team-a/refused"))
+
+	_, overQuota := infra.quotaRefusal("team-a/sibling")
+	assert.True(t, overQuota, "the refused Gateway holds the namespace's only slot")
 }
