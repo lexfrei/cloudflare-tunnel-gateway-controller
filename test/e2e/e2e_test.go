@@ -224,9 +224,13 @@ func waitForBackend(
 ) {
 	t.Helper()
 
+	var outcome pollOutcome
+
 	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, timeout, true,
 		func(pollCtx context.Context) (bool, error) {
 			echo, resp, reqErr := makeRequest(pollCtx, t, httpClient, tunnelHostname, http.MethodGet, path, nil)
+			outcome.recordHTTP(echo, resp, reqErr)
+
 			if reqErr != nil {
 				return false, nil //nolint:nilerr // transient edge/tunnel errors are expected while polling; retry until timeout
 			}
@@ -238,7 +242,7 @@ func waitForBackend(
 			return strings.HasPrefix(echo.Pod, podPrefix), nil
 		},
 	)
-	require.NoError(t, err, "timed out waiting for %s to route to %s*", path, podPrefix)
+	require.NoError(t, err, "timed out waiting for %s to route to %s* (%s)", path, podPrefix, &outcome)
 }
 
 // deleteAllRoutes removes the HTTPRoutes the *running subtest* created
@@ -887,10 +891,14 @@ func testHTTPRouteRequestRedirect(
 
 	createHTTPRoute(t, k8sClient, route)
 
+	var outcome pollOutcome
+
 	// Wait for 301 response (redirect has no echo body).
 	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 60*time.Second, true,
 		func(pollCtx context.Context) (bool, error) {
 			_, resp, reqErr := makeRequest(pollCtx, t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-test", nil)
+			outcome.recordHTTP(nil, resp, reqErr)
+
 			if reqErr != nil {
 				return false, nil //nolint:nilerr // transient edge/tunnel errors are expected while polling; retry until timeout
 			}
@@ -898,7 +906,7 @@ func testHTTPRouteRequestRedirect(
 			return resp.StatusCode == http.StatusMovedPermanently, nil
 		},
 	)
-	require.NoError(t, err, "redirect route did not return 301")
+	require.NoError(t, err, "redirect route did not return 301 (%s)", &outcome)
 
 	_, resp, reqErr := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-test", nil)
 	require.NoError(t, reqErr)
@@ -1266,16 +1274,34 @@ func testHTTPRouteRequestMirror(
 	// request it receives) with a bounded timeout. Each poll re-sends the
 	// request so a single transient mirror drop does not fail the test. Without
 	// this assertion the test passes even when mirror delivery is fully broken.
-	require.Eventually(t, func() bool {
-		_, _, reqErr := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, mirrorPath, nil)
-		if reqErr != nil {
-			return false
-		}
+	var outcome pollOutcome
 
-		logs := backendPodLogs(context.Background(), t, clientset, cfg.TestNamespace, "echo-v3")
+	err = wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 30*time.Second, true,
+		func(pollCtx context.Context) (bool, error) {
+			primary, primaryResp, reqErr := makeRequest(pollCtx, t, httpClient, cfg.TunnelHostname, http.MethodGet, mirrorPath, nil)
+			outcome.recordHTTP(primary, primaryResp, reqErr)
 
-		return strings.Contains(logs, mirrorPath)
-	}, 30*time.Second, 2*time.Second, "mirror copy never reached echo-v3 (path %q absent from its logs)", mirrorPath)
+			if reqErr != nil {
+				return false, nil //nolint:nilerr // transient edge/tunnel errors are expected while polling; retry until timeout
+			}
+
+			logs, logsErr := backendPodLogs(pollCtx, t, clientset, cfg.TestNamespace, "echo-v3")
+			if logsErr != nil {
+				outcome.annotate(logsErr.Error())
+
+				return false, nil
+			}
+
+			if strings.Contains(logs, mirrorPath) {
+				return true, nil
+			}
+
+			outcome.annotate("path absent from echo-v3 logs")
+
+			return false, nil
+		},
+	)
+	require.NoError(t, err, "mirror copy of %q never reached echo-v3 (%s)", mirrorPath, &outcome)
 }
 
 func testHTTPRouteRedirectPort(
@@ -1303,10 +1329,14 @@ func testHTTPRouteRedirectPort(
 
 	createHTTPRoute(t, k8sClient, route)
 
+	var outcome pollOutcome
+
 	// Wait for redirect response.
 	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 60*time.Second, true,
 		func(pollCtx context.Context) (bool, error) {
 			_, resp, reqErr := makeRequest(pollCtx, t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-port", nil)
+			outcome.recordHTTP(nil, resp, reqErr)
+
 			if reqErr != nil {
 				return false, nil //nolint:nilerr // transient errors are expected during polling
 			}
@@ -1314,7 +1344,7 @@ func testHTTPRouteRedirectPort(
 			return resp.StatusCode == http.StatusFound, nil
 		},
 	)
-	require.NoError(t, err, "redirect route did not return 302")
+	require.NoError(t, err, "redirect route did not return 302 (%s)", &outcome)
 
 	_, resp, reqErr := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-port", nil)
 	require.NoError(t, reqErr)
@@ -1351,10 +1381,14 @@ func testHTTPRouteRedirectPath(
 
 	createHTTPRoute(t, k8sClient, route)
 
+	var outcome pollOutcome
+
 	// Wait for redirect response.
 	err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 60*time.Second, true,
 		func(pollCtx context.Context) (bool, error) {
 			_, resp, reqErr := makeRequest(pollCtx, t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-path", nil)
+			outcome.recordHTTP(nil, resp, reqErr)
+
 			if reqErr != nil {
 				return false, nil //nolint:nilerr // transient errors are expected during polling
 			}
@@ -1362,7 +1396,7 @@ func testHTTPRouteRedirectPath(
 			return resp.StatusCode == http.StatusMovedPermanently, nil
 		},
 	)
-	require.NoError(t, err, "redirect route did not return 301")
+	require.NoError(t, err, "redirect route did not return 301 (%s)", &outcome)
 
 	_, resp, reqErr := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, "/redir-path", nil)
 	require.NoError(t, reqErr)
@@ -1422,9 +1456,13 @@ func testHTTPRouteRedirectSchemeProbe(
 
 		createHTTPRoute(t, k8sClient, route)
 
+		var outcome pollOutcome
+
 		err := wait.PollUntilContextTimeout(context.Background(), 2*time.Second, 60*time.Second, true,
 			func(pollCtx context.Context) (bool, error) {
 				_, resp, reqErr := makeRequest(pollCtx, t, httpClient, cfg.TunnelHostname, http.MethodGet, path, nil)
+				outcome.recordHTTP(nil, resp, reqErr)
+
 				if reqErr != nil {
 					return false, nil //nolint:nilerr // transient errors are expected during polling
 				}
@@ -1432,7 +1470,7 @@ func testHTTPRouteRedirectSchemeProbe(
 				return resp.StatusCode == statusCode, nil
 			},
 		)
-		require.NoErrorf(t, err, "redirect route did not return %d", statusCode)
+		require.NoErrorf(t, err, "redirect route did not return %d (%s)", statusCode, &outcome)
 
 		_, resp, reqErr := makeRequest(context.Background(), t, httpClient, cfg.TunnelHostname, http.MethodGet, path, nil)
 		require.NoError(t, reqErr)
