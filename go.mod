@@ -4,7 +4,7 @@ go 1.27.2
 
 require (
 	cel.dev/cel-go v0.32.0
-	github.com/cloudflare/cloudflare-go/v7 v7.12.0
+	github.com/cloudflare/cloudflare-go/v7 v7.13.0
 	github.com/cloudflare/cloudflared v0.0.0-20261005153913-18cdfe0a6fc7 // decorative, see replace + FIXME(#610) below
 	github.com/cockroachdb/errors v1.14.0
 	github.com/go-logr/logr v1.4.4
