@@ -1,5 +1,50 @@
 # Changelog
 
+## 7.13.1 (2026-10-20)
+
+Full Changelog: [v7.13.0...v7.13.1](https://github.com/cloudflare/cloudflare-go/compare/v7.13.0...v7.13.1)
+
+Users are encouraged to build with the latest Go patch release. Rebuild your application with Go >= 1.26.10 or >= 1.27.3.
+This library sets no TLS trust policy of its own — trust is resolved by `crypto/x509` in the toolchain that
+compiles your binary, so the minimum-version change above does not itself provide this fix. Note that Go
+caches the system certificate pool per process, so a restart is required after updating any trust store.
+
+### Changes
+
+* The minimum supported Go version is raised from 1.22 to 1.26. Go 1.25 and earlier are no longer supported.
+  Projects whose own `go.mod` declares a lower version will need to raise it to build against this release.
+
+## 7.13.0 (2026-10-09)
+
+Full Changelog: [v7.12.0...v7.13.0](https://github.com/cloudflare/cloudflare-go/compare/v7.12.0...v7.13.0)
+
+### Breaking Changes
+
+See the [v7.13.0 Migration Guide](./docs/migration-guides/v7.13.0-migration-guide.md) for before/after code examples
+and actions needed for each change.
+
+* **registrar:** `Registrar.Domains` sub-resource removed. `Domains.Update()`, `Domains.List()`, and `Domains.Get()`
+  are removed, along with `DomainService`, its constructor, and the associated response and parameter types.
+  These endpoints reached end of life on September 27, 2026. Use `Registrar.Registrations` instead.
+* **zero_trust:** `Access.Users.LastSeenIdentity.Get()` return type changed from `*Identity` to
+  `*AccessUserLastSeenIdentityGetResponse`. `Identity` and its nested `DeviceSession`, `DevicePosture`,
+  `DevicePostureCheck`, `Geo`, `IdP`, and `MTLSAuth` types are renamed with the
+  `AccessUserLastSeenIdentityGetResponse` prefix. The new response type also adds a `Passkeys` field.
+
+### Features
+
+* **NEW SERVICE: `k2`** -- K2 stream management (`/accounts/{account_id}/k2/streams`)
+    * `Streams.New()`, `Update()`, `List()`, `Delete()`, `Get()`
+    * `Streams.Subscriptions.List()`
+* **NEW SERVICE: `monetization`** -- Zone monetization rule management (`/zones/{zone_id}/monetization/rules`)
+    * `Rules.Update()`, `Delete()`, `DeleteRule()`, `EditRule()`, `Get()`, `GetRule()`
+* **api_gateway:** add `Discovery.Operations.Edit()` method
+  (`PATCH /zones/{zone_id}/api_gateway/discovery/operations/{discovery_id}`)
+* **kv:** add `NamespaceMode` and `NamespaceNewParamsMode` types
+* **workers:** add `Beta.Workers.Versions.Profile()` method
+  (`POST /accounts/{account_id}/workers/workers/{worker_id}/versions/{version_id}/profile`)
+* **zero_trust:** add `DestinationOverride` and `DestinationOverrideParam` types to `Access.Applications`
+
 ## 7.12.0 (2026-10-01)
 
 Full Changelog: [v7.11.0...v7.12.0](https://github.com/cloudflare/cloudflare-go/compare/v7.11.0...v7.12.0)
