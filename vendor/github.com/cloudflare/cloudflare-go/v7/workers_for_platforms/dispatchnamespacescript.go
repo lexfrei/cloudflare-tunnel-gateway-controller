@@ -56,9 +56,19 @@ func NewDispatchNamespaceScriptService(opts ...option.RequestOption) (r *Dispatc
 	return
 }
 
-// Upload a Workers for Platforms script module to a dispatch namespace. You can
-// find more about the multipart metadata on our docs:
-// https://developers.cloudflare.com/workers/configuration/multipart-upload-metadata/.
+// Upload Worker code and configuration to a Workers for Platforms dispatch
+// namespace. For ES module and other module-based Workers, use
+// `multipart/form-data` with a JSON `metadata` part whose `main_module` field
+// names the entrypoint file. Upload each module as a separate file part;
+// JavaScript ES module parts use the `application/javascript+module` content type.
+//
+// Raw `application/javascript` and `text/javascript` request bodies accept only
+// legacy service-worker syntax using `addEventListener`. They do not accept ES
+// module syntax such as `export default`. To upload a module Worker, use the
+// multipart request format instead.
+//
+// Learn more about multipart metadata in the
+// [documentation](https://developers.cloudflare.com/workers/configuration/multipart-upload-metadata/).
 func (r *DispatchNamespaceScriptService) Update(ctx context.Context, dispatchNamespace string, scriptName string, params DispatchNamespaceScriptUpdateParams, opts ...option.RequestOption) (res *DispatchNamespaceScriptUpdateResponse, err error) {
 	var env DispatchNamespaceScriptUpdateResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
@@ -1399,9 +1409,10 @@ type DispatchNamespaceScriptUpdateParams struct {
 	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// JSON-encoded metadata about the uploaded parts and Worker configuration.
 	Metadata param.Field[DispatchNamespaceScriptUpdateParamsMetadata] `json:"metadata" api:"required"`
-	// When set to "strict", the upload will fail if any `inherit` type bindings cannot
-	// be resolved against the previous version of the script. Without this,
-	// unresolvable inherit bindings are silently dropped.
+	// When set to "strict", the upload will fail with error 10057 if any `inherit`
+	// type bindings cannot be resolved against the latest uploaded version of the
+	// script, which may not be the deployed version. Without this, unresolvable
+	// inherit bindings are silently dropped.
 	BindingsInherit param.Field[DispatchNamespaceScriptUpdateParamsBindingsInherit] `query:"bindings_inherit"`
 	// An array of modules (often JavaScript files) comprising a Worker script. At
 	// least one module must be present and referenced in the metadata as `main_module`
@@ -1452,6 +1463,9 @@ type DispatchNamespaceScriptUpdateParamsMetadata struct {
 	// provisions a `cloudflare.app` zone for the Worker. A `type: worker` entry in the
 	// `exports` map can override this value for a single entrypoint.
 	CacheOptions param.Field[DispatchNamespaceScriptUpdateParamsMetadataCacheOptions] `json:"cache_options"`
+	// Choose whether to apply Durable Object code updates immediately or defer them.
+	// When omitted, the default strategy applies.
+	CodeUpdateStrategy param.Field[DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyUnion] `json:"code_update_strategy"`
 	// Date indicating targeted support in the Workers runtime. Backwards incompatible
 	// fixes to the runtime following this date will not affect this Worker.
 	CompatibilityDate param.Field[string] `json:"compatibility_date"`
@@ -1635,7 +1649,8 @@ type DispatchNamespaceScriptUpdateParamsMetadataBinding struct {
 	// [Learn more](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/importKey#format).
 	Format param.Field[DispatchNamespaceScriptUpdateParamsMetadataBindingsFormat] `json:"format"`
 	// Enables Gateway identity for the binding. Requires network_id to be
-	// "cf1:network" and cannot be combined with tunnel_id.
+	// "cf1:network" and cannot be combined with tunnel_id or an explicit
+	// "cf1:vnet:<UUID>" network_id.
 	Identity param.Field[DispatchNamespaceScriptUpdateParamsMetadataBindingsIdentity] `json:"identity"`
 	// Name of the Vectorize index to bind to.
 	IndexName param.Field[string] `json:"index_name"`
@@ -1655,8 +1670,9 @@ type DispatchNamespaceScriptUpdateParamsMetadataBinding struct {
 	Namespace param.Field[string] `json:"namespace"`
 	// Namespace identifier tag.
 	NamespaceID param.Field[string] `json:"namespace_id"`
-	// Identifier of the network to bind to. Only "cf1:network" is currently supported.
-	// Mutually exclusive with tunnel_id.
+	// Identifier of the network to bind to. Use "cf1:network" to select the account's
+	// default virtual network at runtime, or "cf1:vnet:<UUID>" to select an explicit
+	// virtual network in the Worker's account. Mutually exclusive with tunnel_id.
 	NetworkID param.Field[string] `json:"network_id"`
 	// The old name of the inherited binding. If set, the binding will be renamed from
 	// `old_name` to `name` in the new version. If not set, the binding will keep the
@@ -1689,9 +1705,13 @@ type DispatchNamespaceScriptUpdateParamsMetadataBinding struct {
 	// UUID of the Cloudflare Tunnel to bind to. Mutually exclusive with network_id.
 	TunnelID param.Field[string]      `json:"tunnel_id"`
 	Usages   param.Field[interface{}] `json:"usages"`
-	// Identifier for the version to inherit the binding from, which can be the version
-	// ID or the literal "latest" to inherit from the latest version. Defaults to
-	// inheriting the binding from the latest version.
+	// Identifier for the version to inherit the binding from. This can be a version
+	// ID, or the literal "latest" to inherit from the most recently uploaded version,
+	// which may not be the deployed version. Defaults to "latest". Only the Workers
+	// API version endpoints under
+	// `/accounts/{account_id}/workers/workers/{worker_id}/versions` accept a version
+	// ID. Other endpoints, including script upload and script version upload, accept
+	// only "latest" and reject a version ID with error 10057.
 	VersionID param.Field[string] `json:"version_id"`
 	// Name of the Workflow to bind to.
 	WorkflowName param.Field[string] `json:"workflow_name"`
@@ -2220,9 +2240,13 @@ type DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindInheri
 	// `old_name` to `name` in the new version. If not set, the binding will keep the
 	// same name between versions.
 	OldName param.Field[string] `json:"old_name"`
-	// Identifier for the version to inherit the binding from, which can be the version
-	// ID or the literal "latest" to inherit from the latest version. Defaults to
-	// inheriting the binding from the latest version.
+	// Identifier for the version to inherit the binding from. This can be a version
+	// ID, or the literal "latest" to inherit from the most recently uploaded version,
+	// which may not be the deployed version. Defaults to "latest". Only the Workers
+	// API version endpoints under
+	// `/accounts/{account_id}/workers/workers/{worker_id}/versions` accept a version
+	// ID. Other endpoints, including script upload and script version upload, accept
+	// only "latest" and reject a version ID with error 10057.
 	VersionID param.Field[string] `json:"version_id"`
 }
 
@@ -3079,10 +3103,12 @@ type DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindVPCNet
 	// The kind of resource that the binding provides.
 	Type param.Field[DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindVPCNetworkType] `json:"type" api:"required"`
 	// Enables Gateway identity for the binding. Requires network_id to be
-	// "cf1:network" and cannot be combined with tunnel_id.
+	// "cf1:network" and cannot be combined with tunnel_id or an explicit
+	// "cf1:vnet:<UUID>" network_id.
 	Identity param.Field[DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindVPCNetworkIdentity] `json:"identity"`
-	// Identifier of the network to bind to. Only "cf1:network" is currently supported.
-	// Mutually exclusive with tunnel_id.
+	// Identifier of the network to bind to. Use "cf1:network" to select the account's
+	// default virtual network at runtime, or "cf1:vnet:<UUID>" to select an explicit
+	// virtual network in the Worker's account. Mutually exclusive with tunnel_id.
 	NetworkID param.Field[string] `json:"network_id"`
 	// UUID of the Cloudflare Tunnel to bind to. Mutually exclusive with network_id.
 	TunnelID param.Field[string] `json:"tunnel_id"`
@@ -3111,7 +3137,8 @@ func (r DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindVPC
 }
 
 // Enables Gateway identity for the binding. Requires network_id to be
-// "cf1:network" and cannot be combined with tunnel_id.
+// "cf1:network" and cannot be combined with tunnel_id or an explicit
+// "cf1:vnet:<UUID>" network_id.
 type DispatchNamespaceScriptUpdateParamsMetadataBindingsWorkersBindingKindVPCNetworkIdentity string
 
 const (
@@ -3198,7 +3225,8 @@ func (r DispatchNamespaceScriptUpdateParamsMetadataBindingsFormat) IsKnown() boo
 }
 
 // Enables Gateway identity for the binding. Requires network_id to be
-// "cf1:network" and cannot be combined with tunnel_id.
+// "cf1:network" and cannot be combined with tunnel_id or an explicit
+// "cf1:vnet:<UUID>" network_id.
 type DispatchNamespaceScriptUpdateParamsMetadataBindingsIdentity string
 
 const (
@@ -3247,6 +3275,93 @@ type DispatchNamespaceScriptUpdateParamsMetadataCacheOptions struct {
 
 func (r DispatchNamespaceScriptUpdateParamsMetadataCacheOptions) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
+}
+
+// Choose whether to apply Durable Object code updates immediately or defer them.
+// When omitted, the default strategy applies.
+type DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategy struct {
+	// Apply Durable Object code updates immediately.
+	Mode param.Field[DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyMode] `json:"mode" api:"required"`
+	// Set the maximum number of seconds to wait before forcing the update. When
+	// omitted, the default maximum delay applies.
+	MaxDelay param.Field[float64] `json:"max_delay"`
+}
+
+func (r DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategy) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategy) implementsDispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyUnion() {
+}
+
+// Choose whether to apply Durable Object code updates immediately or defer them.
+// When omitted, the default strategy applies.
+//
+// Satisfied by
+// [workers_for_platforms.DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyMode],
+// [workers_for_platforms.DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyObject],
+// [DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategy].
+//
+// Use [Raw()] to specify an arbitrary value for this param
+type DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyUnion interface {
+	implementsDispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyUnion()
+}
+
+type DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyMode struct {
+	// Apply Durable Object code updates immediately.
+	Mode param.Field[DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyModeMode] `json:"mode" api:"required"`
+}
+
+func (r DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyMode) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyMode) implementsDispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyUnion() {
+}
+
+// Apply Durable Object code updates immediately.
+type DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyModeMode string
+
+const (
+	DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyModeModeImmediate DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyModeMode = "immediate"
+)
+
+func (r DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyModeMode) IsKnown() bool {
+	switch r {
+	case DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyModeModeImmediate:
+		return true
+	}
+	return false
+}
+
+type DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyObject struct {
+	// Allow active Durable Objects to hibernate before updating their code.
+	Mode param.Field[DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyObjectMode] `json:"mode" api:"required"`
+	// Set the maximum number of seconds to wait before forcing the update. When
+	// omitted, the default maximum delay applies.
+	MaxDelay param.Field[float64] `json:"max_delay"`
+}
+
+func (r DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyObject) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyObject) implementsDispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyUnion() {
+}
+
+// Allow active Durable Objects to hibernate before updating their code.
+type DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyObjectMode string
+
+const (
+	DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyObjectModeDeferred DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyObjectMode = "deferred"
+)
+
+func (r DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyObjectMode) IsKnown() bool {
+	switch r {
+	case DispatchNamespaceScriptUpdateParamsMetadataCodeUpdateStrategyObjectModeDeferred:
+		return true
+	}
+	return false
 }
 
 // A single entry in the `exports` map, keyed by export name (a `WorkerEntrypoint`
@@ -4278,9 +4393,10 @@ func (r DispatchNamespaceScriptUpdateParamsMetadataUsageModel) IsKnown() bool {
 	return false
 }
 
-// When set to "strict", the upload will fail if any `inherit` type bindings cannot
-// be resolved against the previous version of the script. Without this,
-// unresolvable inherit bindings are silently dropped.
+// When set to "strict", the upload will fail with error 10057 if any `inherit`
+// type bindings cannot be resolved against the latest uploaded version of the
+// script, which may not be the deployed version. Without this, unresolvable
+// inherit bindings are silently dropped.
 type DispatchNamespaceScriptUpdateParamsBindingsInherit string
 
 const (
