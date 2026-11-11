@@ -1,6 +1,6 @@
 module github.com/lexfrei/cloudflare-tunnel-gateway-controller/hack/tools
 
-go 1.27.3
+go 1.27.4
 
 tool (
 	github.com/elastic/crd-ref-docs
