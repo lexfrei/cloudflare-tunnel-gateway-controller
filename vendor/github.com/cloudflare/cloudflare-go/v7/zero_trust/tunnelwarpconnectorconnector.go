@@ -14,7 +14,6 @@ import (
 	"github.com/cloudflare/cloudflare-go/v7/internal/param"
 	"github.com/cloudflare/cloudflare-go/v7/internal/requestconfig"
 	"github.com/cloudflare/cloudflare-go/v7/option"
-	"github.com/cloudflare/cloudflare-go/v7/shared"
 )
 
 // TunnelWARPConnectorConnectorService contains methods and other services that
@@ -36,7 +35,7 @@ func NewTunnelWARPConnectorConnectorService(opts ...option.RequestOption) (r *Tu
 	return
 }
 
-// Fetches connector and connection details for a WARP Connector Tunnel.
+// Fetches connector and connection details for a Mesh node.
 func (r *TunnelWARPConnectorConnectorService) Get(ctx context.Context, tunnelID string, connectorID string, query TunnelWARPConnectorConnectorGetParams, opts ...option.RequestOption) (res *TunnelWARPConnectorConnectorGetResponse, err error) {
 	var env TunnelWARPConnectorConnectorGetResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
@@ -61,17 +60,17 @@ func (r *TunnelWARPConnectorConnectorService) Get(ctx context.Context, tunnelID 
 	return res, nil
 }
 
-// A WARP Connector client that maintains a connection to a Cloudflare data center.
+// A Mesh node connector that maintains a connection to a Cloudflare data center.
 type TunnelWARPConnectorConnectorGetResponse struct {
 	// UUID of the Cloudflare Tunnel connector.
 	ID string `json:"id" format:"uuid"`
 	// The cloudflared OS architecture used to establish this connection.
 	Arch string `json:"arch"`
-	// The WARP Connector Tunnel connections between your origin and Cloudflare's edge.
+	// The Mesh node connections between your origin and Cloudflare's edge.
 	Conns []TunnelWARPConnectorConnectorGetResponseConn `json:"conns"`
 	// Features enabled for the Cloudflare Tunnel.
 	Features []string `json:"features"`
-	// The HA status of a WARP Connector client.
+	// The HA status of a Mesh node connector.
 	HaStatus TunnelWARPConnectorConnectorGetResponseHaStatus `json:"ha_status"`
 	// Timestamp of when the tunnel connection was started.
 	RunAt time.Time `json:"run_at" format:"date-time"`
@@ -113,7 +112,7 @@ type TunnelWARPConnectorConnectorGetResponseConn struct {
 	ColoName string `json:"colo_name"`
 	// Timestamp of when the connection was established.
 	OpenedAt time.Time `json:"opened_at" format:"date-time"`
-	// The public IP address of the host running WARP Connector.
+	// The public IP address of the host running the Mesh node connector.
 	OriginIP string                                          `json:"origin_ip"`
 	JSON     tunnelWARPConnectorConnectorGetResponseConnJSON `json:"-"`
 }
@@ -139,7 +138,7 @@ func (r tunnelWARPConnectorConnectorGetResponseConnJSON) RawJSON() string {
 	return r.raw
 }
 
-// The HA status of a WARP Connector client.
+// The HA status of a Mesh node connector.
 type TunnelWARPConnectorConnectorGetResponseHaStatus string
 
 const (
@@ -162,9 +161,9 @@ type TunnelWARPConnectorConnectorGetParams struct {
 }
 
 type TunnelWARPConnectorConnectorGetResponseEnvelope struct {
-	Errors   []shared.ResponseInfo `json:"errors" api:"required"`
-	Messages []shared.ResponseInfo `json:"messages" api:"required"`
-	// A WARP Connector client that maintains a connection to a Cloudflare data center.
+	Errors   []TunnelWARPConnectorConnectorGetResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []TunnelWARPConnectorConnectorGetResponseEnvelopeMessages `json:"messages" api:"required"`
+	// A Mesh node connector that maintains a connection to a Cloudflare data center.
 	Result TunnelWARPConnectorConnectorGetResponse `json:"result" api:"required"`
 	// Whether the API call was successful
 	Success TunnelWARPConnectorConnectorGetResponseEnvelopeSuccess `json:"success" api:"required"`
@@ -187,6 +186,59 @@ func (r *TunnelWARPConnectorConnectorGetResponseEnvelope) UnmarshalJSON(data []b
 }
 
 func (r tunnelWARPConnectorConnectorGetResponseEnvelopeJSON) RawJSON() string {
+	return r.raw
+}
+
+type TunnelWARPConnectorConnectorGetResponseEnvelopeErrors struct {
+	Code    int64  `json:"code" api:"required"`
+	Message string `json:"message" api:"required"`
+	// Optional error-specific context.
+	Context map[string]interface{}                                    `json:"context"`
+	JSON    tunnelWARPConnectorConnectorGetResponseEnvelopeErrorsJSON `json:"-"`
+}
+
+// tunnelWARPConnectorConnectorGetResponseEnvelopeErrorsJSON contains the JSON
+// metadata for the struct [TunnelWARPConnectorConnectorGetResponseEnvelopeErrors]
+type tunnelWARPConnectorConnectorGetResponseEnvelopeErrorsJSON struct {
+	Code        apijson.Field
+	Message     apijson.Field
+	Context     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *TunnelWARPConnectorConnectorGetResponseEnvelopeErrors) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r tunnelWARPConnectorConnectorGetResponseEnvelopeErrorsJSON) RawJSON() string {
+	return r.raw
+}
+
+type TunnelWARPConnectorConnectorGetResponseEnvelopeMessages struct {
+	Code    int64  `json:"code" api:"required"`
+	Message string `json:"message" api:"required"`
+	// Optional error-specific context.
+	Context map[string]interface{}                                      `json:"context"`
+	JSON    tunnelWARPConnectorConnectorGetResponseEnvelopeMessagesJSON `json:"-"`
+}
+
+// tunnelWARPConnectorConnectorGetResponseEnvelopeMessagesJSON contains the JSON
+// metadata for the struct
+// [TunnelWARPConnectorConnectorGetResponseEnvelopeMessages]
+type tunnelWARPConnectorConnectorGetResponseEnvelopeMessagesJSON struct {
+	Code        apijson.Field
+	Message     apijson.Field
+	Context     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *TunnelWARPConnectorConnectorGetResponseEnvelopeMessages) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r tunnelWARPConnectorConnectorGetResponseEnvelopeMessagesJSON) RawJSON() string {
 	return r.raw
 }
 

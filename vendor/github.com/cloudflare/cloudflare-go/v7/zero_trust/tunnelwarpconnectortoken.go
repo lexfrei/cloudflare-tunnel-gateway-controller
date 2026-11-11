@@ -13,7 +13,6 @@ import (
 	"github.com/cloudflare/cloudflare-go/v7/internal/param"
 	"github.com/cloudflare/cloudflare-go/v7/internal/requestconfig"
 	"github.com/cloudflare/cloudflare-go/v7/option"
-	"github.com/cloudflare/cloudflare-go/v7/shared"
 )
 
 // TunnelWARPConnectorTokenService contains methods and other services that help
@@ -35,8 +34,7 @@ func NewTunnelWARPConnectorTokenService(opts ...option.RequestOption) (r *Tunnel
 	return
 }
 
-// Gets the token used to associate warp device with a specific Warp Connector
-// tunnel.
+// Gets the token used to associate a WARP device with a specific Mesh node.
 func (r *TunnelWARPConnectorTokenService) Get(ctx context.Context, tunnelID string, query TunnelWARPConnectorTokenGetParams, opts ...option.RequestOption) (res *string, err error) {
 	var env TunnelWARPConnectorTokenGetResponseEnvelope
 	opts = slices.Concat(r.Options, opts)
@@ -63,8 +61,8 @@ type TunnelWARPConnectorTokenGetParams struct {
 }
 
 type TunnelWARPConnectorTokenGetResponseEnvelope struct {
-	Errors   []shared.ResponseInfo `json:"errors" api:"required"`
-	Messages []shared.ResponseInfo `json:"messages" api:"required"`
+	Errors   []TunnelWARPConnectorTokenGetResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []TunnelWARPConnectorTokenGetResponseEnvelopeMessages `json:"messages" api:"required"`
 	// The Tunnel Token is used as a mechanism to authenticate the operation of a
 	// tunnel.
 	Result string `json:"result" api:"required"`
@@ -89,6 +87,58 @@ func (r *TunnelWARPConnectorTokenGetResponseEnvelope) UnmarshalJSON(data []byte)
 }
 
 func (r tunnelWARPConnectorTokenGetResponseEnvelopeJSON) RawJSON() string {
+	return r.raw
+}
+
+type TunnelWARPConnectorTokenGetResponseEnvelopeErrors struct {
+	Code    int64  `json:"code" api:"required"`
+	Message string `json:"message" api:"required"`
+	// Optional error-specific context.
+	Context map[string]interface{}                                `json:"context"`
+	JSON    tunnelWARPConnectorTokenGetResponseEnvelopeErrorsJSON `json:"-"`
+}
+
+// tunnelWARPConnectorTokenGetResponseEnvelopeErrorsJSON contains the JSON metadata
+// for the struct [TunnelWARPConnectorTokenGetResponseEnvelopeErrors]
+type tunnelWARPConnectorTokenGetResponseEnvelopeErrorsJSON struct {
+	Code        apijson.Field
+	Message     apijson.Field
+	Context     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *TunnelWARPConnectorTokenGetResponseEnvelopeErrors) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r tunnelWARPConnectorTokenGetResponseEnvelopeErrorsJSON) RawJSON() string {
+	return r.raw
+}
+
+type TunnelWARPConnectorTokenGetResponseEnvelopeMessages struct {
+	Code    int64  `json:"code" api:"required"`
+	Message string `json:"message" api:"required"`
+	// Optional error-specific context.
+	Context map[string]interface{}                                  `json:"context"`
+	JSON    tunnelWARPConnectorTokenGetResponseEnvelopeMessagesJSON `json:"-"`
+}
+
+// tunnelWARPConnectorTokenGetResponseEnvelopeMessagesJSON contains the JSON
+// metadata for the struct [TunnelWARPConnectorTokenGetResponseEnvelopeMessages]
+type tunnelWARPConnectorTokenGetResponseEnvelopeMessagesJSON struct {
+	Code        apijson.Field
+	Message     apijson.Field
+	Context     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *TunnelWARPConnectorTokenGetResponseEnvelopeMessages) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r tunnelWARPConnectorTokenGetResponseEnvelopeMessagesJSON) RawJSON() string {
 	return r.raw
 }
 

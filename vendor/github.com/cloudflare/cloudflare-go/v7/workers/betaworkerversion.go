@@ -138,6 +138,29 @@ func (r *BetaWorkerVersionService) Get(ctx context.Context, workerID string, ver
 	return res, nil
 }
 
+// Captures a CPU or heap profile from a recently active isolate running the
+// specified Worker version. This endpoint requires the Worker profiling feature to
+// be enabled for the account.
+func (r *BetaWorkerVersionService) Profile(ctx context.Context, workerID string, versionID string, params BetaWorkerVersionProfileParams, opts ...option.RequestOption) (res *http.Response, err error) {
+	opts = slices.Concat(r.Options, opts)
+	opts = append([]option.RequestOption{option.WithHeader("Accept", "application/vnd.google.protobuf")}, opts...)
+	if params.AccountID.Value == "" {
+		err = errors.New("missing required account_id parameter")
+		return nil, err
+	}
+	if workerID == "" {
+		err = errors.New("missing required worker_id parameter")
+		return nil, err
+	}
+	if versionID == "" {
+		err = errors.New("missing required version_id parameter")
+		return nil, err
+	}
+	path := fmt.Sprintf("accounts/%s/workers/workers/%s/versions/%s/profile", params.AccountID, workerID, versionID)
+	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &res, opts...)
+	return res, err
+}
+
 type Version struct {
 	// Version identifier.
 	ID string `json:"id" api:"required" format:"uuid"`
@@ -173,9 +196,12 @@ type Version struct {
 	// Date indicating targeted support in the Workers runtime. Backwards incompatible
 	// fixes to the runtime following this date will not affect this Worker.
 	CompatibilityDate string `json:"compatibility_date"`
-	// Flags that enable or disable certain features in the Workers runtime. Used to
-	// enable upcoming features or opt in or out of specific changes not included in a
-	// `compatibility_date`.
+	// Enables or disables specific Workers runtime features, such as upcoming features
+	// or changes outside the `compatibility_date`.
+	//
+	// Responses list only the flags this version sets explicitly and exclude behavior
+	// that `compatibility_date` enables. Responses omit the field when the list is
+	// empty, so a missing field means the version sets zero flags.
 	CompatibilityFlags []string `json:"compatibility_flags"`
 	// List of containers attached to a Worker. Containers can only be attached to
 	// Durable Object classes of this Worker script.
@@ -203,6 +229,11 @@ type Version struct {
 	// applied when the version is deployed.
 	Migrations VersionMigrations `json:"migrations"`
 	// Code, sourcemaps, and other content used at runtime.
+	//
+	// Source maps use content type `application/source-map`. Responses include them
+	// only when requested with `include=modules,sourcemaps`. Workers stores the source
+	// map fields used to remap stack traces, so a returned source map is equivalent to
+	// the uploaded file but not byte-identical.
 	//
 	// This includes
 	// [`_headers`](https://developers.cloudflare.com/workers/static-assets/headers/#custom-headers)
@@ -480,7 +511,8 @@ type VersionBinding struct {
 	// [Learn more](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/importKey#format).
 	Format VersionBindingsFormat `json:"format"`
 	// Enables Gateway identity for the binding. Requires network_id to be
-	// "cf1:network" and cannot be combined with tunnel_id.
+	// "cf1:network" and cannot be combined with tunnel_id or an explicit
+	// "cf1:vnet:<UUID>" network_id.
 	Identity VersionBindingsIdentity `json:"identity"`
 	// Name of the Vectorize index to bind to.
 	IndexName string `json:"index_name"`
@@ -500,8 +532,9 @@ type VersionBinding struct {
 	Namespace string `json:"namespace"`
 	// Namespace identifier tag.
 	NamespaceID string `json:"namespace_id"`
-	// Identifier of the network to bind to. Only "cf1:network" is currently supported.
-	// Mutually exclusive with tunnel_id.
+	// Identifier of the network to bind to. Use "cf1:network" to select the account's
+	// default virtual network at runtime, or "cf1:vnet:<UUID>" to select an explicit
+	// virtual network in the Worker's account. Mutually exclusive with tunnel_id.
 	NetworkID string `json:"network_id"`
 	// The old name of the inherited binding. If set, the binding will be renamed from
 	// `old_name` to `name` in the new version. If not set, the binding will keep the
@@ -540,9 +573,13 @@ type VersionBinding struct {
 	// This field can have the runtime type of
 	// [[]VersionBindingsWorkersBindingKindSecretKeyUsage].
 	Usages interface{} `json:"usages"`
-	// Identifier for the version to inherit the binding from, which can be the version
-	// ID or the literal "latest" to inherit from the latest version. Defaults to
-	// inheriting the binding from the latest version.
+	// Identifier for the version to inherit the binding from. This can be a version
+	// ID, or the literal "latest" to inherit from the most recently uploaded version,
+	// which may not be the deployed version. Defaults to "latest". Only the Workers
+	// API version endpoints under
+	// `/accounts/{account_id}/workers/workers/{worker_id}/versions` accept a version
+	// ID. Other endpoints, including script upload and script version upload, accept
+	// only "latest" and reject a version ID with error 10057.
 	VersionID string `json:"version_id"`
 	// Name of the Workflow to bind to.
 	WorkflowName string             `json:"workflow_name"`
@@ -651,7 +688,8 @@ func (r *VersionBinding) UnmarshalJSON(data []byte) (err error) {
 // [VersionBindingsWorkersBindingKindWorkflow],
 // [VersionBindingsWorkersBindingKindWasmModule],
 // [VersionBindingsWorkersBindingKindVPCService],
-// [VersionBindingsWorkersBindingKindVPCNetwork].
+// [VersionBindingsWorkersBindingKindVPCNetwork],
+// [VersionBindingsWorkersBindingKindWorkerLoader].
 func (r VersionBinding) AsUnion() VersionBindingsUnion {
 	return r.union
 }
@@ -693,8 +731,9 @@ func (r VersionBinding) AsUnion() VersionBindingsUnion {
 // [VersionBindingsWorkersBindingKindSecretKey],
 // [VersionBindingsWorkersBindingKindWorkflow],
 // [VersionBindingsWorkersBindingKindWasmModule],
-// [VersionBindingsWorkersBindingKindVPCService] or
-// [VersionBindingsWorkersBindingKindVPCNetwork].
+// [VersionBindingsWorkersBindingKindVPCService],
+// [VersionBindingsWorkersBindingKindVPCNetwork] or
+// [VersionBindingsWorkersBindingKindWorkerLoader].
 type VersionBindingsUnion interface {
 	implementsVersionBinding()
 }
@@ -892,6 +931,11 @@ func init() {
 			TypeFilter:         gjson.JSON,
 			Type:               reflect.TypeOf(VersionBindingsWorkersBindingKindVPCNetwork{}),
 			DiscriminatorValue: "vpc_network",
+		},
+		apijson.UnionVariant{
+			TypeFilter:         gjson.JSON,
+			Type:               reflect.TypeOf(VersionBindingsWorkersBindingKindWorkerLoader{}),
+			DiscriminatorValue: "worker_loader",
 		},
 	)
 }
@@ -1598,9 +1642,13 @@ type VersionBindingsWorkersBindingKindInherit struct {
 	// `old_name` to `name` in the new version. If not set, the binding will keep the
 	// same name between versions.
 	OldName string `json:"old_name"`
-	// Identifier for the version to inherit the binding from, which can be the version
-	// ID or the literal "latest" to inherit from the latest version. Defaults to
-	// inheriting the binding from the latest version.
+	// Identifier for the version to inherit the binding from. This can be a version
+	// ID, or the literal "latest" to inherit from the most recently uploaded version,
+	// which may not be the deployed version. Defaults to "latest". Only the Workers
+	// API version endpoints under
+	// `/accounts/{account_id}/workers/workers/{worker_id}/versions` accept a version
+	// ID. Other endpoints, including script upload and script version upload, accept
+	// only "latest" and reject a version ID with error 10057.
 	VersionID string                                       `json:"version_id"`
 	JSON      versionBindingsWorkersBindingKindInheritJSON `json:"-"`
 }
@@ -2808,10 +2856,12 @@ type VersionBindingsWorkersBindingKindVPCNetwork struct {
 	// The kind of resource that the binding provides.
 	Type VersionBindingsWorkersBindingKindVPCNetworkType `json:"type" api:"required"`
 	// Enables Gateway identity for the binding. Requires network_id to be
-	// "cf1:network" and cannot be combined with tunnel_id.
+	// "cf1:network" and cannot be combined with tunnel_id or an explicit
+	// "cf1:vnet:<UUID>" network_id.
 	Identity VersionBindingsWorkersBindingKindVPCNetworkIdentity `json:"identity"`
-	// Identifier of the network to bind to. Only "cf1:network" is currently supported.
-	// Mutually exclusive with tunnel_id.
+	// Identifier of the network to bind to. Use "cf1:network" to select the account's
+	// default virtual network at runtime, or "cf1:vnet:<UUID>" to select an explicit
+	// virtual network in the Worker's account. Mutually exclusive with tunnel_id.
 	NetworkID string `json:"network_id"`
 	// UUID of the Cloudflare Tunnel to bind to. Mutually exclusive with network_id.
 	TunnelID string                                          `json:"tunnel_id"`
@@ -2856,7 +2906,8 @@ func (r VersionBindingsWorkersBindingKindVPCNetworkType) IsKnown() bool {
 }
 
 // Enables Gateway identity for the binding. Requires network_id to be
-// "cf1:network" and cannot be combined with tunnel_id.
+// "cf1:network" and cannot be combined with tunnel_id or an explicit
+// "cf1:vnet:<UUID>" network_id.
 type VersionBindingsWorkersBindingKindVPCNetworkIdentity string
 
 const (
@@ -2866,6 +2917,48 @@ const (
 func (r VersionBindingsWorkersBindingKindVPCNetworkIdentity) IsKnown() bool {
 	switch r {
 	case VersionBindingsWorkersBindingKindVPCNetworkIdentityRuntimeEmailAlpha:
+		return true
+	}
+	return false
+}
+
+type VersionBindingsWorkersBindingKindWorkerLoader struct {
+	// A JavaScript variable name for the binding.
+	Name string `json:"name" api:"required"`
+	// The kind of resource that the binding provides.
+	Type VersionBindingsWorkersBindingKindWorkerLoaderType `json:"type" api:"required"`
+	JSON versionBindingsWorkersBindingKindWorkerLoaderJSON `json:"-"`
+}
+
+// versionBindingsWorkersBindingKindWorkerLoaderJSON contains the JSON metadata for
+// the struct [VersionBindingsWorkersBindingKindWorkerLoader]
+type versionBindingsWorkersBindingKindWorkerLoaderJSON struct {
+	Name        apijson.Field
+	Type        apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *VersionBindingsWorkersBindingKindWorkerLoader) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r versionBindingsWorkersBindingKindWorkerLoaderJSON) RawJSON() string {
+	return r.raw
+}
+
+func (r VersionBindingsWorkersBindingKindWorkerLoader) implementsVersionBinding() {}
+
+// The kind of resource that the binding provides.
+type VersionBindingsWorkersBindingKindWorkerLoaderType string
+
+const (
+	VersionBindingsWorkersBindingKindWorkerLoaderTypeWorkerLoader VersionBindingsWorkersBindingKindWorkerLoaderType = "worker_loader"
+)
+
+func (r VersionBindingsWorkersBindingKindWorkerLoaderType) IsKnown() bool {
+	switch r {
+	case VersionBindingsWorkersBindingKindWorkerLoaderTypeWorkerLoader:
 		return true
 	}
 	return false
@@ -2913,11 +3006,12 @@ const (
 	VersionBindingsTypeWasmModule             VersionBindingsType = "wasm_module"
 	VersionBindingsTypeVPCService             VersionBindingsType = "vpc_service"
 	VersionBindingsTypeVPCNetwork             VersionBindingsType = "vpc_network"
+	VersionBindingsTypeWorkerLoader           VersionBindingsType = "worker_loader"
 )
 
 func (r VersionBindingsType) IsKnown() bool {
 	switch r {
-	case VersionBindingsTypeAI, VersionBindingsTypeAISearch, VersionBindingsTypeAISearchNamespace, VersionBindingsTypeMessaging, VersionBindingsTypeAnalyticsEngine, VersionBindingsTypeArtifacts, VersionBindingsTypeAssets, VersionBindingsTypeBrowser, VersionBindingsTypeD1, VersionBindingsTypeDataBlob, VersionBindingsTypeDispatchNamespace, VersionBindingsTypeDurableObjectNamespace, VersionBindingsTypeHyperdrive, VersionBindingsTypeInherit, VersionBindingsTypeImages, VersionBindingsTypeJson, VersionBindingsTypeKVNamespace, VersionBindingsTypeMedia, VersionBindingsTypeMTLSCertificate, VersionBindingsTypePlainText, VersionBindingsTypePipelines, VersionBindingsTypeK2, VersionBindingsTypeQueue, VersionBindingsTypeRatelimit, VersionBindingsTypeR2Bucket, VersionBindingsTypeSecretText, VersionBindingsTypeSendEmail, VersionBindingsTypeService, VersionBindingsTypeTextBlob, VersionBindingsTypeVectorize, VersionBindingsTypeVersionMetadata, VersionBindingsTypeSecretsStoreSecret, VersionBindingsTypeFlagship, VersionBindingsTypeSecretKey, VersionBindingsTypeWorkflow, VersionBindingsTypeWasmModule, VersionBindingsTypeVPCService, VersionBindingsTypeVPCNetwork:
+	case VersionBindingsTypeAI, VersionBindingsTypeAISearch, VersionBindingsTypeAISearchNamespace, VersionBindingsTypeMessaging, VersionBindingsTypeAnalyticsEngine, VersionBindingsTypeArtifacts, VersionBindingsTypeAssets, VersionBindingsTypeBrowser, VersionBindingsTypeD1, VersionBindingsTypeDataBlob, VersionBindingsTypeDispatchNamespace, VersionBindingsTypeDurableObjectNamespace, VersionBindingsTypeHyperdrive, VersionBindingsTypeInherit, VersionBindingsTypeImages, VersionBindingsTypeJson, VersionBindingsTypeKVNamespace, VersionBindingsTypeMedia, VersionBindingsTypeMTLSCertificate, VersionBindingsTypePlainText, VersionBindingsTypePipelines, VersionBindingsTypeK2, VersionBindingsTypeQueue, VersionBindingsTypeRatelimit, VersionBindingsTypeR2Bucket, VersionBindingsTypeSecretText, VersionBindingsTypeSendEmail, VersionBindingsTypeService, VersionBindingsTypeTextBlob, VersionBindingsTypeVectorize, VersionBindingsTypeVersionMetadata, VersionBindingsTypeSecretsStoreSecret, VersionBindingsTypeFlagship, VersionBindingsTypeSecretKey, VersionBindingsTypeWorkflow, VersionBindingsTypeWasmModule, VersionBindingsTypeVPCService, VersionBindingsTypeVPCNetwork, VersionBindingsTypeWorkerLoader:
 		return true
 	}
 	return false
@@ -2943,7 +3037,8 @@ func (r VersionBindingsFormat) IsKnown() bool {
 }
 
 // Enables Gateway identity for the binding. Requires network_id to be
-// "cf1:network" and cannot be combined with tunnel_id.
+// "cf1:network" and cannot be combined with tunnel_id or an explicit
+// "cf1:vnet:<UUID>" network_id.
 type VersionBindingsIdentity string
 
 const (
@@ -4481,9 +4576,12 @@ type VersionParam struct {
 	// Date indicating targeted support in the Workers runtime. Backwards incompatible
 	// fixes to the runtime following this date will not affect this Worker.
 	CompatibilityDate param.Field[string] `json:"compatibility_date"`
-	// Flags that enable or disable certain features in the Workers runtime. Used to
-	// enable upcoming features or opt in or out of specific changes not included in a
-	// `compatibility_date`.
+	// Enables or disables specific Workers runtime features, such as upcoming features
+	// or changes outside the `compatibility_date`.
+	//
+	// Responses list only the flags this version sets explicitly and exclude behavior
+	// that `compatibility_date` enables. Responses omit the field when the list is
+	// empty, so a missing field means the version sets zero flags.
 	CompatibilityFlags param.Field[[]string] `json:"compatibility_flags"`
 	// List of containers attached to a Worker. Containers can only be attached to
 	// Durable Object classes of this Worker script.
@@ -4503,6 +4601,11 @@ type VersionParam struct {
 	// applied when the version is deployed.
 	Migrations param.Field[VersionMigrationsUnionParam] `json:"migrations"`
 	// Code, sourcemaps, and other content used at runtime.
+	//
+	// Source maps use content type `application/source-map`. Responses include them
+	// only when requested with `include=modules,sourcemaps`. Workers stores the source
+	// map fields used to remap stack traces, so a returned source map is equivalent to
+	// the uploaded file but not byte-identical.
 	//
 	// This includes
 	// [`_headers`](https://developers.cloudflare.com/workers/static-assets/headers/#custom-headers)
@@ -4636,7 +4739,8 @@ type VersionBindingParam struct {
 	// [Learn more](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/importKey#format).
 	Format param.Field[VersionBindingsFormat] `json:"format"`
 	// Enables Gateway identity for the binding. Requires network_id to be
-	// "cf1:network" and cannot be combined with tunnel_id.
+	// "cf1:network" and cannot be combined with tunnel_id or an explicit
+	// "cf1:vnet:<UUID>" network_id.
 	Identity param.Field[VersionBindingsIdentity] `json:"identity"`
 	// Name of the Vectorize index to bind to.
 	IndexName param.Field[string] `json:"index_name"`
@@ -4656,8 +4760,9 @@ type VersionBindingParam struct {
 	Namespace param.Field[string] `json:"namespace"`
 	// Namespace identifier tag.
 	NamespaceID param.Field[string] `json:"namespace_id"`
-	// Identifier of the network to bind to. Only "cf1:network" is currently supported.
-	// Mutually exclusive with tunnel_id.
+	// Identifier of the network to bind to. Use "cf1:network" to select the account's
+	// default virtual network at runtime, or "cf1:vnet:<UUID>" to select an explicit
+	// virtual network in the Worker's account. Mutually exclusive with tunnel_id.
 	NetworkID param.Field[string] `json:"network_id"`
 	// The old name of the inherited binding. If set, the binding will be renamed from
 	// `old_name` to `name` in the new version. If not set, the binding will keep the
@@ -4690,9 +4795,13 @@ type VersionBindingParam struct {
 	// UUID of the Cloudflare Tunnel to bind to. Mutually exclusive with network_id.
 	TunnelID param.Field[string]      `json:"tunnel_id"`
 	Usages   param.Field[interface{}] `json:"usages"`
-	// Identifier for the version to inherit the binding from, which can be the version
-	// ID or the literal "latest" to inherit from the latest version. Defaults to
-	// inheriting the binding from the latest version.
+	// Identifier for the version to inherit the binding from. This can be a version
+	// ID, or the literal "latest" to inherit from the most recently uploaded version,
+	// which may not be the deployed version. Defaults to "latest". Only the Workers
+	// API version endpoints under
+	// `/accounts/{account_id}/workers/workers/{worker_id}/versions` accept a version
+	// ID. Other endpoints, including script upload and script version upload, accept
+	// only "latest" and reject a version ID with error 10057.
 	VersionID param.Field[string] `json:"version_id"`
 	// Name of the Workflow to bind to.
 	WorkflowName param.Field[string] `json:"workflow_name"`
@@ -4744,6 +4853,7 @@ func (r VersionBindingParam) implementsVersionBindingsUnionParam() {}
 // [workers.VersionBindingsWorkersBindingKindWasmModuleParam],
 // [workers.VersionBindingsWorkersBindingKindVPCServiceParam],
 // [workers.VersionBindingsWorkersBindingKindVPCNetworkParam],
+// [workers.VersionBindingsWorkersBindingKindWorkerLoaderParam],
 // [VersionBindingParam].
 type VersionBindingsUnionParam interface {
 	implementsVersionBindingsUnionParam()
@@ -4979,9 +5089,13 @@ type VersionBindingsWorkersBindingKindInheritParam struct {
 	// `old_name` to `name` in the new version. If not set, the binding will keep the
 	// same name between versions.
 	OldName param.Field[string] `json:"old_name"`
-	// Identifier for the version to inherit the binding from, which can be the version
-	// ID or the literal "latest" to inherit from the latest version. Defaults to
-	// inheriting the binding from the latest version.
+	// Identifier for the version to inherit the binding from. This can be a version
+	// ID, or the literal "latest" to inherit from the most recently uploaded version,
+	// which may not be the deployed version. Defaults to "latest". Only the Workers
+	// API version endpoints under
+	// `/accounts/{account_id}/workers/workers/{worker_id}/versions` accept a version
+	// ID. Other endpoints, including script upload and script version upload, accept
+	// only "latest" and reject a version ID with error 10057.
 	VersionID param.Field[string] `json:"version_id"`
 }
 
@@ -5397,10 +5511,12 @@ type VersionBindingsWorkersBindingKindVPCNetworkParam struct {
 	// The kind of resource that the binding provides.
 	Type param.Field[VersionBindingsWorkersBindingKindVPCNetworkType] `json:"type" api:"required"`
 	// Enables Gateway identity for the binding. Requires network_id to be
-	// "cf1:network" and cannot be combined with tunnel_id.
+	// "cf1:network" and cannot be combined with tunnel_id or an explicit
+	// "cf1:vnet:<UUID>" network_id.
 	Identity param.Field[VersionBindingsWorkersBindingKindVPCNetworkIdentity] `json:"identity"`
-	// Identifier of the network to bind to. Only "cf1:network" is currently supported.
-	// Mutually exclusive with tunnel_id.
+	// Identifier of the network to bind to. Use "cf1:network" to select the account's
+	// default virtual network at runtime, or "cf1:vnet:<UUID>" to select an explicit
+	// virtual network in the Worker's account. Mutually exclusive with tunnel_id.
 	NetworkID param.Field[string] `json:"network_id"`
 	// UUID of the Cloudflare Tunnel to bind to. Mutually exclusive with network_id.
 	TunnelID param.Field[string] `json:"tunnel_id"`
@@ -5411,6 +5527,19 @@ func (r VersionBindingsWorkersBindingKindVPCNetworkParam) MarshalJSON() (data []
 }
 
 func (r VersionBindingsWorkersBindingKindVPCNetworkParam) implementsVersionBindingsUnionParam() {}
+
+type VersionBindingsWorkersBindingKindWorkerLoaderParam struct {
+	// A JavaScript variable name for the binding.
+	Name param.Field[string] `json:"name" api:"required"`
+	// The kind of resource that the binding provides.
+	Type param.Field[VersionBindingsWorkersBindingKindWorkerLoaderType] `json:"type" api:"required"`
+}
+
+func (r VersionBindingsWorkersBindingKindWorkerLoaderParam) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r VersionBindingsWorkersBindingKindWorkerLoaderParam) implementsVersionBindingsUnionParam() {}
 
 // Global CacheW configuration for the Worker. When caching is on, the platform
 // provisions a `cloudflare.app` zone for the Worker. A `type: worker` entry in the
@@ -6274,9 +6403,9 @@ type BetaWorkerVersionDeleteParams struct {
 type BetaWorkerVersionGetParams struct {
 	// Identifier.
 	AccountID param.Field[string] `path:"account_id" api:"required"`
-	// Whether to include the `modules` property of the version in the response, which
-	// contains code and sourcemap content and may add several megabytes to the
-	// response size.
+	// Optional properties to include in the response. `modules` includes the `modules`
+	// property, which contains code and may add several megabytes to the response
+	// size. `modules,sourcemaps` also includes the version's source maps in `modules`.
 	Include param.Field[BetaWorkerVersionGetParamsInclude] `query:"include"`
 }
 
@@ -6289,18 +6418,19 @@ func (r BetaWorkerVersionGetParams) URLQuery() (v url.Values) {
 	})
 }
 
-// Whether to include the `modules` property of the version in the response, which
-// contains code and sourcemap content and may add several megabytes to the
-// response size.
+// Optional properties to include in the response. `modules` includes the `modules`
+// property, which contains code and may add several megabytes to the response
+// size. `modules,sourcemaps` also includes the version's source maps in `modules`.
 type BetaWorkerVersionGetParamsInclude string
 
 const (
-	BetaWorkerVersionGetParamsIncludeModules BetaWorkerVersionGetParamsInclude = "modules"
+	BetaWorkerVersionGetParamsIncludeModules           BetaWorkerVersionGetParamsInclude = "modules"
+	BetaWorkerVersionGetParamsIncludeModulesSourcemaps BetaWorkerVersionGetParamsInclude = "modules,sourcemaps"
 )
 
 func (r BetaWorkerVersionGetParamsInclude) IsKnown() bool {
 	switch r {
-	case BetaWorkerVersionGetParamsIncludeModules:
+	case BetaWorkerVersionGetParamsIncludeModules, BetaWorkerVersionGetParamsIncludeModulesSourcemaps:
 		return true
 	}
 	return false
@@ -6440,6 +6570,40 @@ const (
 func (r BetaWorkerVersionGetResponseEnvelopeSuccess) IsKnown() bool {
 	switch r {
 	case BetaWorkerVersionGetResponseEnvelopeSuccessTrue:
+		return true
+	}
+	return false
+}
+
+type BetaWorkerVersionProfileParams struct {
+	// Identifier.
+	AccountID param.Field[string] `path:"account_id" api:"required"`
+	// Profile duration in milliseconds.
+	DurationMs param.Field[int64] `json:"duration_ms" api:"required"`
+	// Identifies the exact Durable Object actor to profile. Must be specified together
+	// with namespace_id. The actor must currently be active and running the requested
+	// version.
+	ActorID param.Field[string] `json:"actor_id"`
+	// Identifies the Durable Object namespace containing the actor to profile. Must be
+	// specified together with actor_id.
+	NamespaceID param.Field[string]                                    `json:"namespace_id"`
+	ProfileType param.Field[BetaWorkerVersionProfileParamsProfileType] `json:"profile_type"`
+}
+
+func (r BetaWorkerVersionProfileParams) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+type BetaWorkerVersionProfileParamsProfileType string
+
+const (
+	BetaWorkerVersionProfileParamsProfileTypeCPU  BetaWorkerVersionProfileParamsProfileType = "cpu"
+	BetaWorkerVersionProfileParamsProfileTypeHeap BetaWorkerVersionProfileParamsProfileType = "heap"
+)
+
+func (r BetaWorkerVersionProfileParamsProfileType) IsKnown() bool {
+	switch r {
+	case BetaWorkerVersionProfileParamsProfileTypeCPU, BetaWorkerVersionProfileParamsProfileTypeHeap:
 		return true
 	}
 	return false

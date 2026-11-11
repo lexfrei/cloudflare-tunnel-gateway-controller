@@ -205,9 +205,9 @@ func (r *MeetingService) GetMeetingParticipants(ctx context.Context, appID strin
 
 // Regenerates participant's authentication token for the given meeting and
 // participant ID.
-func (r *MeetingService) RefreshParticipantToken(ctx context.Context, appID string, meetingID string, participantID string, body MeetingRefreshParticipantTokenParams, opts ...option.RequestOption) (res *MeetingRefreshParticipantTokenResponse, err error) {
+func (r *MeetingService) RefreshParticipantToken(ctx context.Context, appID string, meetingID string, participantID string, params MeetingRefreshParticipantTokenParams, opts ...option.RequestOption) (res *MeetingRefreshParticipantTokenResponse, err error) {
 	opts = slices.Concat(r.Options, opts)
-	if body.AccountID.Value == "" {
+	if params.AccountID.Value == "" {
 		err = errors.New("missing required account_id parameter")
 		return nil, err
 	}
@@ -223,8 +223,8 @@ func (r *MeetingService) RefreshParticipantToken(ctx context.Context, appID stri
 		err = errors.New("missing required participant_id parameter")
 		return nil, err
 	}
-	path := fmt.Sprintf("accounts/%s/realtime/kit/%s/meetings/%s/participants/%s/token", body.AccountID, appID, meetingID, participantID)
-	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, nil, &res, opts...)
+	path := fmt.Sprintf("accounts/%s/realtime/kit/%s/meetings/%s/participants/%s/token", params.AccountID, appID, meetingID, participantID)
+	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPost, path, params, &res, opts...)
 	return res, err
 }
 
@@ -245,6 +245,55 @@ func (r *MeetingService) ReplaceMeetingByID(ctx context.Context, appID string, m
 	}
 	path := fmt.Sprintf("accounts/%s/realtime/kit/%s/meetings/%s", params.AccountID, appID, meetingID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPut, path, params, &res, opts...)
+	return res, err
+}
+
+// Replaces a participant's details for the given meeting and participant ID.
+func (r *MeetingService) ReplaceParticipant(ctx context.Context, appID string, meetingID string, participantID string, params MeetingReplaceParticipantParams, opts ...option.RequestOption) (res *MeetingReplaceParticipantResponse, err error) {
+	opts = slices.Concat(r.Options, opts)
+	if params.AccountID.Value == "" {
+		err = errors.New("missing required account_id parameter")
+		return nil, err
+	}
+	if appID == "" {
+		err = errors.New("missing required app_id parameter")
+		return nil, err
+	}
+	if meetingID == "" {
+		err = errors.New("missing required meeting_id parameter")
+		return nil, err
+	}
+	if participantID == "" {
+		err = errors.New("missing required participant_id parameter")
+		return nil, err
+	}
+	path := fmt.Sprintf("accounts/%s/realtime/kit/%s/meetings/%s/participants/%s", params.AccountID, appID, meetingID, participantID)
+	err = requestconfig.ExecuteNewRequest(ctx, http.MethodPut, path, params, &res, opts...)
+	return res, err
+}
+
+// Revokes a previously issued participant authentication token without deleting
+// the participant. Other tokens issued to the participant remain valid.
+func (r *MeetingService) RevokeParticipantToken(ctx context.Context, appID string, meetingID string, participantID string, body MeetingRevokeParticipantTokenParams, opts ...option.RequestOption) (res *MeetingRevokeParticipantTokenResponse, err error) {
+	opts = slices.Concat(r.Options, opts)
+	if body.AccountID.Value == "" {
+		err = errors.New("missing required account_id parameter")
+		return nil, err
+	}
+	if appID == "" {
+		err = errors.New("missing required app_id parameter")
+		return nil, err
+	}
+	if meetingID == "" {
+		err = errors.New("missing required meeting_id parameter")
+		return nil, err
+	}
+	if participantID == "" {
+		err = errors.New("missing required participant_id parameter")
+		return nil, err
+	}
+	path := fmt.Sprintf("accounts/%s/realtime/kit/%s/meetings/%s/participants/%s/token", body.AccountID, appID, meetingID, participantID)
+	err = requestconfig.ExecuteNewRequest(ctx, http.MethodDelete, path, nil, &res, opts...)
 	return res, err
 }
 
@@ -458,7 +507,8 @@ func (r MeetingNewResponseDataAIConfigSummarizationTextFormat) IsKnown() bool {
 type MeetingNewResponseDataAIConfigTranscription struct {
 	// Adds specific terms to improve accurate detection during transcription.
 	Keywords []string `json:"keywords"`
-	// Specifies the language code for transcription to ensure accurate results.
+	// Specifies the language code for transcription to ensure accurate results. If
+	// omitted, the language is auto-detected for post-meeting (Whisper) transcription.
 	Language MeetingNewResponseDataAIConfigTranscriptionLanguage `json:"language"`
 	// Control the inclusion of offensive language in transcriptions.
 	ProfanityFilter bool                                            `json:"profanity_filter"`
@@ -483,7 +533,8 @@ func (r meetingNewResponseDataAIConfigTranscriptionJSON) RawJSON() string {
 	return r.raw
 }
 
-// Specifies the language code for transcription to ensure accurate results.
+// Specifies the language code for transcription to ensure accurate results. If
+// omitted, the language is auto-detected for post-meeting (Whisper) transcription.
 type MeetingNewResponseDataAIConfigTranscriptionLanguage string
 
 const (
@@ -1047,8 +1098,13 @@ type MeetingAddParticipantResponseData struct {
 	PresetName string `json:"preset_name" api:"required"`
 	// When this object was updated. The time is returned in ISO format.
 	UpdatedAt time.Time `json:"updated_at" api:"required" format:"date-time"`
+	// Time at which the token stops being valid, in UTC. Returned when adding a
+	// participant.
+	ExpiresOn time.Time `json:"expires_on" format:"date-time"`
 	// Name of the participant.
 	Name string `json:"name" api:"nullable"`
+	// Time from which the token is valid, in UTC. Returned when adding a participant.
+	NotBefore time.Time `json:"not_before" format:"date-time"`
 	// URL to a picture of the participant.
 	Picture string                                `json:"picture" api:"nullable" format:"uri"`
 	JSON    meetingAddParticipantResponseDataJSON `json:"-"`
@@ -1063,7 +1119,9 @@ type meetingAddParticipantResponseDataJSON struct {
 	CustomParticipantID apijson.Field
 	PresetName          apijson.Field
 	UpdatedAt           apijson.Field
+	ExpiresOn           apijson.Field
 	Name                apijson.Field
+	NotBefore           apijson.Field
 	Picture             apijson.Field
 	raw                 string
 	ExtraFields         map[string]apijson.Field
@@ -1174,8 +1232,13 @@ type MeetingEditParticipantResponseData struct {
 	PresetName string `json:"preset_name" api:"required"`
 	// When this object was updated. The time is returned in ISO format.
 	UpdatedAt time.Time `json:"updated_at" api:"required" format:"date-time"`
+	// Time at which the token stops being valid, in UTC. Returned when adding a
+	// participant.
+	ExpiresOn time.Time `json:"expires_on" format:"date-time"`
 	// Name of the participant.
 	Name string `json:"name" api:"nullable"`
+	// Time from which the token is valid, in UTC. Returned when adding a participant.
+	NotBefore time.Time `json:"not_before" format:"date-time"`
 	// URL to a picture of the participant.
 	Picture string                                 `json:"picture" api:"nullable" format:"uri"`
 	JSON    meetingEditParticipantResponseDataJSON `json:"-"`
@@ -1190,7 +1253,9 @@ type meetingEditParticipantResponseDataJSON struct {
 	CustomParticipantID apijson.Field
 	PresetName          apijson.Field
 	UpdatedAt           apijson.Field
+	ExpiresOn           apijson.Field
 	Name                apijson.Field
+	NotBefore           apijson.Field
 	Picture             apijson.Field
 	raw                 string
 	ExtraFields         map[string]apijson.Field
@@ -2005,7 +2070,8 @@ func (r MeetingGetMeetingByIDResponseDataAIConfigSummarizationTextFormat) IsKnow
 type MeetingGetMeetingByIDResponseDataAIConfigTranscription struct {
 	// Adds specific terms to improve accurate detection during transcription.
 	Keywords []string `json:"keywords"`
-	// Specifies the language code for transcription to ensure accurate results.
+	// Specifies the language code for transcription to ensure accurate results. If
+	// omitted, the language is auto-detected for post-meeting (Whisper) transcription.
 	Language MeetingGetMeetingByIDResponseDataAIConfigTranscriptionLanguage `json:"language"`
 	// Control the inclusion of offensive language in transcriptions.
 	ProfanityFilter bool                                                       `json:"profanity_filter"`
@@ -2030,7 +2096,8 @@ func (r meetingGetMeetingByIDResponseDataAIConfigTranscriptionJSON) RawJSON() st
 	return r.raw
 }
 
-// Specifies the language code for transcription to ensure accurate results.
+// Specifies the language code for transcription to ensure accurate results. If
+// omitted, the language is auto-detected for post-meeting (Whisper) transcription.
 type MeetingGetMeetingByIDResponseDataAIConfigTranscriptionLanguage string
 
 const (
@@ -2744,14 +2811,20 @@ func (r meetingRefreshParticipantTokenResponseJSON) RawJSON() string {
 // Data returned by the operation
 type MeetingRefreshParticipantTokenResponseData struct {
 	// Regenerated participant's authentication token.
-	Token string                                         `json:"token" api:"required"`
-	JSON  meetingRefreshParticipantTokenResponseDataJSON `json:"-"`
+	Token string `json:"token" api:"required"`
+	// Time at which the token stops being valid, in UTC.
+	ExpiresOn time.Time `json:"expires_on" api:"required" format:"date-time"`
+	// Time from which the token is valid, in UTC.
+	NotBefore time.Time                                      `json:"not_before" api:"required" format:"date-time"`
+	JSON      meetingRefreshParticipantTokenResponseDataJSON `json:"-"`
 }
 
 // meetingRefreshParticipantTokenResponseDataJSON contains the JSON metadata for
 // the struct [MeetingRefreshParticipantTokenResponseData]
 type meetingRefreshParticipantTokenResponseDataJSON struct {
 	Token       apijson.Field
+	ExpiresOn   apijson.Field
+	NotBefore   apijson.Field
 	raw         string
 	ExtraFields map[string]apijson.Field
 }
@@ -2955,7 +3028,8 @@ func (r MeetingReplaceMeetingByIDResponseDataAIConfigSummarizationTextFormat) Is
 type MeetingReplaceMeetingByIDResponseDataAIConfigTranscription struct {
 	// Adds specific terms to improve accurate detection during transcription.
 	Keywords []string `json:"keywords"`
-	// Specifies the language code for transcription to ensure accurate results.
+	// Specifies the language code for transcription to ensure accurate results. If
+	// omitted, the language is auto-detected for post-meeting (Whisper) transcription.
 	Language MeetingReplaceMeetingByIDResponseDataAIConfigTranscriptionLanguage `json:"language"`
 	// Control the inclusion of offensive language in transcriptions.
 	ProfanityFilter bool                                                           `json:"profanity_filter"`
@@ -2981,7 +3055,8 @@ func (r meetingReplaceMeetingByIDResponseDataAIConfigTranscriptionJSON) RawJSON(
 	return r.raw
 }
 
-// Specifies the language code for transcription to ensure accurate results.
+// Specifies the language code for transcription to ensure accurate results. If
+// omitted, the language is auto-detected for post-meeting (Whisper) transcription.
 type MeetingReplaceMeetingByIDResponseDataAIConfigTranscriptionLanguage string
 
 const (
@@ -3510,6 +3585,131 @@ func (r MeetingReplaceMeetingByIDResponseDataStatus) IsKnown() bool {
 	return false
 }
 
+type MeetingReplaceParticipantResponse struct {
+	// Success status of the operation
+	Success bool `json:"success" api:"required"`
+	// Represents a participant.
+	Data MeetingReplaceParticipantResponseData `json:"data"`
+	JSON meetingReplaceParticipantResponseJSON `json:"-"`
+}
+
+// meetingReplaceParticipantResponseJSON contains the JSON metadata for the struct
+// [MeetingReplaceParticipantResponse]
+type meetingReplaceParticipantResponseJSON struct {
+	Success     apijson.Field
+	Data        apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *MeetingReplaceParticipantResponse) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r meetingReplaceParticipantResponseJSON) RawJSON() string {
+	return r.raw
+}
+
+// Represents a participant.
+type MeetingReplaceParticipantResponseData struct {
+	// ID of the participant.
+	ID string `json:"id" api:"required" format:"uuid"`
+	// The participant's auth token that can be used for joining a meeting from the
+	// client side.
+	Token string `json:"token" api:"required"`
+	// When this object was created. The time is returned in ISO format.
+	CreatedAt time.Time `json:"created_at" api:"required" format:"date-time"`
+	// A unique participant ID generated by the client.
+	CustomParticipantID string `json:"custom_participant_id" api:"required"`
+	// Preset applied to the participant.
+	PresetName string `json:"preset_name" api:"required"`
+	// When this object was updated. The time is returned in ISO format.
+	UpdatedAt time.Time `json:"updated_at" api:"required" format:"date-time"`
+	// Time at which the token stops being valid, in UTC. Returned when adding a
+	// participant.
+	ExpiresOn time.Time `json:"expires_on" format:"date-time"`
+	// Name of the participant.
+	Name string `json:"name" api:"nullable"`
+	// Time from which the token is valid, in UTC. Returned when adding a participant.
+	NotBefore time.Time `json:"not_before" format:"date-time"`
+	// URL to a picture of the participant.
+	Picture string                                    `json:"picture" api:"nullable" format:"uri"`
+	JSON    meetingReplaceParticipantResponseDataJSON `json:"-"`
+}
+
+// meetingReplaceParticipantResponseDataJSON contains the JSON metadata for the
+// struct [MeetingReplaceParticipantResponseData]
+type meetingReplaceParticipantResponseDataJSON struct {
+	ID                  apijson.Field
+	Token               apijson.Field
+	CreatedAt           apijson.Field
+	CustomParticipantID apijson.Field
+	PresetName          apijson.Field
+	UpdatedAt           apijson.Field
+	ExpiresOn           apijson.Field
+	Name                apijson.Field
+	NotBefore           apijson.Field
+	Picture             apijson.Field
+	raw                 string
+	ExtraFields         map[string]apijson.Field
+}
+
+func (r *MeetingReplaceParticipantResponseData) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r meetingReplaceParticipantResponseDataJSON) RawJSON() string {
+	return r.raw
+}
+
+type MeetingRevokeParticipantTokenResponse struct {
+	// Data returned by the operation
+	Data MeetingRevokeParticipantTokenResponseData `json:"data" api:"required"`
+	// Success status of the operation
+	Success bool                                      `json:"success" api:"required"`
+	JSON    meetingRevokeParticipantTokenResponseJSON `json:"-"`
+}
+
+// meetingRevokeParticipantTokenResponseJSON contains the JSON metadata for the
+// struct [MeetingRevokeParticipantTokenResponse]
+type meetingRevokeParticipantTokenResponseJSON struct {
+	Data        apijson.Field
+	Success     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *MeetingRevokeParticipantTokenResponse) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r meetingRevokeParticipantTokenResponseJSON) RawJSON() string {
+	return r.raw
+}
+
+// Data returned by the operation
+type MeetingRevokeParticipantTokenResponseData struct {
+	// The revoked participant authentication token.
+	Token string                                        `json:"token" api:"required"`
+	JSON  meetingRevokeParticipantTokenResponseDataJSON `json:"-"`
+}
+
+// meetingRevokeParticipantTokenResponseDataJSON contains the JSON metadata for the
+// struct [MeetingRevokeParticipantTokenResponseData]
+type meetingRevokeParticipantTokenResponseDataJSON struct {
+	Token       apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *MeetingRevokeParticipantTokenResponseData) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r meetingRevokeParticipantTokenResponseDataJSON) RawJSON() string {
+	return r.raw
+}
+
 type MeetingUpdateMeetingByIDResponse struct {
 	// Success status of the operation
 	Success bool `json:"success" api:"required"`
@@ -3701,7 +3901,8 @@ func (r MeetingUpdateMeetingByIDResponseDataAIConfigSummarizationTextFormat) IsK
 type MeetingUpdateMeetingByIDResponseDataAIConfigTranscription struct {
 	// Adds specific terms to improve accurate detection during transcription.
 	Keywords []string `json:"keywords"`
-	// Specifies the language code for transcription to ensure accurate results.
+	// Specifies the language code for transcription to ensure accurate results. If
+	// omitted, the language is auto-detected for post-meeting (Whisper) transcription.
 	Language MeetingUpdateMeetingByIDResponseDataAIConfigTranscriptionLanguage `json:"language"`
 	// Control the inclusion of offensive language in transcriptions.
 	ProfanityFilter bool                                                          `json:"profanity_filter"`
@@ -3727,7 +3928,8 @@ func (r meetingUpdateMeetingByIDResponseDataAIConfigTranscriptionJSON) RawJSON()
 	return r.raw
 }
 
-// Specifies the language code for transcription to ensure accurate results.
+// Specifies the language code for transcription to ensure accurate results. If
+// omitted, the language is auto-detected for post-meeting (Whisper) transcription.
 type MeetingUpdateMeetingByIDResponseDataAIConfigTranscriptionLanguage string
 
 const (
@@ -4360,7 +4562,8 @@ func (r MeetingNewParamsAIConfigSummarizationTextFormat) IsKnown() bool {
 type MeetingNewParamsAIConfigTranscription struct {
 	// Adds specific terms to improve accurate detection during transcription.
 	Keywords param.Field[[]string] `json:"keywords"`
-	// Specifies the language code for transcription to ensure accurate results.
+	// Specifies the language code for transcription to ensure accurate results. If
+	// omitted, the language is auto-detected for post-meeting (Whisper) transcription.
 	Language param.Field[MeetingNewParamsAIConfigTranscriptionLanguage] `json:"language"`
 	// Control the inclusion of offensive language in transcriptions.
 	ProfanityFilter param.Field[bool] `json:"profanity_filter"`
@@ -4370,7 +4573,8 @@ func (r MeetingNewParamsAIConfigTranscription) MarshalJSON() (data []byte, err e
 	return apijson.MarshalRoot(r)
 }
 
-// Specifies the language code for transcription to ensure accurate results.
+// Specifies the language code for transcription to ensure accurate results. If
+// omitted, the language is auto-detected for post-meeting (Whisper) transcription.
 type MeetingNewParamsAIConfigTranscriptionLanguage string
 
 const (
@@ -4719,6 +4923,10 @@ type MeetingAddParticipantParams struct {
 	CustomParticipantID param.Field[string] `json:"custom_participant_id" api:"required"`
 	// Name of the preset to apply to this participant.
 	PresetName param.Field[string] `json:"preset_name" api:"required"`
+	// Validity window of the participant authentication token. The window is
+	// [not_before, expires_on) and cannot be longer than 100 days. Defaults to a token
+	// valid from now for 100 days.
+	Token param.Field[MeetingAddParticipantParamsToken] `json:"token"`
 	// (Optional) Name of the participant.
 	Name param.Field[string] `json:"name"`
 	// (Optional) A URL to a picture to be used for the participant.
@@ -4726,6 +4934,22 @@ type MeetingAddParticipantParams struct {
 }
 
 func (r MeetingAddParticipantParams) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+// Validity window of the participant authentication token. The window is
+// [not_before, expires_on) and cannot be longer than 100 days. Defaults to a token
+// valid from now for 100 days.
+type MeetingAddParticipantParamsToken struct {
+	// RFC 3339 timestamp with a timezone at or after which the token cannot be used.
+	// Must be in the future. Defaults to not_before plus 100 days.
+	ExpiresOn param.Field[time.Time] `json:"expires_on" format:"date-time"`
+	// RFC 3339 timestamp with a timezone before which the token cannot be used.
+	// Defaults to the current time. May be in the past.
+	NotBefore param.Field[time.Time] `json:"not_before" format:"date-time"`
+}
+
+func (r MeetingAddParticipantParamsToken) MarshalJSON() (data []byte, err error) {
 	return apijson.MarshalRoot(r)
 }
 
@@ -4833,6 +5057,16 @@ func (r MeetingGetMeetingParticipantsParams) URLQuery() (v url.Values) {
 type MeetingRefreshParticipantTokenParams struct {
 	// The account identifier tag.
 	AccountID param.Field[string] `path:"account_id" api:"required"`
+	// RFC 3339 timestamp with a timezone at or after which the token cannot be used.
+	// Must be in the future. Defaults to not_before plus 100 days.
+	ExpiresOn param.Field[time.Time] `json:"expires_on" format:"date-time"`
+	// RFC 3339 timestamp with a timezone before which the token cannot be used.
+	// Defaults to the current time. May be in the past.
+	NotBefore param.Field[time.Time] `json:"not_before" format:"date-time"`
+}
+
+func (r MeetingRefreshParticipantTokenParams) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
 }
 
 type MeetingReplaceMeetingByIDParams struct {
@@ -4939,7 +5173,8 @@ func (r MeetingReplaceMeetingByIDParamsAIConfigSummarizationTextFormat) IsKnown(
 type MeetingReplaceMeetingByIDParamsAIConfigTranscription struct {
 	// Adds specific terms to improve accurate detection during transcription.
 	Keywords param.Field[[]string] `json:"keywords"`
-	// Specifies the language code for transcription to ensure accurate results.
+	// Specifies the language code for transcription to ensure accurate results. If
+	// omitted, the language is auto-detected for post-meeting (Whisper) transcription.
 	Language param.Field[MeetingReplaceMeetingByIDParamsAIConfigTranscriptionLanguage] `json:"language"`
 	// Control the inclusion of offensive language in transcriptions.
 	ProfanityFilter param.Field[bool] `json:"profanity_filter"`
@@ -4949,7 +5184,8 @@ func (r MeetingReplaceMeetingByIDParamsAIConfigTranscription) MarshalJSON() (dat
 	return apijson.MarshalRoot(r)
 }
 
-// Specifies the language code for transcription to ensure accurate results.
+// Specifies the language code for transcription to ensure accurate results. If
+// omitted, the language is auto-detected for post-meeting (Whisper) transcription.
 type MeetingReplaceMeetingByIDParamsAIConfigTranscriptionLanguage string
 
 const (
@@ -5291,6 +5527,28 @@ func (r MeetingReplaceMeetingByIDParamsRecordingConfigVideoConfigWatermarkSize) 
 	return apijson.MarshalRoot(r)
 }
 
+type MeetingReplaceParticipantParams struct {
+	// The account identifier tag.
+	AccountID param.Field[string] `path:"account_id" api:"required"`
+	// Unique participant ID accepted by the replace participant API.
+	CustomParticipantID param.Field[string] `json:"custom_participant_id" api:"required"`
+	// Name of the preset to apply to this participant.
+	PresetName param.Field[string] `json:"preset_name" api:"required"`
+	// (Optional) Name of the participant.
+	Name param.Field[string] `json:"name"`
+	// (Optional) A URL to a picture to be used for the participant.
+	Picture param.Field[string] `json:"picture" format:"uri"`
+}
+
+func (r MeetingReplaceParticipantParams) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+type MeetingRevokeParticipantTokenParams struct {
+	// The account identifier tag.
+	AccountID param.Field[string] `path:"account_id" api:"required"`
+}
+
 type MeetingUpdateMeetingByIDParams struct {
 	// The account identifier tag.
 	AccountID param.Field[string] `path:"account_id" api:"required"`
@@ -5398,7 +5656,8 @@ func (r MeetingUpdateMeetingByIDParamsAIConfigSummarizationTextFormat) IsKnown()
 type MeetingUpdateMeetingByIDParamsAIConfigTranscription struct {
 	// Adds specific terms to improve accurate detection during transcription.
 	Keywords param.Field[[]string] `json:"keywords"`
-	// Specifies the language code for transcription to ensure accurate results.
+	// Specifies the language code for transcription to ensure accurate results. If
+	// omitted, the language is auto-detected for post-meeting (Whisper) transcription.
 	Language param.Field[MeetingUpdateMeetingByIDParamsAIConfigTranscriptionLanguage] `json:"language"`
 	// Control the inclusion of offensive language in transcriptions.
 	ProfanityFilter param.Field[bool] `json:"profanity_filter"`
@@ -5408,7 +5667,8 @@ func (r MeetingUpdateMeetingByIDParamsAIConfigTranscription) MarshalJSON() (data
 	return apijson.MarshalRoot(r)
 }
 
-// Specifies the language code for transcription to ensure accurate results.
+// Specifies the language code for transcription to ensure accurate results. If
+// omitted, the language is auto-detected for post-meeting (Whisper) transcription.
 type MeetingUpdateMeetingByIDParamsAIConfigTranscriptionLanguage string
 
 const (
