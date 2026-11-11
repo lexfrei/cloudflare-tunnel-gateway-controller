@@ -109,6 +109,27 @@ func (r *LivestreamService) GetLivestreamAnalyticsDaywise(ctx context.Context, a
 	return res, err
 }
 
+// Returns livestream session details for the given meeting ID. Retreive the
+// meeting ID using the `Create a meeting` API.
+func (r *LivestreamService) GetLivestreamSessionDetailsForMeeting(ctx context.Context, appID string, meetingID string, params LivestreamGetLivestreamSessionDetailsForMeetingParams, opts ...option.RequestOption) (res *LivestreamGetLivestreamSessionDetailsForMeetingResponse, err error) {
+	opts = slices.Concat(r.Options, opts)
+	if params.AccountID.Value == "" {
+		err = errors.New("missing required account_id parameter")
+		return nil, err
+	}
+	if appID == "" {
+		err = errors.New("missing required app_id parameter")
+		return nil, err
+	}
+	if meetingID == "" {
+		err = errors.New("missing required meeting_id parameter")
+		return nil, err
+	}
+	path := fmt.Sprintf("accounts/%s/realtime/kit/%s/meetings/%s/livestream", params.AccountID, appID, meetingID)
+	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, params, &res, opts...)
+	return res, err
+}
+
 // Returns livestream session details for the given livestream session ID. Retrieve
 // the `livestream_session_id`using the
 // `Fetch livestream session details using a session ID` API.
@@ -148,6 +169,27 @@ func (r *LivestreamService) GetLivestreamSessionForLivestreamID(ctx context.Cont
 		return nil, err
 	}
 	path := fmt.Sprintf("accounts/%s/realtime/kit/%s/livestreams/%s", params.AccountID, appID, livestreamID)
+	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, params, &res, opts...)
+	return res, err
+}
+
+// Returns livestream session details for the given session ID. Retreive the
+// session ID using the `Fetch all sessions of an App` API.
+func (r *LivestreamService) GetLivestreamSessionsForSession(ctx context.Context, appID string, sessionID string, params LivestreamGetLivestreamSessionsForSessionParams, opts ...option.RequestOption) (res *LivestreamGetLivestreamSessionsForSessionResponse, err error) {
+	opts = slices.Concat(r.Options, opts)
+	if params.AccountID.Value == "" {
+		err = errors.New("missing required account_id parameter")
+		return nil, err
+	}
+	if appID == "" {
+		err = errors.New("missing required app_id parameter")
+		return nil, err
+	}
+	if sessionID == "" {
+		err = errors.New("missing required session_id parameter")
+		return nil, err
+	}
+	path := fmt.Sprintf("accounts/%s/realtime/kit/%s/sessions/%s/livestream-sessions", params.AccountID, appID, sessionID)
 	err = requestconfig.ExecuteNewRequest(ctx, http.MethodGet, path, params, &res, opts...)
 	return res, err
 }
@@ -233,8 +275,8 @@ func (r *LivestreamService) StopLivestreamingAMeeting(ctx context.Context, appID
 }
 
 type LivestreamGetActiveLivestreamsForLivestreamIDResponse struct {
-	Data    LivestreamGetActiveLivestreamsForLivestreamIDResponseData `json:"data"`
-	Success bool                                                      `json:"success"`
+	Data    LivestreamGetActiveLivestreamsForLivestreamIDResponseData `json:"data" api:"required"`
+	Success bool                                                      `json:"success" api:"required"`
 	JSON    livestreamGetActiveLivestreamsForLivestreamIDResponseJSON `json:"-"`
 }
 
@@ -256,8 +298,8 @@ func (r livestreamGetActiveLivestreamsForLivestreamIDResponseJSON) RawJSON() str
 }
 
 type LivestreamGetActiveLivestreamsForLivestreamIDResponseData struct {
-	Livestream LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestream `json:"livestream"`
-	Session    LivestreamGetActiveLivestreamsForLivestreamIDResponseDataSession    `json:"session"`
+	Livestream LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestream `json:"livestream" api:"required"`
+	Session    LivestreamGetActiveLivestreamsForLivestreamIDResponseDataSession    `json:"session" api:"required"`
 	JSON       livestreamGetActiveLivestreamsForLivestreamIDResponseDataJSON       `json:"-"`
 }
 
@@ -280,24 +322,30 @@ func (r livestreamGetActiveLivestreamsForLivestreamIDResponseDataJSON) RawJSON()
 }
 
 type LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestream struct {
-	ID string `json:"id"`
-	// Timestamp the object was created at. The time is returned in ISO format.
-	CreatedAt time.Time `json:"created_at" format:"date-time"`
-	// Specifies if the livestream was disabled.
-	Disabled string `json:"disabled"`
+	// ID of the livestream.
+	ID string `json:"id" api:"required" format:"uuid"`
+	// Timestamp the livestream was created at, in ISO format.
+	CreatedAt time.Time `json:"created_at" api:"required" format:"date-time"`
+	// Specifies if the livestream is disabled.
+	Disabled bool `json:"disabled" api:"required"`
+	// ID of the underlying Cloudflare Stream live input.
+	ExternalID string `json:"external_id" api:"required"`
 	// The server URL to which the RTMP encoder sends the video and audio data.
-	IngestServer string `json:"ingest_server"`
-	// ID of the meeting.
-	MeetingID string `json:"meeting_id"`
+	IngestServer string `json:"ingest_server" api:"required"`
+	// Specifies if the livestream is ingested manually by an RTMP encoder.
+	ManualIngest bool `json:"manual_ingest" api:"required"`
+	// ID of the meeting being livestreamed, if any.
+	MeetingID string `json:"meeting_id" api:"required,nullable"`
 	// Name of the livestream.
-	Name string `json:"name"`
+	Name string `json:"name" api:"required,nullable"`
 	// The web address that viewers can use to watch the livestream.
-	PlaybackURL string                                                                    `json:"playback_url"`
-	Status      LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatus `json:"status"`
-	// Unique key for accessing each livestream.
-	StreamKey string `json:"stream_key"`
-	// Timestamp the object was updated at. The time is returned in ISO format.
-	UpdatedAt time.Time                                                               `json:"updated_at" format:"date-time"`
+	PlaybackURL string `json:"playback_url" api:"required"`
+	// Status of the livestream.
+	Status LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatus `json:"status" api:"required"`
+	// Unique key for accessing each livestream. Empty if the livestream is disabled.
+	StreamKey string `json:"stream_key" api:"required"`
+	// Timestamp the livestream was last updated at, in ISO format.
+	UpdatedAt time.Time                                                               `json:"updated_at" api:"required" format:"date-time"`
 	JSON      livestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamJSON `json:"-"`
 }
 
@@ -308,7 +356,9 @@ type livestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamJSON str
 	ID           apijson.Field
 	CreatedAt    apijson.Field
 	Disabled     apijson.Field
+	ExternalID   apijson.Field
 	IngestServer apijson.Field
+	ManualIngest apijson.Field
 	MeetingID    apijson.Field
 	Name         apijson.Field
 	PlaybackURL  apijson.Field
@@ -327,41 +377,46 @@ func (r livestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamJSON)
 	return r.raw
 }
 
+// Status of the livestream.
 type LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatus string
 
 const (
-	LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatusLive    LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatus = "LIVE"
-	LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatusIdle    LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatus = "IDLE"
-	LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatusErrored LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatus = "ERRORED"
-	LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatusInvoked LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatus = "INVOKED"
+	LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatusLive         LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatus = "LIVE"
+	LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatusIdle         LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatus = "IDLE"
+	LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatusErrored      LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatus = "ERRORED"
+	LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatusInvoked      LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatus = "INVOKED"
+	LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatusMetricsReady LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatus = "METRICS_READY"
 )
 
 func (r LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatus) IsKnown() bool {
 	switch r {
-	case LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatusLive, LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatusIdle, LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatusErrored, LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatusInvoked:
+	case LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatusLive, LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatusIdle, LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatusErrored, LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatusInvoked, LivestreamGetActiveLivestreamsForLivestreamIDResponseDataLivestreamStatusMetricsReady:
 		return true
 	}
 	return false
 }
 
 type LivestreamGetActiveLivestreamsForLivestreamIDResponseDataSession struct {
-	ID string `json:"id"`
-	// Timestamp the object was created at. The time is returned in ISO format.
-	CreatedAt  time.Time `json:"created_at" format:"date-time"`
-	ErrMessage string    `json:"err_message"`
+	// ID of the livestream session.
+	ID string `json:"id" api:"required" format:"uuid"`
+	// Timestamp the livestream session was created at, in ISO format.
+	CreatedAt time.Time `json:"created_at" api:"required" format:"date-time"`
+	// Error message, if the livestream session failed.
+	ErrMessage string `json:"err_message" api:"required,nullable"`
 	// The time duration for which the input was given or the meeting was streamed.
-	IngestSeconds string `json:"ingest_seconds"`
-	// Timestamp the object was invoked. The time is returned in ISO format.
-	InvokedTime  time.Time `json:"invoked_time" format:"date-time"`
-	LivestreamID string    `json:"livestream_id"`
-	// Timestamp the object was started. The time is returned in ISO format.
-	StartedTime time.Time `json:"started_time" format:"date-time"`
-	// Timestamp the object was stopped. The time is returned in ISO format.
-	StoppedTime time.Time `json:"stopped_time" format:"date-time"`
-	// Timestamp the object was updated at. The time is returned in ISO format.
-	UpdatedAt time.Time `json:"updated_at" format:"date-time"`
+	IngestSeconds float64 `json:"ingest_seconds" api:"required"`
+	// Timestamp the livestream session was invoked at, in ISO format.
+	InvokedTime time.Time `json:"invoked_time" api:"required,nullable" format:"date-time"`
+	// ID of the livestream.
+	LivestreamID string `json:"livestream_id" api:"required" format:"uuid"`
+	// Timestamp the livestream session started at, in ISO format.
+	StartedTime time.Time `json:"started_time" api:"required,nullable" format:"date-time"`
+	// Timestamp the livestream session stopped at, in ISO format.
+	StoppedTime time.Time `json:"stopped_time" api:"required,nullable" format:"date-time"`
+	// Timestamp the livestream session was last updated at, in ISO format.
+	UpdatedAt time.Time `json:"updated_at" api:"required" format:"date-time"`
 	// The total view time for which the viewers watched the stream.
-	ViewerSeconds string                                                               `json:"viewer_seconds"`
+	ViewerSeconds float64                                                              `json:"viewer_seconds" api:"required"`
 	JSON          livestreamGetActiveLivestreamsForLivestreamIDResponseDataSessionJSON `json:"-"`
 }
 
@@ -392,15 +447,17 @@ func (r livestreamGetActiveLivestreamsForLivestreamIDResponseDataSessionJSON) Ra
 }
 
 type LivestreamGetAllLivestreamsResponse struct {
-	Data    LivestreamGetAllLivestreamsResponseData `json:"data"`
-	Success bool                                    `json:"success"`
-	JSON    livestreamGetAllLivestreamsResponseJSON `json:"-"`
+	Data    []LivestreamGetAllLivestreamsResponseData `json:"data" api:"required"`
+	Paging  LivestreamGetAllLivestreamsResponsePaging `json:"paging" api:"required"`
+	Success bool                                      `json:"success" api:"required"`
+	JSON    livestreamGetAllLivestreamsResponseJSON   `json:"-"`
 }
 
 // livestreamGetAllLivestreamsResponseJSON contains the JSON metadata for the
 // struct [LivestreamGetAllLivestreamsResponse]
 type livestreamGetAllLivestreamsResponseJSON struct {
 	Data        apijson.Field
+	Paging      apijson.Field
 	Success     apijson.Field
 	raw         string
 	ExtraFields map[string]apijson.Field
@@ -415,26 +472,30 @@ func (r livestreamGetAllLivestreamsResponseJSON) RawJSON() string {
 }
 
 type LivestreamGetAllLivestreamsResponseData struct {
-	// The ID of the livestream.
-	ID string `json:"id" format:"uuid"`
-	// Timestamp the object was created at. The time is returned in ISO format.
-	CreatedAt time.Time `json:"created_at" format:"date-time"`
-	// Specifies if the livestream was disabled.
-	Disabled string `json:"disabled"`
+	// ID of the livestream.
+	ID string `json:"id" api:"required" format:"uuid"`
+	// Timestamp the livestream was created at, in ISO format.
+	CreatedAt time.Time `json:"created_at" api:"required" format:"date-time"`
+	// Specifies if the livestream is disabled.
+	Disabled bool `json:"disabled" api:"required"`
+	// ID of the underlying Cloudflare Stream live input.
+	ExternalID string `json:"external_id" api:"required"`
 	// The server URL to which the RTMP encoder sends the video and audio data.
-	IngestServer string `json:"ingest_server"`
-	// ID of the meeting.
-	MeetingID string `json:"meeting_id"`
+	IngestServer string `json:"ingest_server" api:"required"`
+	// Specifies if the livestream is ingested manually by an RTMP encoder.
+	ManualIngest bool `json:"manual_ingest" api:"required"`
+	// ID of the meeting being livestreamed, if any.
+	MeetingID string `json:"meeting_id" api:"required,nullable"`
 	// Name of the livestream.
-	Name   string                                        `json:"name"`
-	Paging LivestreamGetAllLivestreamsResponseDataPaging `json:"paging"`
+	Name string `json:"name" api:"required,nullable"`
 	// The web address that viewers can use to watch the livestream.
-	PlaybackURL string                                        `json:"playback_url"`
-	Status      LivestreamGetAllLivestreamsResponseDataStatus `json:"status"`
-	// Unique key for accessing each livestream.
-	StreamKey string `json:"stream_key"`
-	// Timestamp the object was updated at. The time is returned in ISO format.
-	UpdatedAt time.Time                                   `json:"updated_at" format:"date-time"`
+	PlaybackURL string `json:"playback_url" api:"required"`
+	// Status of the livestream.
+	Status LivestreamGetAllLivestreamsResponseDataStatus `json:"status" api:"required"`
+	// Unique key for accessing each livestream. Empty if the livestream is disabled.
+	StreamKey string `json:"stream_key" api:"required"`
+	// Timestamp the livestream was last updated at, in ISO format.
+	UpdatedAt time.Time                                   `json:"updated_at" api:"required" format:"date-time"`
 	JSON      livestreamGetAllLivestreamsResponseDataJSON `json:"-"`
 }
 
@@ -444,10 +505,11 @@ type livestreamGetAllLivestreamsResponseDataJSON struct {
 	ID           apijson.Field
 	CreatedAt    apijson.Field
 	Disabled     apijson.Field
+	ExternalID   apijson.Field
 	IngestServer apijson.Field
+	ManualIngest apijson.Field
 	MeetingID    apijson.Field
 	Name         apijson.Field
-	Paging       apijson.Field
 	PlaybackURL  apijson.Field
 	Status       apijson.Field
 	StreamKey    apijson.Field
@@ -464,16 +526,35 @@ func (r livestreamGetAllLivestreamsResponseDataJSON) RawJSON() string {
 	return r.raw
 }
 
-type LivestreamGetAllLivestreamsResponseDataPaging struct {
-	EndOffset   int64                                             `json:"end_offset"`
-	StartOffset int64                                             `json:"start_offset"`
-	TotalCount  int64                                             `json:"total_count"`
-	JSON        livestreamGetAllLivestreamsResponseDataPagingJSON `json:"-"`
+// Status of the livestream.
+type LivestreamGetAllLivestreamsResponseDataStatus string
+
+const (
+	LivestreamGetAllLivestreamsResponseDataStatusLive         LivestreamGetAllLivestreamsResponseDataStatus = "LIVE"
+	LivestreamGetAllLivestreamsResponseDataStatusIdle         LivestreamGetAllLivestreamsResponseDataStatus = "IDLE"
+	LivestreamGetAllLivestreamsResponseDataStatusErrored      LivestreamGetAllLivestreamsResponseDataStatus = "ERRORED"
+	LivestreamGetAllLivestreamsResponseDataStatusInvoked      LivestreamGetAllLivestreamsResponseDataStatus = "INVOKED"
+	LivestreamGetAllLivestreamsResponseDataStatusMetricsReady LivestreamGetAllLivestreamsResponseDataStatus = "METRICS_READY"
+)
+
+func (r LivestreamGetAllLivestreamsResponseDataStatus) IsKnown() bool {
+	switch r {
+	case LivestreamGetAllLivestreamsResponseDataStatusLive, LivestreamGetAllLivestreamsResponseDataStatusIdle, LivestreamGetAllLivestreamsResponseDataStatusErrored, LivestreamGetAllLivestreamsResponseDataStatusInvoked, LivestreamGetAllLivestreamsResponseDataStatusMetricsReady:
+		return true
+	}
+	return false
 }
 
-// livestreamGetAllLivestreamsResponseDataPagingJSON contains the JSON metadata for
-// the struct [LivestreamGetAllLivestreamsResponseDataPaging]
-type livestreamGetAllLivestreamsResponseDataPagingJSON struct {
+type LivestreamGetAllLivestreamsResponsePaging struct {
+	EndOffset   float64                                       `json:"end_offset" api:"required"`
+	StartOffset float64                                       `json:"start_offset" api:"required"`
+	TotalCount  float64                                       `json:"total_count" api:"required"`
+	JSON        livestreamGetAllLivestreamsResponsePagingJSON `json:"-"`
+}
+
+// livestreamGetAllLivestreamsResponsePagingJSON contains the JSON metadata for the
+// struct [LivestreamGetAllLivestreamsResponsePaging]
+type livestreamGetAllLivestreamsResponsePagingJSON struct {
 	EndOffset   apijson.Field
 	StartOffset apijson.Field
 	TotalCount  apijson.Field
@@ -481,29 +562,12 @@ type livestreamGetAllLivestreamsResponseDataPagingJSON struct {
 	ExtraFields map[string]apijson.Field
 }
 
-func (r *LivestreamGetAllLivestreamsResponseDataPaging) UnmarshalJSON(data []byte) (err error) {
+func (r *LivestreamGetAllLivestreamsResponsePaging) UnmarshalJSON(data []byte) (err error) {
 	return apijson.UnmarshalRoot(data, r)
 }
 
-func (r livestreamGetAllLivestreamsResponseDataPagingJSON) RawJSON() string {
+func (r livestreamGetAllLivestreamsResponsePagingJSON) RawJSON() string {
 	return r.raw
-}
-
-type LivestreamGetAllLivestreamsResponseDataStatus string
-
-const (
-	LivestreamGetAllLivestreamsResponseDataStatusLive    LivestreamGetAllLivestreamsResponseDataStatus = "LIVE"
-	LivestreamGetAllLivestreamsResponseDataStatusIdle    LivestreamGetAllLivestreamsResponseDataStatus = "IDLE"
-	LivestreamGetAllLivestreamsResponseDataStatusErrored LivestreamGetAllLivestreamsResponseDataStatus = "ERRORED"
-	LivestreamGetAllLivestreamsResponseDataStatusInvoked LivestreamGetAllLivestreamsResponseDataStatus = "INVOKED"
-)
-
-func (r LivestreamGetAllLivestreamsResponseDataStatus) IsKnown() bool {
-	switch r {
-	case LivestreamGetAllLivestreamsResponseDataStatusLive, LivestreamGetAllLivestreamsResponseDataStatusIdle, LivestreamGetAllLivestreamsResponseDataStatusErrored, LivestreamGetAllLivestreamsResponseDataStatusInvoked:
-		return true
-	}
-	return false
 }
 
 type LivestreamGetLivestreamAnalyticsCompleteResponse struct {
@@ -533,9 +597,9 @@ type LivestreamGetLivestreamAnalyticsCompleteResponseData struct {
 	// Count of total livestreams.
 	Count int64 `json:"count"`
 	// Total time duration for which the input was given or the meeting was streamed.
-	TotalIngestSeconds int64 `json:"total_ingest_seconds"`
+	TotalIngestSeconds float64 `json:"total_ingest_seconds"`
 	// Total view time for which the viewers watched the stream.
-	TotalViewerSeconds int64                                                    `json:"total_viewer_seconds"`
+	TotalViewerSeconds float64                                                  `json:"total_viewer_seconds"`
 	JSON               livestreamGetLivestreamAnalyticsCompleteResponseDataJSON `json:"-"`
 }
 
@@ -586,9 +650,9 @@ type LivestreamGetLivestreamAnalyticsDaywiseResponseData struct {
 	// Analytics date.
 	Date string `json:"date" api:"nullable"`
 	// Total time duration for which the input was given or the meeting was streamed.
-	TotalIngestSeconds int64 `json:"total_ingest_seconds"`
+	TotalIngestSeconds float64 `json:"total_ingest_seconds"`
 	// Total view time for which the viewers watched the stream.
-	TotalViewerSeconds int64                                                   `json:"total_viewer_seconds"`
+	TotalViewerSeconds float64                                                 `json:"total_viewer_seconds"`
 	JSON               livestreamGetLivestreamAnalyticsDaywiseResponseDataJSON `json:"-"`
 }
 
@@ -611,9 +675,232 @@ func (r livestreamGetLivestreamAnalyticsDaywiseResponseDataJSON) RawJSON() strin
 	return r.raw
 }
 
+type LivestreamGetLivestreamSessionDetailsForMeetingResponse struct {
+	Data    LivestreamGetLivestreamSessionDetailsForMeetingResponseData `json:"data" api:"required"`
+	Success bool                                                        `json:"success" api:"required"`
+	JSON    livestreamGetLivestreamSessionDetailsForMeetingResponseJSON `json:"-"`
+}
+
+// livestreamGetLivestreamSessionDetailsForMeetingResponseJSON contains the JSON
+// metadata for the struct
+// [LivestreamGetLivestreamSessionDetailsForMeetingResponse]
+type livestreamGetLivestreamSessionDetailsForMeetingResponseJSON struct {
+	Data        apijson.Field
+	Success     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *LivestreamGetLivestreamSessionDetailsForMeetingResponse) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r livestreamGetLivestreamSessionDetailsForMeetingResponseJSON) RawJSON() string {
+	return r.raw
+}
+
+type LivestreamGetLivestreamSessionDetailsForMeetingResponseData struct {
+	Data   LivestreamGetLivestreamSessionDetailsForMeetingResponseDataData   `json:"data" api:"required"`
+	Paging LivestreamGetLivestreamSessionDetailsForMeetingResponseDataPaging `json:"paging" api:"required"`
+	JSON   livestreamGetLivestreamSessionDetailsForMeetingResponseDataJSON   `json:"-"`
+}
+
+// livestreamGetLivestreamSessionDetailsForMeetingResponseDataJSON contains the
+// JSON metadata for the struct
+// [LivestreamGetLivestreamSessionDetailsForMeetingResponseData]
+type livestreamGetLivestreamSessionDetailsForMeetingResponseDataJSON struct {
+	Data        apijson.Field
+	Paging      apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *LivestreamGetLivestreamSessionDetailsForMeetingResponseData) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r livestreamGetLivestreamSessionDetailsForMeetingResponseDataJSON) RawJSON() string {
+	return r.raw
+}
+
+type LivestreamGetLivestreamSessionDetailsForMeetingResponseDataData struct {
+	Livestream LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestream `json:"livestream" api:"required"`
+	Sessions   []LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataSession  `json:"sessions" api:"required"`
+	JSON       livestreamGetLivestreamSessionDetailsForMeetingResponseDataDataJSON       `json:"-"`
+}
+
+// livestreamGetLivestreamSessionDetailsForMeetingResponseDataDataJSON contains the
+// JSON metadata for the struct
+// [LivestreamGetLivestreamSessionDetailsForMeetingResponseDataData]
+type livestreamGetLivestreamSessionDetailsForMeetingResponseDataDataJSON struct {
+	Livestream  apijson.Field
+	Sessions    apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *LivestreamGetLivestreamSessionDetailsForMeetingResponseDataData) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r livestreamGetLivestreamSessionDetailsForMeetingResponseDataDataJSON) RawJSON() string {
+	return r.raw
+}
+
+type LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestream struct {
+	// ID of the livestream.
+	ID string `json:"id" api:"required" format:"uuid"`
+	// Timestamp the livestream was created at, in ISO format.
+	CreatedAt time.Time `json:"created_at" api:"required" format:"date-time"`
+	// Specifies if the livestream is disabled.
+	Disabled bool `json:"disabled" api:"required"`
+	// ID of the underlying Cloudflare Stream live input.
+	ExternalID string `json:"external_id" api:"required"`
+	// The server URL to which the RTMP encoder sends the video and audio data.
+	IngestServer string `json:"ingest_server" api:"required"`
+	// Specifies if the livestream is ingested manually by an RTMP encoder.
+	ManualIngest bool `json:"manual_ingest" api:"required"`
+	// ID of the meeting being livestreamed, if any.
+	MeetingID string `json:"meeting_id" api:"required,nullable"`
+	// Name of the livestream.
+	Name string `json:"name" api:"required,nullable"`
+	// The web address that viewers can use to watch the livestream.
+	PlaybackURL string `json:"playback_url" api:"required"`
+	// Status of the livestream.
+	Status LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamStatus `json:"status" api:"required"`
+	// Unique key for accessing each livestream. Empty if the livestream is disabled.
+	StreamKey string `json:"stream_key" api:"required"`
+	// Timestamp the livestream was last updated at, in ISO format.
+	UpdatedAt time.Time                                                                     `json:"updated_at" api:"required" format:"date-time"`
+	JSON      livestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamJSON `json:"-"`
+}
+
+// livestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamJSON
+// contains the JSON metadata for the struct
+// [LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestream]
+type livestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamJSON struct {
+	ID           apijson.Field
+	CreatedAt    apijson.Field
+	Disabled     apijson.Field
+	ExternalID   apijson.Field
+	IngestServer apijson.Field
+	ManualIngest apijson.Field
+	MeetingID    apijson.Field
+	Name         apijson.Field
+	PlaybackURL  apijson.Field
+	Status       apijson.Field
+	StreamKey    apijson.Field
+	UpdatedAt    apijson.Field
+	raw          string
+	ExtraFields  map[string]apijson.Field
+}
+
+func (r *LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestream) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r livestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamJSON) RawJSON() string {
+	return r.raw
+}
+
+// Status of the livestream.
+type LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamStatus string
+
+const (
+	LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamStatusLive         LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamStatus = "LIVE"
+	LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamStatusIdle         LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamStatus = "IDLE"
+	LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamStatusErrored      LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamStatus = "ERRORED"
+	LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamStatusInvoked      LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamStatus = "INVOKED"
+	LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamStatusMetricsReady LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamStatus = "METRICS_READY"
+)
+
+func (r LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamStatus) IsKnown() bool {
+	switch r {
+	case LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamStatusLive, LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamStatusIdle, LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamStatusErrored, LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamStatusInvoked, LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataLivestreamStatusMetricsReady:
+		return true
+	}
+	return false
+}
+
+type LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataSession struct {
+	// ID of the livestream session.
+	ID string `json:"id" api:"required" format:"uuid"`
+	// Timestamp the livestream session was created at, in ISO format.
+	CreatedAt time.Time `json:"created_at" api:"required" format:"date-time"`
+	// Error message, if the livestream session failed.
+	ErrMessage string `json:"err_message" api:"required,nullable"`
+	// The time duration for which the input was given or the meeting was streamed.
+	IngestSeconds float64 `json:"ingest_seconds" api:"required"`
+	// Timestamp the livestream session was invoked at, in ISO format.
+	InvokedTime time.Time `json:"invoked_time" api:"required,nullable" format:"date-time"`
+	// ID of the livestream.
+	LivestreamID string `json:"livestream_id" api:"required" format:"uuid"`
+	// Timestamp the livestream session started at, in ISO format.
+	StartedTime time.Time `json:"started_time" api:"required,nullable" format:"date-time"`
+	// Timestamp the livestream session stopped at, in ISO format.
+	StoppedTime time.Time `json:"stopped_time" api:"required,nullable" format:"date-time"`
+	// Timestamp the livestream session was last updated at, in ISO format.
+	UpdatedAt time.Time `json:"updated_at" api:"required" format:"date-time"`
+	// The total view time for which the viewers watched the stream.
+	ViewerSeconds float64                                                                    `json:"viewer_seconds" api:"required"`
+	JSON          livestreamGetLivestreamSessionDetailsForMeetingResponseDataDataSessionJSON `json:"-"`
+}
+
+// livestreamGetLivestreamSessionDetailsForMeetingResponseDataDataSessionJSON
+// contains the JSON metadata for the struct
+// [LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataSession]
+type livestreamGetLivestreamSessionDetailsForMeetingResponseDataDataSessionJSON struct {
+	ID            apijson.Field
+	CreatedAt     apijson.Field
+	ErrMessage    apijson.Field
+	IngestSeconds apijson.Field
+	InvokedTime   apijson.Field
+	LivestreamID  apijson.Field
+	StartedTime   apijson.Field
+	StoppedTime   apijson.Field
+	UpdatedAt     apijson.Field
+	ViewerSeconds apijson.Field
+	raw           string
+	ExtraFields   map[string]apijson.Field
+}
+
+func (r *LivestreamGetLivestreamSessionDetailsForMeetingResponseDataDataSession) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r livestreamGetLivestreamSessionDetailsForMeetingResponseDataDataSessionJSON) RawJSON() string {
+	return r.raw
+}
+
+type LivestreamGetLivestreamSessionDetailsForMeetingResponseDataPaging struct {
+	EndOffset   float64                                                               `json:"end_offset" api:"required"`
+	StartOffset float64                                                               `json:"start_offset" api:"required"`
+	TotalCount  float64                                                               `json:"total_count" api:"required"`
+	JSON        livestreamGetLivestreamSessionDetailsForMeetingResponseDataPagingJSON `json:"-"`
+}
+
+// livestreamGetLivestreamSessionDetailsForMeetingResponseDataPagingJSON contains
+// the JSON metadata for the struct
+// [LivestreamGetLivestreamSessionDetailsForMeetingResponseDataPaging]
+type livestreamGetLivestreamSessionDetailsForMeetingResponseDataPagingJSON struct {
+	EndOffset   apijson.Field
+	StartOffset apijson.Field
+	TotalCount  apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *LivestreamGetLivestreamSessionDetailsForMeetingResponseDataPaging) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r livestreamGetLivestreamSessionDetailsForMeetingResponseDataPagingJSON) RawJSON() string {
+	return r.raw
+}
+
 type LivestreamGetLivestreamSessionDetailsForSessionIDResponse struct {
-	Data    LivestreamGetLivestreamSessionDetailsForSessionIDResponseData `json:"data"`
-	Success bool                                                          `json:"success"`
+	Data    LivestreamGetLivestreamSessionDetailsForSessionIDResponseData `json:"data" api:"required"`
+	Success bool                                                          `json:"success" api:"required"`
 	JSON    livestreamGetLivestreamSessionDetailsForSessionIDResponseJSON `json:"-"`
 }
 
@@ -636,23 +923,26 @@ func (r livestreamGetLivestreamSessionDetailsForSessionIDResponseJSON) RawJSON()
 }
 
 type LivestreamGetLivestreamSessionDetailsForSessionIDResponseData struct {
-	// The livestream ID.
-	ID string `json:"id"`
-	// Timestamp the object was created at. The time is returned in ISO format.
-	CreatedAt time.Time `json:"created_at" format:"date-time"`
-	// The server URL to which the RTMP encoder sends the video and audio data.
-	ErrMessage string `json:"err_message"`
-	// Name of the livestream.
-	IngestSeconds int64  `json:"ingest_seconds"`
-	LivestreamID  string `json:"livestream_id"`
-	// Unique key for accessing each livestream.
-	StartedTime string `json:"started_time"`
-	// The web address that viewers can use to watch the livestream.
-	StoppedTime string `json:"stopped_time"`
-	// Timestamp the object was updated at. The time is returned in ISO format.
-	UpdatedAt string `json:"updated_at"`
-	// Specifies if the livestream was disabled.
-	ViewerSeconds int64                                                             `json:"viewer_seconds"`
+	// ID of the livestream session.
+	ID string `json:"id" api:"required" format:"uuid"`
+	// Timestamp the livestream session was created at, in ISO format.
+	CreatedAt time.Time `json:"created_at" api:"required" format:"date-time"`
+	// Error message, if the livestream session failed.
+	ErrMessage string `json:"err_message" api:"required,nullable"`
+	// The time duration for which the input was given or the meeting was streamed.
+	IngestSeconds float64 `json:"ingest_seconds" api:"required"`
+	// Timestamp the livestream session was invoked at, in ISO format.
+	InvokedTime time.Time `json:"invoked_time" api:"required,nullable" format:"date-time"`
+	// ID of the livestream.
+	LivestreamID string `json:"livestream_id" api:"required" format:"uuid"`
+	// Timestamp the livestream session started at, in ISO format.
+	StartedTime time.Time `json:"started_time" api:"required,nullable" format:"date-time"`
+	// Timestamp the livestream session stopped at, in ISO format.
+	StoppedTime time.Time `json:"stopped_time" api:"required,nullable" format:"date-time"`
+	// Timestamp the livestream session was last updated at, in ISO format.
+	UpdatedAt time.Time `json:"updated_at" api:"required" format:"date-time"`
+	// The total view time for which the viewers watched the stream.
+	ViewerSeconds float64                                                           `json:"viewer_seconds" api:"required"`
 	JSON          livestreamGetLivestreamSessionDetailsForSessionIDResponseDataJSON `json:"-"`
 }
 
@@ -664,6 +954,7 @@ type livestreamGetLivestreamSessionDetailsForSessionIDResponseDataJSON struct {
 	CreatedAt     apijson.Field
 	ErrMessage    apijson.Field
 	IngestSeconds apijson.Field
+	InvokedTime   apijson.Field
 	LivestreamID  apijson.Field
 	StartedTime   apijson.Field
 	StoppedTime   apijson.Field
@@ -682,15 +973,17 @@ func (r livestreamGetLivestreamSessionDetailsForSessionIDResponseDataJSON) RawJS
 }
 
 type LivestreamGetLivestreamSessionForLivestreamIDResponse struct {
-	Data    LivestreamGetLivestreamSessionForLivestreamIDResponseData `json:"data"`
-	Success bool                                                      `json:"success"`
-	JSON    livestreamGetLivestreamSessionForLivestreamIDResponseJSON `json:"-"`
+	Data    LivestreamGetLivestreamSessionForLivestreamIDResponseData   `json:"data" api:"required"`
+	Paging  LivestreamGetLivestreamSessionForLivestreamIDResponsePaging `json:"paging" api:"required"`
+	Success bool                                                        `json:"success" api:"required"`
+	JSON    livestreamGetLivestreamSessionForLivestreamIDResponseJSON   `json:"-"`
 }
 
 // livestreamGetLivestreamSessionForLivestreamIDResponseJSON contains the JSON
 // metadata for the struct [LivestreamGetLivestreamSessionForLivestreamIDResponse]
 type livestreamGetLivestreamSessionForLivestreamIDResponseJSON struct {
 	Data        apijson.Field
+	Paging      apijson.Field
 	Success     apijson.Field
 	raw         string
 	ExtraFields map[string]apijson.Field
@@ -705,9 +998,8 @@ func (r livestreamGetLivestreamSessionForLivestreamIDResponseJSON) RawJSON() str
 }
 
 type LivestreamGetLivestreamSessionForLivestreamIDResponseData struct {
-	Livestream LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestream `json:"livestream"`
-	Paging     LivestreamGetLivestreamSessionForLivestreamIDResponseDataPaging     `json:"paging"`
-	Session    LivestreamGetLivestreamSessionForLivestreamIDResponseDataSession    `json:"session"`
+	Livestream LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestream `json:"livestream" api:"required"`
+	Sessions   []LivestreamGetLivestreamSessionForLivestreamIDResponseDataSession  `json:"sessions" api:"required"`
 	JSON       livestreamGetLivestreamSessionForLivestreamIDResponseDataJSON       `json:"-"`
 }
 
@@ -716,8 +1008,7 @@ type LivestreamGetLivestreamSessionForLivestreamIDResponseData struct {
 // [LivestreamGetLivestreamSessionForLivestreamIDResponseData]
 type livestreamGetLivestreamSessionForLivestreamIDResponseDataJSON struct {
 	Livestream  apijson.Field
-	Paging      apijson.Field
-	Session     apijson.Field
+	Sessions    apijson.Field
 	raw         string
 	ExtraFields map[string]apijson.Field
 }
@@ -732,24 +1023,29 @@ func (r livestreamGetLivestreamSessionForLivestreamIDResponseDataJSON) RawJSON()
 
 type LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestream struct {
 	// ID of the livestream.
-	ID string `json:"id"`
-	// Timestamp the object was created at. The time is returned in ISO format.
-	CreatedAt string `json:"created_at"`
-	// Specifies if the livestream was disabled.
-	Disabled string `json:"disabled"`
+	ID string `json:"id" api:"required" format:"uuid"`
+	// Timestamp the livestream was created at, in ISO format.
+	CreatedAt time.Time `json:"created_at" api:"required" format:"date-time"`
+	// Specifies if the livestream is disabled.
+	Disabled bool `json:"disabled" api:"required"`
+	// ID of the underlying Cloudflare Stream live input.
+	ExternalID string `json:"external_id" api:"required"`
 	// The server URL to which the RTMP encoder sends the video and audio data.
-	IngestServer string `json:"ingest_server"`
-	// The ID of the meeting.
-	MeetingID string `json:"meeting_id"`
+	IngestServer string `json:"ingest_server" api:"required"`
+	// Specifies if the livestream is ingested manually by an RTMP encoder.
+	ManualIngest bool `json:"manual_ingest" api:"required"`
+	// ID of the meeting being livestreamed, if any.
+	MeetingID string `json:"meeting_id" api:"required,nullable"`
 	// Name of the livestream.
-	Name string `json:"name"`
+	Name string `json:"name" api:"required,nullable"`
 	// The web address that viewers can use to watch the livestream.
-	PlaybackURL string                                                                    `json:"playback_url"`
-	Status      LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatus `json:"status"`
-	// Unique key for accessing each livestream.
-	StreamKey string `json:"stream_key"`
-	// Timestamp the object was updated at. The time is returned in ISO format.
-	UpdatedAt string                                                                  `json:"updated_at"`
+	PlaybackURL string `json:"playback_url" api:"required"`
+	// Status of the livestream.
+	Status LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatus `json:"status" api:"required"`
+	// Unique key for accessing each livestream. Empty if the livestream is disabled.
+	StreamKey string `json:"stream_key" api:"required"`
+	// Timestamp the livestream was last updated at, in ISO format.
+	UpdatedAt time.Time                                                               `json:"updated_at" api:"required" format:"date-time"`
 	JSON      livestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamJSON `json:"-"`
 }
 
@@ -760,7 +1056,9 @@ type livestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamJSON str
 	ID           apijson.Field
 	CreatedAt    apijson.Field
 	Disabled     apijson.Field
+	ExternalID   apijson.Field
 	IngestServer apijson.Field
+	ManualIngest apijson.Field
 	MeetingID    apijson.Field
 	Name         apijson.Field
 	PlaybackURL  apijson.Field
@@ -779,68 +1077,46 @@ func (r livestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamJSON)
 	return r.raw
 }
 
+// Status of the livestream.
 type LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatus string
 
 const (
-	LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatusLive    LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatus = "LIVE"
-	LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatusIdle    LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatus = "IDLE"
-	LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatusErrored LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatus = "ERRORED"
-	LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatusInvoked LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatus = "INVOKED"
+	LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatusLive         LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatus = "LIVE"
+	LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatusIdle         LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatus = "IDLE"
+	LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatusErrored      LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatus = "ERRORED"
+	LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatusInvoked      LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatus = "INVOKED"
+	LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatusMetricsReady LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatus = "METRICS_READY"
 )
 
 func (r LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatus) IsKnown() bool {
 	switch r {
-	case LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatusLive, LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatusIdle, LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatusErrored, LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatusInvoked:
+	case LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatusLive, LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatusIdle, LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatusErrored, LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatusInvoked, LivestreamGetLivestreamSessionForLivestreamIDResponseDataLivestreamStatusMetricsReady:
 		return true
 	}
 	return false
 }
 
-type LivestreamGetLivestreamSessionForLivestreamIDResponseDataPaging struct {
-	EndOffset   int64                                                               `json:"end_offset"`
-	StartOffset int64                                                               `json:"start_offset"`
-	TotalCount  int64                                                               `json:"total_count"`
-	JSON        livestreamGetLivestreamSessionForLivestreamIDResponseDataPagingJSON `json:"-"`
-}
-
-// livestreamGetLivestreamSessionForLivestreamIDResponseDataPagingJSON contains the
-// JSON metadata for the struct
-// [LivestreamGetLivestreamSessionForLivestreamIDResponseDataPaging]
-type livestreamGetLivestreamSessionForLivestreamIDResponseDataPagingJSON struct {
-	EndOffset   apijson.Field
-	StartOffset apijson.Field
-	TotalCount  apijson.Field
-	raw         string
-	ExtraFields map[string]apijson.Field
-}
-
-func (r *LivestreamGetLivestreamSessionForLivestreamIDResponseDataPaging) UnmarshalJSON(data []byte) (err error) {
-	return apijson.UnmarshalRoot(data, r)
-}
-
-func (r livestreamGetLivestreamSessionForLivestreamIDResponseDataPagingJSON) RawJSON() string {
-	return r.raw
-}
-
 type LivestreamGetLivestreamSessionForLivestreamIDResponseDataSession struct {
-	// ID of the session.
-	ID string `json:"id"`
-	// Timestamp the object was created at. The time is returned in ISO format.
-	CreatedAt  time.Time `json:"created_at" format:"date-time"`
-	ErrMessage string    `json:"err_message"`
+	// ID of the livestream session.
+	ID string `json:"id" api:"required" format:"uuid"`
+	// Timestamp the livestream session was created at, in ISO format.
+	CreatedAt time.Time `json:"created_at" api:"required" format:"date-time"`
+	// Error message, if the livestream session failed.
+	ErrMessage string `json:"err_message" api:"required,nullable"`
 	// The time duration for which the input was given or the meeting was streamed.
-	IngestSeconds float64 `json:"ingest_seconds"`
-	// Timestamp the object was invoked. The time is returned in ISO format.
-	InvokedTime  time.Time `json:"invoked_time" format:"date-time"`
-	LivestreamID string    `json:"livestream_id"`
-	// Timestamp the object was started. The time is returned in ISO format.
-	StartedTime time.Time `json:"started_time" format:"date-time"`
-	// Timestamp the object was stopped. The time is returned in ISO format.
-	StoppedTime time.Time `json:"stopped_time" format:"date-time"`
-	// Timestamp the object was updated at. The time is returned in ISO format.
-	UpdatedAt time.Time `json:"updated_at" format:"date-time"`
+	IngestSeconds float64 `json:"ingest_seconds" api:"required"`
+	// Timestamp the livestream session was invoked at, in ISO format.
+	InvokedTime time.Time `json:"invoked_time" api:"required,nullable" format:"date-time"`
+	// ID of the livestream.
+	LivestreamID string `json:"livestream_id" api:"required" format:"uuid"`
+	// Timestamp the livestream session started at, in ISO format.
+	StartedTime time.Time `json:"started_time" api:"required,nullable" format:"date-time"`
+	// Timestamp the livestream session stopped at, in ISO format.
+	StoppedTime time.Time `json:"stopped_time" api:"required,nullable" format:"date-time"`
+	// Timestamp the livestream session was last updated at, in ISO format.
+	UpdatedAt time.Time `json:"updated_at" api:"required" format:"date-time"`
 	// The total view time for which the viewers watched the stream.
-	ViewerSeconds float64                                                              `json:"viewer_seconds"`
+	ViewerSeconds float64                                                              `json:"viewer_seconds" api:"required"`
 	JSON          livestreamGetLivestreamSessionForLivestreamIDResponseDataSessionJSON `json:"-"`
 }
 
@@ -870,9 +1146,157 @@ func (r livestreamGetLivestreamSessionForLivestreamIDResponseDataSessionJSON) Ra
 	return r.raw
 }
 
+type LivestreamGetLivestreamSessionForLivestreamIDResponsePaging struct {
+	EndOffset   float64                                                         `json:"end_offset" api:"required"`
+	StartOffset float64                                                         `json:"start_offset" api:"required"`
+	TotalCount  float64                                                         `json:"total_count" api:"required"`
+	JSON        livestreamGetLivestreamSessionForLivestreamIDResponsePagingJSON `json:"-"`
+}
+
+// livestreamGetLivestreamSessionForLivestreamIDResponsePagingJSON contains the
+// JSON metadata for the struct
+// [LivestreamGetLivestreamSessionForLivestreamIDResponsePaging]
+type livestreamGetLivestreamSessionForLivestreamIDResponsePagingJSON struct {
+	EndOffset   apijson.Field
+	StartOffset apijson.Field
+	TotalCount  apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *LivestreamGetLivestreamSessionForLivestreamIDResponsePaging) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r livestreamGetLivestreamSessionForLivestreamIDResponsePagingJSON) RawJSON() string {
+	return r.raw
+}
+
+type LivestreamGetLivestreamSessionsForSessionResponse struct {
+	Data    LivestreamGetLivestreamSessionsForSessionResponseData `json:"data" api:"required"`
+	Success bool                                                  `json:"success" api:"required"`
+	JSON    livestreamGetLivestreamSessionsForSessionResponseJSON `json:"-"`
+}
+
+// livestreamGetLivestreamSessionsForSessionResponseJSON contains the JSON metadata
+// for the struct [LivestreamGetLivestreamSessionsForSessionResponse]
+type livestreamGetLivestreamSessionsForSessionResponseJSON struct {
+	Data        apijson.Field
+	Success     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *LivestreamGetLivestreamSessionsForSessionResponse) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r livestreamGetLivestreamSessionsForSessionResponseJSON) RawJSON() string {
+	return r.raw
+}
+
+type LivestreamGetLivestreamSessionsForSessionResponseData struct {
+	Data   []LivestreamGetLivestreamSessionsForSessionResponseDataData `json:"data" api:"required"`
+	Paging LivestreamGetLivestreamSessionsForSessionResponseDataPaging `json:"paging" api:"required"`
+	JSON   livestreamGetLivestreamSessionsForSessionResponseDataJSON   `json:"-"`
+}
+
+// livestreamGetLivestreamSessionsForSessionResponseDataJSON contains the JSON
+// metadata for the struct [LivestreamGetLivestreamSessionsForSessionResponseData]
+type livestreamGetLivestreamSessionsForSessionResponseDataJSON struct {
+	Data        apijson.Field
+	Paging      apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *LivestreamGetLivestreamSessionsForSessionResponseData) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r livestreamGetLivestreamSessionsForSessionResponseDataJSON) RawJSON() string {
+	return r.raw
+}
+
+type LivestreamGetLivestreamSessionsForSessionResponseDataData struct {
+	// ID of the livestream session.
+	ID string `json:"id" api:"required" format:"uuid"`
+	// Timestamp the livestream session was created at, in ISO format.
+	CreatedAt time.Time `json:"created_at" api:"required" format:"date-time"`
+	// Error message, if the livestream session failed.
+	ErrMessage string `json:"err_message" api:"required,nullable"`
+	// The time duration for which the input was given or the meeting was streamed.
+	IngestSeconds float64 `json:"ingest_seconds" api:"required"`
+	// Timestamp the livestream session was invoked at, in ISO format.
+	InvokedTime time.Time `json:"invoked_time" api:"required,nullable" format:"date-time"`
+	// ID of the livestream.
+	LivestreamID string `json:"livestream_id" api:"required" format:"uuid"`
+	// Timestamp the livestream session started at, in ISO format.
+	StartedTime time.Time `json:"started_time" api:"required,nullable" format:"date-time"`
+	// Timestamp the livestream session stopped at, in ISO format.
+	StoppedTime time.Time `json:"stopped_time" api:"required,nullable" format:"date-time"`
+	// Timestamp the livestream session was last updated at, in ISO format.
+	UpdatedAt time.Time `json:"updated_at" api:"required" format:"date-time"`
+	// The total view time for which the viewers watched the stream.
+	ViewerSeconds float64                                                       `json:"viewer_seconds" api:"required"`
+	JSON          livestreamGetLivestreamSessionsForSessionResponseDataDataJSON `json:"-"`
+}
+
+// livestreamGetLivestreamSessionsForSessionResponseDataDataJSON contains the JSON
+// metadata for the struct
+// [LivestreamGetLivestreamSessionsForSessionResponseDataData]
+type livestreamGetLivestreamSessionsForSessionResponseDataDataJSON struct {
+	ID            apijson.Field
+	CreatedAt     apijson.Field
+	ErrMessage    apijson.Field
+	IngestSeconds apijson.Field
+	InvokedTime   apijson.Field
+	LivestreamID  apijson.Field
+	StartedTime   apijson.Field
+	StoppedTime   apijson.Field
+	UpdatedAt     apijson.Field
+	ViewerSeconds apijson.Field
+	raw           string
+	ExtraFields   map[string]apijson.Field
+}
+
+func (r *LivestreamGetLivestreamSessionsForSessionResponseDataData) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r livestreamGetLivestreamSessionsForSessionResponseDataDataJSON) RawJSON() string {
+	return r.raw
+}
+
+type LivestreamGetLivestreamSessionsForSessionResponseDataPaging struct {
+	EndOffset   float64                                                         `json:"end_offset" api:"required"`
+	StartOffset float64                                                         `json:"start_offset" api:"required"`
+	TotalCount  float64                                                         `json:"total_count" api:"required"`
+	JSON        livestreamGetLivestreamSessionsForSessionResponseDataPagingJSON `json:"-"`
+}
+
+// livestreamGetLivestreamSessionsForSessionResponseDataPagingJSON contains the
+// JSON metadata for the struct
+// [LivestreamGetLivestreamSessionsForSessionResponseDataPaging]
+type livestreamGetLivestreamSessionsForSessionResponseDataPagingJSON struct {
+	EndOffset   apijson.Field
+	StartOffset apijson.Field
+	TotalCount  apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *LivestreamGetLivestreamSessionsForSessionResponseDataPaging) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r livestreamGetLivestreamSessionsForSessionResponseDataPagingJSON) RawJSON() string {
+	return r.raw
+}
+
 type LivestreamGetMeetingActiveLivestreamsResponse struct {
-	Data    LivestreamGetMeetingActiveLivestreamsResponseData `json:"data"`
-	Success bool                                              `json:"success"`
+	Data    LivestreamGetMeetingActiveLivestreamsResponseData `json:"data" api:"required"`
+	Success bool                                              `json:"success" api:"required"`
 	JSON    livestreamGetMeetingActiveLivestreamsResponseJSON `json:"-"`
 }
 
@@ -894,24 +1318,30 @@ func (r livestreamGetMeetingActiveLivestreamsResponseJSON) RawJSON() string {
 }
 
 type LivestreamGetMeetingActiveLivestreamsResponseData struct {
-	// The livestream ID.
-	ID string `json:"id"`
-	// Timestamp the object was created at. The time is returned in ISO format.
-	CreatedAt time.Time `json:"created_at" format:"date-time"`
-	// Specifies if the livestream was disabled.
-	Disabled string `json:"disabled"`
+	// ID of the livestream.
+	ID string `json:"id" api:"required" format:"uuid"`
+	// Timestamp the livestream was created at, in ISO format.
+	CreatedAt time.Time `json:"created_at" api:"required" format:"date-time"`
+	// Specifies if the livestream is disabled.
+	Disabled bool `json:"disabled" api:"required"`
+	// ID of the underlying Cloudflare Stream live input.
+	ExternalID string `json:"external_id" api:"required"`
 	// The server URL to which the RTMP encoder sends the video and audio data.
-	IngestServer string `json:"ingest_server"`
-	MeetingID    string `json:"meeting_id"`
+	IngestServer string `json:"ingest_server" api:"required"`
+	// Specifies if the livestream is ingested manually by an RTMP encoder.
+	ManualIngest bool `json:"manual_ingest" api:"required"`
+	// ID of the meeting being livestreamed, if any.
+	MeetingID string `json:"meeting_id" api:"required,nullable"`
 	// Name of the livestream.
-	Name string `json:"name" api:"nullable"`
+	Name string `json:"name" api:"required,nullable"`
 	// The web address that viewers can use to watch the livestream.
-	PlaybackURL string                                                  `json:"playback_url"`
-	Status      LivestreamGetMeetingActiveLivestreamsResponseDataStatus `json:"status"`
-	// Unique key for accessing each livestream.
-	StreamKey string `json:"stream_key"`
-	// Timestamp the object was updated at. The time is returned in ISO format.
-	UpdatedAt time.Time                                             `json:"updated_at" format:"date-time"`
+	PlaybackURL string `json:"playback_url" api:"required"`
+	// Status of the livestream.
+	Status LivestreamGetMeetingActiveLivestreamsResponseDataStatus `json:"status" api:"required"`
+	// Unique key for accessing each livestream. Empty if the livestream is disabled.
+	StreamKey string `json:"stream_key" api:"required"`
+	// Timestamp the livestream was last updated at, in ISO format.
+	UpdatedAt time.Time                                             `json:"updated_at" api:"required" format:"date-time"`
 	JSON      livestreamGetMeetingActiveLivestreamsResponseDataJSON `json:"-"`
 }
 
@@ -921,7 +1351,9 @@ type livestreamGetMeetingActiveLivestreamsResponseDataJSON struct {
 	ID           apijson.Field
 	CreatedAt    apijson.Field
 	Disabled     apijson.Field
+	ExternalID   apijson.Field
 	IngestServer apijson.Field
+	ManualIngest apijson.Field
 	MeetingID    apijson.Field
 	Name         apijson.Field
 	PlaybackURL  apijson.Field
@@ -940,18 +1372,20 @@ func (r livestreamGetMeetingActiveLivestreamsResponseDataJSON) RawJSON() string 
 	return r.raw
 }
 
+// Status of the livestream.
 type LivestreamGetMeetingActiveLivestreamsResponseDataStatus string
 
 const (
-	LivestreamGetMeetingActiveLivestreamsResponseDataStatusLive    LivestreamGetMeetingActiveLivestreamsResponseDataStatus = "LIVE"
-	LivestreamGetMeetingActiveLivestreamsResponseDataStatusIdle    LivestreamGetMeetingActiveLivestreamsResponseDataStatus = "IDLE"
-	LivestreamGetMeetingActiveLivestreamsResponseDataStatusErrored LivestreamGetMeetingActiveLivestreamsResponseDataStatus = "ERRORED"
-	LivestreamGetMeetingActiveLivestreamsResponseDataStatusInvoked LivestreamGetMeetingActiveLivestreamsResponseDataStatus = "INVOKED"
+	LivestreamGetMeetingActiveLivestreamsResponseDataStatusLive         LivestreamGetMeetingActiveLivestreamsResponseDataStatus = "LIVE"
+	LivestreamGetMeetingActiveLivestreamsResponseDataStatusIdle         LivestreamGetMeetingActiveLivestreamsResponseDataStatus = "IDLE"
+	LivestreamGetMeetingActiveLivestreamsResponseDataStatusErrored      LivestreamGetMeetingActiveLivestreamsResponseDataStatus = "ERRORED"
+	LivestreamGetMeetingActiveLivestreamsResponseDataStatusInvoked      LivestreamGetMeetingActiveLivestreamsResponseDataStatus = "INVOKED"
+	LivestreamGetMeetingActiveLivestreamsResponseDataStatusMetricsReady LivestreamGetMeetingActiveLivestreamsResponseDataStatus = "METRICS_READY"
 )
 
 func (r LivestreamGetMeetingActiveLivestreamsResponseDataStatus) IsKnown() bool {
 	switch r {
-	case LivestreamGetMeetingActiveLivestreamsResponseDataStatusLive, LivestreamGetMeetingActiveLivestreamsResponseDataStatusIdle, LivestreamGetMeetingActiveLivestreamsResponseDataStatusErrored, LivestreamGetMeetingActiveLivestreamsResponseDataStatusInvoked:
+	case LivestreamGetMeetingActiveLivestreamsResponseDataStatusLive, LivestreamGetMeetingActiveLivestreamsResponseDataStatusIdle, LivestreamGetMeetingActiveLivestreamsResponseDataStatusErrored, LivestreamGetMeetingActiveLivestreamsResponseDataStatusInvoked, LivestreamGetMeetingActiveLivestreamsResponseDataStatusMetricsReady:
 		return true
 	}
 	return false
@@ -1120,8 +1554,8 @@ func (r livestreamGetOrgAnalyticsResponseDataSessionStatsDayStatJSON) RawJSON() 
 }
 
 type LivestreamStartLivestreamingAMeetingResponse struct {
-	Data    LivestreamStartLivestreamingAMeetingResponseData `json:"data"`
-	Success bool                                             `json:"success"`
+	Data    LivestreamStartLivestreamingAMeetingResponseData `json:"data" api:"required"`
+	Success bool                                             `json:"success" api:"required"`
 	JSON    livestreamStartLivestreamingAMeetingResponseJSON `json:"-"`
 }
 
@@ -1143,15 +1577,20 @@ func (r livestreamStartLivestreamingAMeetingResponseJSON) RawJSON() string {
 }
 
 type LivestreamStartLivestreamingAMeetingResponseData struct {
-	// The livestream ID.
-	ID string `json:"id"`
+	// ID of the livestream.
+	ID string `json:"id" api:"required" format:"uuid"`
 	// The server URL to which the RTMP encoder sends the video and audio data.
-	IngestServer string `json:"ingest_server"`
+	IngestServer string `json:"ingest_server" api:"required"`
+	// ID of the meeting being livestreamed, if any.
+	MeetingID string `json:"meeting_id" api:"required,nullable"`
+	// Name of the livestream.
+	Name string `json:"name" api:"required,nullable"`
 	// The web address that viewers can use to watch the livestream.
-	PlaybackURL string                                                 `json:"playback_url"`
-	Status      LivestreamStartLivestreamingAMeetingResponseDataStatus `json:"status"`
-	// Unique key for accessing each livestream.
-	StreamKey string                                               `json:"stream_key"`
+	PlaybackURL string `json:"playback_url" api:"required"`
+	// Status of the livestream.
+	Status LivestreamStartLivestreamingAMeetingResponseDataStatus `json:"status" api:"required"`
+	// Unique key for accessing each livestream. Empty if the livestream is disabled.
+	StreamKey string                                               `json:"stream_key" api:"required"`
 	JSON      livestreamStartLivestreamingAMeetingResponseDataJSON `json:"-"`
 }
 
@@ -1160,6 +1599,8 @@ type LivestreamStartLivestreamingAMeetingResponseData struct {
 type livestreamStartLivestreamingAMeetingResponseDataJSON struct {
 	ID           apijson.Field
 	IngestServer apijson.Field
+	MeetingID    apijson.Field
+	Name         apijson.Field
 	PlaybackURL  apijson.Field
 	Status       apijson.Field
 	StreamKey    apijson.Field
@@ -1175,18 +1616,20 @@ func (r livestreamStartLivestreamingAMeetingResponseDataJSON) RawJSON() string {
 	return r.raw
 }
 
+// Status of the livestream.
 type LivestreamStartLivestreamingAMeetingResponseDataStatus string
 
 const (
-	LivestreamStartLivestreamingAMeetingResponseDataStatusLive    LivestreamStartLivestreamingAMeetingResponseDataStatus = "LIVE"
-	LivestreamStartLivestreamingAMeetingResponseDataStatusIdle    LivestreamStartLivestreamingAMeetingResponseDataStatus = "IDLE"
-	LivestreamStartLivestreamingAMeetingResponseDataStatusErrored LivestreamStartLivestreamingAMeetingResponseDataStatus = "ERRORED"
-	LivestreamStartLivestreamingAMeetingResponseDataStatusInvoked LivestreamStartLivestreamingAMeetingResponseDataStatus = "INVOKED"
+	LivestreamStartLivestreamingAMeetingResponseDataStatusLive         LivestreamStartLivestreamingAMeetingResponseDataStatus = "LIVE"
+	LivestreamStartLivestreamingAMeetingResponseDataStatusIdle         LivestreamStartLivestreamingAMeetingResponseDataStatus = "IDLE"
+	LivestreamStartLivestreamingAMeetingResponseDataStatusErrored      LivestreamStartLivestreamingAMeetingResponseDataStatus = "ERRORED"
+	LivestreamStartLivestreamingAMeetingResponseDataStatusInvoked      LivestreamStartLivestreamingAMeetingResponseDataStatus = "INVOKED"
+	LivestreamStartLivestreamingAMeetingResponseDataStatusMetricsReady LivestreamStartLivestreamingAMeetingResponseDataStatus = "METRICS_READY"
 )
 
 func (r LivestreamStartLivestreamingAMeetingResponseDataStatus) IsKnown() bool {
 	switch r {
-	case LivestreamStartLivestreamingAMeetingResponseDataStatusLive, LivestreamStartLivestreamingAMeetingResponseDataStatusIdle, LivestreamStartLivestreamingAMeetingResponseDataStatusErrored, LivestreamStartLivestreamingAMeetingResponseDataStatusInvoked:
+	case LivestreamStartLivestreamingAMeetingResponseDataStatusLive, LivestreamStartLivestreamingAMeetingResponseDataStatusIdle, LivestreamStartLivestreamingAMeetingResponseDataStatusErrored, LivestreamStartLivestreamingAMeetingResponseDataStatusInvoked, LivestreamStartLivestreamingAMeetingResponseDataStatusMetricsReady:
 		return true
 	}
 	return false
@@ -1347,6 +1790,24 @@ func (r LivestreamGetLivestreamAnalyticsDaywiseParams) URLQuery() (v url.Values)
 	})
 }
 
+type LivestreamGetLivestreamSessionDetailsForMeetingParams struct {
+	// The account identifier tag.
+	AccountID param.Field[string] `path:"account_id" api:"required"`
+	// The page number from which you want your page search results to be displayed.
+	PageNo param.Field[int64] `query:"page_no"`
+	// Number of results per page.
+	PerPage param.Field[int64] `query:"per_page"`
+}
+
+// URLQuery serializes [LivestreamGetLivestreamSessionDetailsForMeetingParams]'s
+// query parameters as `url.Values`.
+func (r LivestreamGetLivestreamSessionDetailsForMeetingParams) URLQuery() (v url.Values) {
+	return apiquery.MarshalWithSettings(r, apiquery.QuerySettings{
+		ArrayFormat:  apiquery.ArrayQueryFormatRepeat,
+		NestedFormat: apiquery.NestedQueryFormatDots,
+	})
+}
+
 type LivestreamGetLivestreamSessionDetailsForSessionIDParams struct {
 	// The account identifier tag.
 	AccountID param.Field[string] `path:"account_id" api:"required"`
@@ -1364,6 +1825,24 @@ type LivestreamGetLivestreamSessionForLivestreamIDParams struct {
 // URLQuery serializes [LivestreamGetLivestreamSessionForLivestreamIDParams]'s
 // query parameters as `url.Values`.
 func (r LivestreamGetLivestreamSessionForLivestreamIDParams) URLQuery() (v url.Values) {
+	return apiquery.MarshalWithSettings(r, apiquery.QuerySettings{
+		ArrayFormat:  apiquery.ArrayQueryFormatRepeat,
+		NestedFormat: apiquery.NestedQueryFormatDots,
+	})
+}
+
+type LivestreamGetLivestreamSessionsForSessionParams struct {
+	// The account identifier tag.
+	AccountID param.Field[string] `path:"account_id" api:"required"`
+	// The page number from which you want your page search results to be displayed.
+	PageNo param.Field[float64] `query:"page_no"`
+	// Number of results per page.
+	PerPage param.Field[float64] `query:"per_page"`
+}
+
+// URLQuery serializes [LivestreamGetLivestreamSessionsForSessionParams]'s query
+// parameters as `url.Values`.
+func (r LivestreamGetLivestreamSessionsForSessionParams) URLQuery() (v url.Values) {
 	return apiquery.MarshalWithSettings(r, apiquery.QuerySettings{
 		ArrayFormat:  apiquery.ArrayQueryFormatRepeat,
 		NestedFormat: apiquery.NestedQueryFormatDots,

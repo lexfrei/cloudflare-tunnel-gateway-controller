@@ -36,9 +36,8 @@ func NewThreatEventAggregateService(opts ...option.RequestOption) (r *ThreatEven
 	return
 }
 
-// Aggregate threat events by one or more columns (e.g., attacker, targetIndustry)
-// with optional date filtering and daily grouping. Supports multi-dimensional
-// aggregation for cross-analysis.
+// Counts events grouped by one or more columns, such as `attacker` or
+// `targetIndustry`. Optionally filter by date range and group the counts by day.
 func (r *ThreatEventAggregateService) List(ctx context.Context, params ThreatEventAggregateListParams, opts ...option.RequestOption) (res *ThreatEventAggregateListResponse, err error) {
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
@@ -135,12 +134,15 @@ type ThreatEventAggregateListParams struct {
 	// Account ID.
 	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// Column(s) to aggregate by - single column or comma-separated list (e.g.,
-	// 'attacker', 'targetIndustry', 'attacker,targetIndustry')
+	// 'attacker', 'targetIndustry', 'attacker,targetIndustry'). With `tags`, an event
+	// counts once for each of its tags, in the bucket counts and in `total`, and
+	// events without tags count as `Unknown`; `tags` is not supported for analytics
+	// datasets.
 	AggregateBy param.Field[string] `query:"aggregateBy" api:"required"`
-	// Dataset UUIDs to filter by, or one standalone scope value: 'all'/'\*' for all
-	// accessible non-analytics event datasets (analytics datasets are silently
-	// excluded), 'analytics' for isAnalytics=true datasets, or 'operational' for
-	// isAnalytics=false datasets. If not provided, uses the default dataset.
+	// Dataset UUIDs to filter by, or one standalone scope value: 'all'/'\*' or
+	// 'operational' for readable intelligence datasets (isAnalytics=false), or
+	// 'analytics' for readable analytics datasets (isAnalytics=true). Scope values
+	// query at most 50 datasets. If not provided, uses the default dataset.
 	DatasetID param.Field[[]string] `query:"datasetId"`
 	// End date for filtering (ISO 8601 format, e.g., '2024-12-31')
 	EndDate param.Field[string] `query:"endDate"`

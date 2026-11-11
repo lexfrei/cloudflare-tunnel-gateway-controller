@@ -39,11 +39,10 @@ func NewThreatEventTagIndicatorService(opts ...option.RequestOption) (r *ThreatE
 	return
 }
 
-// Returns indicators associated with the provided tag UUID, with pagination. By
-// default fans out across every indicator dataset the account can read; pass
-// datasetIds to scope to UUIDs, analytics datasets, or operational datasets.
-// Analytics datasets do not expose tag associations, so the analytics scope
-// returns an empty result.
+// Lists the indicators that carry a tag, with pagination. By default, every
+// intelligence dataset you can read is searched; use `datasetIds` to limit the
+// search to specific datasets or a scope value. Analytics datasets don't store tag
+// associations, so the `analytics` scope returns no results.
 func (r *ThreatEventTagIndicatorService) List(ctx context.Context, tagUUID string, params ThreatEventTagIndicatorListParams, opts ...option.RequestOption) (res *ThreatEventTagIndicatorListResponse, err error) {
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
@@ -62,16 +61,23 @@ func (r *ThreatEventTagIndicatorService) List(ctx context.Context, tagUUID strin
 type ThreatEventTagIndicatorListResponse struct {
 	Indicators []ThreatEventTagIndicatorListResponseIndicator `json:"indicators" api:"required"`
 	Pagination ThreatEventTagIndicatorListResponsePagination  `json:"pagination" api:"required"`
-	JSON       threatEventTagIndicatorListResponseJSON        `json:"-"`
+	// Number of shards that failed or timed out. Present only with partialResults.
+	FailedShardCount float64 `json:"failedShardCount"`
+	// Present and true when one or more shards failed or timed out. Indicators from
+	// those shards may be missing from this page and from totalCount.
+	PartialResults bool                                    `json:"partialResults"`
+	JSON           threatEventTagIndicatorListResponseJSON `json:"-"`
 }
 
 // threatEventTagIndicatorListResponseJSON contains the JSON metadata for the
 // struct [ThreatEventTagIndicatorListResponse]
 type threatEventTagIndicatorListResponseJSON struct {
-	Indicators  apijson.Field
-	Pagination  apijson.Field
-	raw         string
-	ExtraFields map[string]apijson.Field
+	Indicators       apijson.Field
+	Pagination       apijson.Field
+	FailedShardCount apijson.Field
+	PartialResults   apijson.Field
+	raw              string
+	ExtraFields      map[string]apijson.Field
 }
 
 func (r *ThreatEventTagIndicatorListResponse) UnmarshalJSON(data []byte) (err error) {
@@ -217,14 +223,16 @@ type ThreatEventTagIndicatorListParams struct {
 	// Account ID.
 	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// Dataset UUIDs to scope to (repeat the param for multiple), or one standalone
-	// scope: 'all'/'\*', 'analytics' for isAnalytics=true datasets, or 'operational'
-	// for isAnalytics=false datasets. Analytics datasets do not expose tag
-	// associations, so 'analytics' returns an empty result. Omit to search all
-	// readable datasets.
+	// scope value: 'all'/'\*' or 'operational' for readable intelligence datasets
+	// (isAnalytics=false), or 'analytics' for readable analytics datasets
+	// (isAnalytics=true). Analytics datasets do not expose tag associations, so
+	// 'analytics' returns an empty result. Omit for 'all'.
 	DatasetIDs    param.Field[[]string] `query:"datasetIds"`
 	IndicatorType param.Field[string]   `query:"indicatorType"`
-	Page          param.Field[float64]  `query:"page"`
-	PageSize      param.Field[float64]  `query:"pageSize"`
+	// Page number (default 1). page × pageSize may not exceed 10000.
+	Page param.Field[float64] `query:"page"`
+	// Results per page (default 100, maximum 1000; larger values are clamped).
+	PageSize param.Field[float64] `query:"pageSize"`
 	// Filter indicators by related event UUID(s). Multiple UUIDs can be provided by
 	// repeating the parameter.
 	RelatedEvent param.Field[[]string] `query:"relatedEvent"`

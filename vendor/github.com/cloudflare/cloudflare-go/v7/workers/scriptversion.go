@@ -274,7 +274,10 @@ type ScriptVersionNewResponseResourcesScriptRuntime struct {
 	// Date indicating targeted support in the Workers runtime. Backwards incompatible
 	// fixes to the runtime following this date will not affect this Worker.
 	CompatibilityDate string `json:"compatibility_date"`
-	// Flags that enable or disable certain features in the Workers runtime.
+	// Lists the flags this version sets explicitly to enable or disable Workers
+	// runtime features. Excludes behavior that `compatibility_date` enables. Responses
+	// omit the field when the list is empty, so a missing field means the version sets
+	// zero flags.
 	CompatibilityFlags []string `json:"compatibility_flags"`
 	// Declarative exports for this version, including Durable Object classes (with
 	// their `storage` backend) and named Worker entrypoints. Tombstoned lifecycle
@@ -1635,7 +1638,10 @@ type ScriptVersionGetResponseResourcesScriptRuntime struct {
 	// Date indicating targeted support in the Workers runtime. Backwards incompatible
 	// fixes to the runtime following this date will not affect this Worker.
 	CompatibilityDate string `json:"compatibility_date"`
-	// Flags that enable or disable certain features in the Workers runtime.
+	// Lists the flags this version sets explicitly to enable or disable Workers
+	// runtime features. Excludes behavior that `compatibility_date` enables. Responses
+	// omit the field when the list is empty, so a missing field means the version sets
+	// zero flags.
 	CompatibilityFlags []string `json:"compatibility_flags"`
 	// Declarative exports for this version, including Durable Object classes (with
 	// their `storage` backend) and named Worker entrypoints. Tombstoned lifecycle
@@ -2443,9 +2449,10 @@ type ScriptVersionNewParams struct {
 	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// JSON-encoded metadata about the uploaded parts and Worker configuration.
 	Metadata param.Field[ScriptVersionNewParamsMetadata] `json:"metadata" api:"required"`
-	// When set to "strict", the upload will fail if any `inherit` type bindings cannot
-	// be resolved against the previous version of the Worker. Without this,
-	// unresolvable inherit bindings are silently dropped.
+	// When set to "strict", the upload will fail with error 10057 if any `inherit`
+	// type bindings cannot be resolved against the latest uploaded version of the
+	// Worker, which may not be the deployed version. Without this, unresolvable
+	// inherit bindings are silently dropped.
 	BindingsInherit param.Field[ScriptVersionNewParamsBindingsInherit] `query:"bindings_inherit"`
 	// An array of modules (often JavaScript files) comprising a Worker script. At
 	// least one module must be present and referenced in the metadata as `main_module`
@@ -2583,7 +2590,8 @@ type ScriptVersionNewParamsMetadataBinding struct {
 	// [Learn more](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/importKey#format).
 	Format param.Field[ScriptVersionNewParamsMetadataBindingsFormat] `json:"format"`
 	// Enables Gateway identity for the binding. Requires network_id to be
-	// "cf1:network" and cannot be combined with tunnel_id.
+	// "cf1:network" and cannot be combined with tunnel_id or an explicit
+	// "cf1:vnet:<UUID>" network_id.
 	Identity param.Field[ScriptVersionNewParamsMetadataBindingsIdentity] `json:"identity"`
 	// Name of the Vectorize index to bind to.
 	IndexName param.Field[string] `json:"index_name"`
@@ -2603,8 +2611,9 @@ type ScriptVersionNewParamsMetadataBinding struct {
 	Namespace param.Field[string] `json:"namespace"`
 	// Namespace identifier tag.
 	NamespaceID param.Field[string] `json:"namespace_id"`
-	// Identifier of the network to bind to. Only "cf1:network" is currently supported.
-	// Mutually exclusive with tunnel_id.
+	// Identifier of the network to bind to. Use "cf1:network" to select the account's
+	// default virtual network at runtime, or "cf1:vnet:<UUID>" to select an explicit
+	// virtual network in the Worker's account. Mutually exclusive with tunnel_id.
 	NetworkID param.Field[string] `json:"network_id"`
 	// The old name of the inherited binding. If set, the binding will be renamed from
 	// `old_name` to `name` in the new version. If not set, the binding will keep the
@@ -2637,9 +2646,13 @@ type ScriptVersionNewParamsMetadataBinding struct {
 	// UUID of the Cloudflare Tunnel to bind to. Mutually exclusive with network_id.
 	TunnelID param.Field[string]      `json:"tunnel_id"`
 	Usages   param.Field[interface{}] `json:"usages"`
-	// Identifier for the version to inherit the binding from, which can be the version
-	// ID or the literal "latest" to inherit from the latest version. Defaults to
-	// inheriting the binding from the latest version.
+	// Identifier for the version to inherit the binding from. This can be a version
+	// ID, or the literal "latest" to inherit from the most recently uploaded version,
+	// which may not be the deployed version. Defaults to "latest". Only the Workers
+	// API version endpoints under
+	// `/accounts/{account_id}/workers/workers/{worker_id}/versions` accept a version
+	// ID. Other endpoints, including script upload and script version upload, accept
+	// only "latest" and reject a version ID with error 10057.
 	VersionID param.Field[string] `json:"version_id"`
 	// Name of the Workflow to bind to.
 	WorkflowName param.Field[string] `json:"workflow_name"`
@@ -2693,6 +2706,7 @@ func (r ScriptVersionNewParamsMetadataBinding) implementsScriptVersionNewParamsM
 // [workers.ScriptVersionNewParamsMetadataBindingsWorkersBindingKindWasmModule],
 // [workers.ScriptVersionNewParamsMetadataBindingsWorkersBindingKindVPCService],
 // [workers.ScriptVersionNewParamsMetadataBindingsWorkersBindingKindVPCNetwork],
+// [workers.ScriptVersionNewParamsMetadataBindingsWorkersBindingKindWorkerLoader],
 // [ScriptVersionNewParamsMetadataBinding].
 type ScriptVersionNewParamsMetadataBindingUnion interface {
 	implementsScriptVersionNewParamsMetadataBindingUnion()
@@ -3168,9 +3182,13 @@ type ScriptVersionNewParamsMetadataBindingsWorkersBindingKindInherit struct {
 	// `old_name` to `name` in the new version. If not set, the binding will keep the
 	// same name between versions.
 	OldName param.Field[string] `json:"old_name"`
-	// Identifier for the version to inherit the binding from, which can be the version
-	// ID or the literal "latest" to inherit from the latest version. Defaults to
-	// inheriting the binding from the latest version.
+	// Identifier for the version to inherit the binding from. This can be a version
+	// ID, or the literal "latest" to inherit from the most recently uploaded version,
+	// which may not be the deployed version. Defaults to "latest". Only the Workers
+	// API version endpoints under
+	// `/accounts/{account_id}/workers/workers/{worker_id}/versions` accept a version
+	// ID. Other endpoints, including script upload and script version upload, accept
+	// only "latest" and reject a version ID with error 10057.
 	VersionID param.Field[string] `json:"version_id"`
 }
 
@@ -4027,10 +4045,12 @@ type ScriptVersionNewParamsMetadataBindingsWorkersBindingKindVPCNetwork struct {
 	// The kind of resource that the binding provides.
 	Type param.Field[ScriptVersionNewParamsMetadataBindingsWorkersBindingKindVPCNetworkType] `json:"type" api:"required"`
 	// Enables Gateway identity for the binding. Requires network_id to be
-	// "cf1:network" and cannot be combined with tunnel_id.
+	// "cf1:network" and cannot be combined with tunnel_id or an explicit
+	// "cf1:vnet:<UUID>" network_id.
 	Identity param.Field[ScriptVersionNewParamsMetadataBindingsWorkersBindingKindVPCNetworkIdentity] `json:"identity"`
-	// Identifier of the network to bind to. Only "cf1:network" is currently supported.
-	// Mutually exclusive with tunnel_id.
+	// Identifier of the network to bind to. Use "cf1:network" to select the account's
+	// default virtual network at runtime, or "cf1:vnet:<UUID>" to select an explicit
+	// virtual network in the Worker's account. Mutually exclusive with tunnel_id.
 	NetworkID param.Field[string] `json:"network_id"`
 	// UUID of the Cloudflare Tunnel to bind to. Mutually exclusive with network_id.
 	TunnelID param.Field[string] `json:"tunnel_id"`
@@ -4059,7 +4079,8 @@ func (r ScriptVersionNewParamsMetadataBindingsWorkersBindingKindVPCNetworkType) 
 }
 
 // Enables Gateway identity for the binding. Requires network_id to be
-// "cf1:network" and cannot be combined with tunnel_id.
+// "cf1:network" and cannot be combined with tunnel_id or an explicit
+// "cf1:vnet:<UUID>" network_id.
 type ScriptVersionNewParamsMetadataBindingsWorkersBindingKindVPCNetworkIdentity string
 
 const (
@@ -4069,6 +4090,35 @@ const (
 func (r ScriptVersionNewParamsMetadataBindingsWorkersBindingKindVPCNetworkIdentity) IsKnown() bool {
 	switch r {
 	case ScriptVersionNewParamsMetadataBindingsWorkersBindingKindVPCNetworkIdentityRuntimeEmailAlpha:
+		return true
+	}
+	return false
+}
+
+type ScriptVersionNewParamsMetadataBindingsWorkersBindingKindWorkerLoader struct {
+	// A JavaScript variable name for the binding.
+	Name param.Field[string] `json:"name" api:"required"`
+	// The kind of resource that the binding provides.
+	Type param.Field[ScriptVersionNewParamsMetadataBindingsWorkersBindingKindWorkerLoaderType] `json:"type" api:"required"`
+}
+
+func (r ScriptVersionNewParamsMetadataBindingsWorkersBindingKindWorkerLoader) MarshalJSON() (data []byte, err error) {
+	return apijson.MarshalRoot(r)
+}
+
+func (r ScriptVersionNewParamsMetadataBindingsWorkersBindingKindWorkerLoader) implementsScriptVersionNewParamsMetadataBindingUnion() {
+}
+
+// The kind of resource that the binding provides.
+type ScriptVersionNewParamsMetadataBindingsWorkersBindingKindWorkerLoaderType string
+
+const (
+	ScriptVersionNewParamsMetadataBindingsWorkersBindingKindWorkerLoaderTypeWorkerLoader ScriptVersionNewParamsMetadataBindingsWorkersBindingKindWorkerLoaderType = "worker_loader"
+)
+
+func (r ScriptVersionNewParamsMetadataBindingsWorkersBindingKindWorkerLoaderType) IsKnown() bool {
+	switch r {
+	case ScriptVersionNewParamsMetadataBindingsWorkersBindingKindWorkerLoaderTypeWorkerLoader:
 		return true
 	}
 	return false
@@ -4116,11 +4166,12 @@ const (
 	ScriptVersionNewParamsMetadataBindingsTypeWasmModule             ScriptVersionNewParamsMetadataBindingsType = "wasm_module"
 	ScriptVersionNewParamsMetadataBindingsTypeVPCService             ScriptVersionNewParamsMetadataBindingsType = "vpc_service"
 	ScriptVersionNewParamsMetadataBindingsTypeVPCNetwork             ScriptVersionNewParamsMetadataBindingsType = "vpc_network"
+	ScriptVersionNewParamsMetadataBindingsTypeWorkerLoader           ScriptVersionNewParamsMetadataBindingsType = "worker_loader"
 )
 
 func (r ScriptVersionNewParamsMetadataBindingsType) IsKnown() bool {
 	switch r {
-	case ScriptVersionNewParamsMetadataBindingsTypeAI, ScriptVersionNewParamsMetadataBindingsTypeAISearch, ScriptVersionNewParamsMetadataBindingsTypeAISearchNamespace, ScriptVersionNewParamsMetadataBindingsTypeMessaging, ScriptVersionNewParamsMetadataBindingsTypeAnalyticsEngine, ScriptVersionNewParamsMetadataBindingsTypeArtifacts, ScriptVersionNewParamsMetadataBindingsTypeAssets, ScriptVersionNewParamsMetadataBindingsTypeBrowser, ScriptVersionNewParamsMetadataBindingsTypeD1, ScriptVersionNewParamsMetadataBindingsTypeDataBlob, ScriptVersionNewParamsMetadataBindingsTypeDispatchNamespace, ScriptVersionNewParamsMetadataBindingsTypeDurableObjectNamespace, ScriptVersionNewParamsMetadataBindingsTypeHyperdrive, ScriptVersionNewParamsMetadataBindingsTypeInherit, ScriptVersionNewParamsMetadataBindingsTypeImages, ScriptVersionNewParamsMetadataBindingsTypeJson, ScriptVersionNewParamsMetadataBindingsTypeKVNamespace, ScriptVersionNewParamsMetadataBindingsTypeMedia, ScriptVersionNewParamsMetadataBindingsTypeMTLSCertificate, ScriptVersionNewParamsMetadataBindingsTypePlainText, ScriptVersionNewParamsMetadataBindingsTypePipelines, ScriptVersionNewParamsMetadataBindingsTypeK2, ScriptVersionNewParamsMetadataBindingsTypeQueue, ScriptVersionNewParamsMetadataBindingsTypeRatelimit, ScriptVersionNewParamsMetadataBindingsTypeR2Bucket, ScriptVersionNewParamsMetadataBindingsTypeSecretText, ScriptVersionNewParamsMetadataBindingsTypeSendEmail, ScriptVersionNewParamsMetadataBindingsTypeService, ScriptVersionNewParamsMetadataBindingsTypeTextBlob, ScriptVersionNewParamsMetadataBindingsTypeVectorize, ScriptVersionNewParamsMetadataBindingsTypeVersionMetadata, ScriptVersionNewParamsMetadataBindingsTypeSecretsStoreSecret, ScriptVersionNewParamsMetadataBindingsTypeFlagship, ScriptVersionNewParamsMetadataBindingsTypeSecretKey, ScriptVersionNewParamsMetadataBindingsTypeWorkflow, ScriptVersionNewParamsMetadataBindingsTypeWasmModule, ScriptVersionNewParamsMetadataBindingsTypeVPCService, ScriptVersionNewParamsMetadataBindingsTypeVPCNetwork:
+	case ScriptVersionNewParamsMetadataBindingsTypeAI, ScriptVersionNewParamsMetadataBindingsTypeAISearch, ScriptVersionNewParamsMetadataBindingsTypeAISearchNamespace, ScriptVersionNewParamsMetadataBindingsTypeMessaging, ScriptVersionNewParamsMetadataBindingsTypeAnalyticsEngine, ScriptVersionNewParamsMetadataBindingsTypeArtifacts, ScriptVersionNewParamsMetadataBindingsTypeAssets, ScriptVersionNewParamsMetadataBindingsTypeBrowser, ScriptVersionNewParamsMetadataBindingsTypeD1, ScriptVersionNewParamsMetadataBindingsTypeDataBlob, ScriptVersionNewParamsMetadataBindingsTypeDispatchNamespace, ScriptVersionNewParamsMetadataBindingsTypeDurableObjectNamespace, ScriptVersionNewParamsMetadataBindingsTypeHyperdrive, ScriptVersionNewParamsMetadataBindingsTypeInherit, ScriptVersionNewParamsMetadataBindingsTypeImages, ScriptVersionNewParamsMetadataBindingsTypeJson, ScriptVersionNewParamsMetadataBindingsTypeKVNamespace, ScriptVersionNewParamsMetadataBindingsTypeMedia, ScriptVersionNewParamsMetadataBindingsTypeMTLSCertificate, ScriptVersionNewParamsMetadataBindingsTypePlainText, ScriptVersionNewParamsMetadataBindingsTypePipelines, ScriptVersionNewParamsMetadataBindingsTypeK2, ScriptVersionNewParamsMetadataBindingsTypeQueue, ScriptVersionNewParamsMetadataBindingsTypeRatelimit, ScriptVersionNewParamsMetadataBindingsTypeR2Bucket, ScriptVersionNewParamsMetadataBindingsTypeSecretText, ScriptVersionNewParamsMetadataBindingsTypeSendEmail, ScriptVersionNewParamsMetadataBindingsTypeService, ScriptVersionNewParamsMetadataBindingsTypeTextBlob, ScriptVersionNewParamsMetadataBindingsTypeVectorize, ScriptVersionNewParamsMetadataBindingsTypeVersionMetadata, ScriptVersionNewParamsMetadataBindingsTypeSecretsStoreSecret, ScriptVersionNewParamsMetadataBindingsTypeFlagship, ScriptVersionNewParamsMetadataBindingsTypeSecretKey, ScriptVersionNewParamsMetadataBindingsTypeWorkflow, ScriptVersionNewParamsMetadataBindingsTypeWasmModule, ScriptVersionNewParamsMetadataBindingsTypeVPCService, ScriptVersionNewParamsMetadataBindingsTypeVPCNetwork, ScriptVersionNewParamsMetadataBindingsTypeWorkerLoader:
 		return true
 	}
 	return false
@@ -4146,7 +4197,8 @@ func (r ScriptVersionNewParamsMetadataBindingsFormat) IsKnown() bool {
 }
 
 // Enables Gateway identity for the binding. Requires network_id to be
-// "cf1:network" and cannot be combined with tunnel_id.
+// "cf1:network" and cannot be combined with tunnel_id or an explicit
+// "cf1:vnet:<UUID>" network_id.
 type ScriptVersionNewParamsMetadataBindingsIdentity string
 
 const (
@@ -4721,9 +4773,10 @@ func (r ScriptVersionNewParamsMetadataUsageModel) IsKnown() bool {
 	return false
 }
 
-// When set to "strict", the upload will fail if any `inherit` type bindings cannot
-// be resolved against the previous version of the Worker. Without this,
-// unresolvable inherit bindings are silently dropped.
+// When set to "strict", the upload will fail with error 10057 if any `inherit`
+// type bindings cannot be resolved against the latest uploaded version of the
+// Worker, which may not be the deployed version. Without this, unresolvable
+// inherit bindings are silently dropped.
 type ScriptVersionNewParamsBindingsInherit string
 
 const (
