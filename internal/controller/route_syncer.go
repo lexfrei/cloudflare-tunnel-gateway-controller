@@ -1090,20 +1090,23 @@ func (s *RouteSyncer) SyncAllRoutes(ctx context.Context) (ctrl.Result, *SyncResu
 	// the same physical tunnel as distinct and break the merge.
 	resolvedConfig.TunnelID = canonicalTunnelID(resolvedConfig.TunnelID)
 
-	// Create Cloudflare client with resolved credentials
-	cfClient := s.cloudflareClient(resolvedConfig)
-
 	// Resolve account ID (auto-detect if not in config) and stash it on the
 	// resolved config so the shared tunnel group below skips a second lookup.
 	// The account only serves the document write, so a failure here is left
-	// to that write, which retries it and counts the failure.
-	accountID, err := s.ConfigResolver.ResolveAccountID(ctx, cfClient, resolvedConfig)
-	if err != nil {
-		level := s.logRepeats.Level("account id", cfmetrics.ClassifyCloudflareError(err), slog.LevelError)
-		logger.Log(ctx, level, "failed to resolve account ID; the tunnel document write will retry it", "error", err)
-	}
+	// to that write, which retries it and counts the failure. In no-API mode
+	// (no class credentials) there is no document write to serve, and no
+	// credential to ask with, so the lookup is skipped entirely.
+	if resolvedConfig.APIToken != "" {
+		cfClient := s.cloudflareClient(resolvedConfig)
 
-	resolvedConfig.AccountID = accountID
+		accountID, err := s.ConfigResolver.ResolveAccountID(ctx, cfClient, resolvedConfig)
+		if err != nil {
+			level := s.logRepeats.Level("account id", cfmetrics.ClassifyCloudflareError(err), slog.LevelError)
+			logger.Log(ctx, level, "failed to resolve account ID; the tunnel document write will retry it", "error", err)
+		}
+
+		resolvedConfig.AccountID = accountID
+	}
 
 	// One merge-view cache for the whole sync: every route's ListenerSet
 	// parentRefs that resolve to the same Gateway reuse a single merge instead
@@ -1885,6 +1888,19 @@ func (s *RouteSyncer) syncTunnelGroup(
 	}
 
 	desiredRules := mergeAndSortRules(httpBuild.Rules, grpcBuild.Rules)
+
+	// No-API mode: with no credential there is nothing to write the document
+	// with, and nothing that needs it — the document only feeds the dashboard,
+	// while the proxy routes every request. The rules were still built above so
+	// backend-reference failures reach route status exactly as in API mode.
+	if group.resolved.APIToken == "" {
+		logger.Debug("no Cloudflare API credentials configured; leaving the tunnel ingress document unmanaged",
+			"tunnel", group.resolved.TunnelID)
+
+		result.ruleCount = len(ingress.EnsureCatchAll(desiredRules))
+
+		return result
+	}
 
 	cfClient := s.cloudflareClient(group.resolved)
 

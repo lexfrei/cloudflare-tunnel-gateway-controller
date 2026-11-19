@@ -69,7 +69,7 @@ func TestResolveFromGatewayClass_Valid(t *testing.T) {
 			Name: "test-config",
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
@@ -89,6 +89,39 @@ func TestResolveFromGatewayClass_Valid(t *testing.T) {
 	require.NotNil(t, resolved)
 	assert.Equal(t, "test-api-token", resolved.APIToken)
 	assert.Equal(t, "test-account-id", resolved.AccountID)
+	assert.Equal(t, "12345678-1234-1234-1234-123456789abc", resolved.TunnelID)
+	assert.Equal(t, "test-config", resolved.ConfigName)
+}
+
+// A GatewayClassConfig without a credentials ref resolves to no-API mode: an
+// empty API token, no Secret read and no error. The spec's accountId is still
+// carried through.
+func TestResolveFromGatewayClass_NoCredentialsRef_NoAPIMode(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-config",
+		},
+		Spec: v1alpha1.GatewayClassConfigSpec{
+			AccountID: "0123456789abcdef0123456789abcdef",
+			TunnelID:  "12345678-1234-1234-1234-123456789abc",
+		},
+	}
+
+	gatewayClass := newGatewayClass("test-class", "test-config")
+
+	fakeClient := setupFakeClient(gatewayClassConfig, gatewayClass)
+	resolver := config.NewResolver(fakeClient, "default", cfmetrics.NewNoopCollector())
+
+	resolved, err := resolver.ResolveFromGatewayClass(ctx, gatewayClass)
+
+	require.NoError(t, err)
+	require.NotNil(t, resolved)
+	assert.Empty(t, resolved.APIToken)
+	assert.Equal(t, "0123456789abcdef0123456789abcdef", resolved.AccountID)
 	assert.Equal(t, "12345678-1234-1234-1234-123456789abc", resolved.TunnelID)
 	assert.Equal(t, "test-config", resolved.ConfigName)
 }
@@ -203,7 +236,7 @@ func TestResolveFromGatewayClass_SecretNotFound(t *testing.T) {
 			Name: "test-config",
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "non-existent-secret",
 				Namespace: "default",
 			},
@@ -243,7 +276,7 @@ func TestResolveFromGatewayClass_MissingAPIToken(t *testing.T) {
 			Name: "test-config",
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
@@ -283,7 +316,7 @@ func TestResolveFromGatewayClassName_Valid(t *testing.T) {
 			Name: "test-config",
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
@@ -329,7 +362,7 @@ func TestResolveFromGatewayClass_EmptyTunnelIDIsInvalidParameters(t *testing.T) 
 	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
 		},
 	}
 	gatewayClass := newGatewayClass("test-class", "test-config")
@@ -353,7 +386,7 @@ func TestResolveFromGatewayClass_EmptyAPITokenIsInvalidParameters(t *testing.T) 
 	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
 			TunnelID:                       "12345678-1234-1234-1234-123456789abc",
 		},
 	}
@@ -412,7 +445,7 @@ func TestResolveConfig_DefaultNamespace(t *testing.T) {
 			Name: "test-config",
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "",
 			},
@@ -452,7 +485,7 @@ func TestResolveConfig_AccountIDFromSecret(t *testing.T) {
 			Name: "test-config",
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
@@ -493,7 +526,7 @@ func TestResolveConfig_AccountIDFromSpec(t *testing.T) {
 			Name: "test-config",
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
@@ -533,7 +566,7 @@ func TestResolveConfig_CustomAPITokenKey(t *testing.T) {
 			Name: "test-config",
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 				Key:       "my-custom-token-key",

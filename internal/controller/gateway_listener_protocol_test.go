@@ -35,7 +35,7 @@ func gatewayWithListenersFixture(listeners []gatewayv1.Listener) (*gatewayv1.Gat
 	gcc := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
 			TunnelID:                       "12345678-1234-1234-1234-123456789abc",
 		},
 	}

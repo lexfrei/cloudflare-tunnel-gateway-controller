@@ -34,10 +34,14 @@ func TestGatewayClassConfig_SchemaValidation(t *testing.T) {
 		name       string
 		tunnelID   string
 		secretName string
+		// omitRef leaves cloudflareCredentialsSecretRef unset (no-API mode),
+		// which the schema must accept.
+		omitRef bool
 		// wantField is the field path the rejection must name; empty means accepted.
 		wantField string
 	}{
 		{name: "valid spec accepted", tunnelID: validTunnelID, secretName: "cf-creds"},
+		{name: "spec without credentials ref accepted (no-API mode)", tunnelID: validTunnelID, omitRef: true},
 		{name: "uppercase tunnelID rejected", tunnelID: "12345678-1234-1234-1234-12345678901A", secretName: "cf-creds", wantField: tunnelIDField},
 		{name: "tunnelID without dashes rejected", tunnelID: "12345678123412341234123456789012", secretName: "cf-creds", wantField: tunnelIDField},
 		{name: "empty tunnelID rejected", tunnelID: "", secretName: "cf-creds", wantField: tunnelIDField},
@@ -51,9 +55,11 @@ func TestGatewayClassConfig_SchemaValidation(t *testing.T) {
 			gcc := &v1alpha1.GatewayClassConfig{
 				ObjectMeta: metav1.ObjectMeta{Name: stringHashSuffix("schema-test", idx, tc.name)},
 				Spec: v1alpha1.GatewayClassConfigSpec{
-					TunnelID:                       tc.tunnelID,
-					CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: tc.secretName},
+					TunnelID: tc.tunnelID,
 				},
+			}
+			if !tc.omitRef {
+				gcc.Spec.CloudflareCredentialsSecretRef = &v1alpha1.SecretReference{Name: tc.secretName}
 			}
 
 			err := envK8sClient.Create(context.Background(), gcc)

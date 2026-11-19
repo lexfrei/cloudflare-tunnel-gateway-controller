@@ -124,7 +124,7 @@ func TestGatewayReconciler_StripsLegacyFinalizerOnDelete(t *testing.T) {
 	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
@@ -396,7 +396,7 @@ func TestGatewayReconciler_DoesNotStripLegacyFinalizerFromLiveGateway(t *testing
 	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
@@ -477,7 +477,7 @@ func TestGatewayReconciler_DeleteWithoutLegacyFinalizer_NoOp(t *testing.T) {
 	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
@@ -630,7 +630,7 @@ func TestGatewayReconciler_UpdateStatus(t *testing.T) {
 			Name: "test-config",
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
@@ -722,7 +722,7 @@ func TestGatewayReconciler_PreservesForeignStatusConditions(t *testing.T) {
 	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
 			TunnelID:                       "12345678-1234-1234-1234-123456789abc",
 		},
 	}
@@ -810,7 +810,7 @@ func TestGatewayReconciler_UpdateStatus_SkipsObservedGenerationRegression(t *tes
 	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
 			TunnelID:                       "12345678-1234-1234-1234-123456789abc",
 		},
 	}
@@ -881,7 +881,7 @@ func TestGatewayReconciler_ConflictedListenersSetListenersNotValid(t *testing.T)
 	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
 			TunnelID:                       "12345678-1234-1234-1234-123456789abc",
 		},
 	}
@@ -1540,7 +1540,7 @@ func TestGatewayReconciler_ConfigError_Recovery(t *testing.T) {
 	classConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-creds",
 				Namespace: "default",
 			},
@@ -3345,7 +3345,7 @@ func TestGatewayReconciler_UpdateStatus_WithUnsupportedRouteKind(t *testing.T) {
 			Name: "test-config",
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-creds",
 				Namespace: "default",
 			},
@@ -4062,7 +4062,7 @@ func TestGatewayReconciler_UpdateStatus_UnresolvedRefs_ProgrammedFalse(t *testin
 			Name: "test-config",
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-creds",
 				Namespace: "default",
 			},

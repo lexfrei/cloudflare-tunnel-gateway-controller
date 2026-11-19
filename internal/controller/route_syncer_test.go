@@ -1067,7 +1067,7 @@ func TestRouteSyncer_SyncAllRoutes_AccountIDResolveFailure(t *testing.T) {
 			Name: "test-config",
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-creds",
 				Namespace: "default",
 			},
@@ -1138,7 +1138,7 @@ func TestRouteSyncer_SyncAllRoutes_TunnelConfigGetFailure(t *testing.T) {
 			Name: "test-config",
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-creds",
 				Namespace: "default",
 			},

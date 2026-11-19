@@ -50,7 +50,7 @@ func TestGatewayClassConfigSpec_FieldsPresent(t *testing.T) {
 	t.Parallel()
 
 	spec := GatewayClassConfigSpec{
-		CloudflareCredentialsSecretRef: SecretReference{
+		CloudflareCredentialsSecretRef: &SecretReference{
 			Name: "cf-creds",
 		},
 		AccountID: "test-account",
@@ -160,7 +160,7 @@ func TestGatewayClassConfigSpec_DeepCopy(t *testing.T) {
 		{
 			name: "full struct",
 			in: &GatewayClassConfigSpec{
-				CloudflareCredentialsSecretRef: SecretReference{
+				CloudflareCredentialsSecretRef: &SecretReference{
 					Name:      "cf-creds",
 					Namespace: "cf-ns",
 				},
@@ -184,7 +184,12 @@ func TestGatewayClassConfigSpec_DeepCopy(t *testing.T) {
 			require.NotNil(t, out)
 			assert.Equal(t, tt.in.AccountID, out.AccountID)
 			assert.Equal(t, tt.in.TunnelID, out.TunnelID)
-			assert.Equal(t, tt.in.CloudflareCredentialsSecretRef.Name, out.CloudflareCredentialsSecretRef.Name)
+			assert.Equal(t, tt.in.CloudflareCredentialsSecretRef, out.CloudflareCredentialsSecretRef)
+
+			// The optional ref must be deep-copied, not aliased.
+			if tt.in.CloudflareCredentialsSecretRef != nil {
+				assert.NotSame(t, tt.in.CloudflareCredentialsSecretRef, out.CloudflareCredentialsSecretRef)
+			}
 		})
 	}
 }

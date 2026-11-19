@@ -251,6 +251,20 @@ func (r *Resolver) resolveStatusConfig(
 		return nil, err
 	}
 
+	// A dedicated data plane is refused without an API credential. Its tunnel
+	// claim can only be verified against Cloudflare, and serving the plane on
+	// an unverifiable claim would let a fabricated token capture another
+	// tenant's routes; unlike a transient Secret blip this never heals on its
+	// own, so it is a deterministic spec problem, not a retry.
+	if apiToken == "" {
+		return nil, errors.Wrapf(ErrInvalidParameters,
+			"per-Gateway data planes need a Cloudflare API credential to verify their tunnel claim, "+
+				"and neither GatewayConfig %s/%s nor the GatewayClassConfig of class %q names one: "+
+				"in no-API mode only the shared data plane is available, "+
+				"or set GatewayConfig.spec.cloudflareCredentialsSecretRef",
+			gwConfig.Namespace, gwConfig.Name, gateway.Spec.GatewayClassName)
+	}
+
 	return &PerGatewayConfig{
 		APIToken: apiToken,
 		// The tunnel lives in the token's account by construction.

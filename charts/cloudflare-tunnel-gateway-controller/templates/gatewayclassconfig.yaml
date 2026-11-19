@@ -6,14 +6,16 @@ metadata:
   labels:
     {{- include "cf-tunnel-gw-ctrl.labels" . | nindent 4 }}
 spec:
+  {{- if .Values.gatewayClassConfig.cloudflareCredentialsSecretRef.name }}
   cloudflareCredentialsSecretRef:
-    name: {{ required "gatewayClassConfig.cloudflareCredentialsSecretRef.name is required" .Values.gatewayClassConfig.cloudflareCredentialsSecretRef.name }}
+    name: {{ .Values.gatewayClassConfig.cloudflareCredentialsSecretRef.name }}
     {{- if .Values.gatewayClassConfig.cloudflareCredentialsSecretRef.namespace }}
     namespace: {{ .Values.gatewayClassConfig.cloudflareCredentialsSecretRef.namespace }}
     {{- end }}
     {{- if .Values.gatewayClassConfig.cloudflareCredentialsSecretRef.key }}
     key: {{ .Values.gatewayClassConfig.cloudflareCredentialsSecretRef.key }}
     {{- end }}
+  {{- end }}
   {{- if .Values.gatewayClassConfig.accountId }}
   accountId: {{ .Values.gatewayClassConfig.accountId | quote }}
   {{- end }}

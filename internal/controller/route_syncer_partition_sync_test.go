@@ -286,7 +286,7 @@ func partitionSyncObjects(t *testing.T, classTunnelID string, allowShared bool) 
 		&v1alpha1.GatewayClassConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "cfg"},
 			Spec: v1alpha1.GatewayClassConfigSpec{
-				CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "creds", Namespace: "default"},
+				CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{Name: "creds", Namespace: "default"},
 				AccountID:                      "test-account",
 				TunnelID:                       classTunnelID,
 				AllowSharedTunnels:             allowShared,

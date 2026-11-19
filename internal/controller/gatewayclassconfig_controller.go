@@ -138,6 +138,11 @@ func (r *GatewayClassConfigReconciler) validateCredentialsSecret(
 	config *v1alpha1.GatewayClassConfig,
 ) (bool, []string) {
 	credRef := config.Spec.CloudflareCredentialsSecretRef
+	if credRef == nil {
+		// No-API mode: nothing is referenced, so there is nothing to resolve
+		// or to fail — the config is valid without a credentials Secret.
+		return true, nil
+	}
 
 	credNamespace := credRef.Namespace
 	if credNamespace == "" {
