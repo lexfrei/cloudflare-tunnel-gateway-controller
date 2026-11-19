@@ -16,15 +16,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
-// The exact errors controller-runtime's multiNamespaceCache returns for a
-// read outside its namespace set
-// (vendor/sigs.k8s.io/controller-runtime/pkg/cache/multi_namespace_cache.go),
-// plus an unrelated failure for the pass-through case.
-var (
-	errOutOfScopeGet  = errors.New("unable to get: unlisted/edge-cert because of unknown namespace for the cache")
-	errOutOfScopeList = errors.New("unable to list: unlisted because of unknown namespace for the cache")
-	errAPIServerDown  = errors.New("the apiserver is on fire")
-)
+// errAPIServerDown is an unrelated failure for the pass-through case. The
+// out-of-scope errors themselves are NOT hand-copied here: the tests below
+// read through a real controller-runtime cache (newScopedSecretCacheAndClient,
+// secret_scope_client_realcache_test.go), so a controller-runtime upgrade that
+// rewords the cache's error breaks them instead of passing silently.
+var errAPIServerDown = errors.New("the apiserver is on fire")
 
 // TestSecretScopeClient_OutOfScopeReadIsNotFound pins the error contract the
 // scoped Secret cache needs: the multi-namespace cache reports a
@@ -33,19 +30,14 @@ var (
 // out-of-scope Secret would then stall its whole partition's config push and
 // requeue forever. The wrapper turns it into a deterministic NotFound, so the
 // reference is refused and isolated exactly like a missing Secret, with the
-// remedy in the message.
+// remedy in the message. The read goes through a real scoped cache built with
+// cache.New, exactly as the manager wires it.
 func TestSecretScopeClient_OutOfScopeReadIsNotFound(t *testing.T) {
 	t.Parallel()
 
 	key := types.NamespacedName{Namespace: "unlisted", Name: "edge-cert"}
 
-	inner := fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
-		Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
-			return errOutOfScopeGet
-		},
-	}).Build()
-
-	wrapped := &secretScopeClient{Client: inner}
+	_, wrapped := newScopedSecretCacheAndClient(t, "listed")
 
 	err := wrapped.Get(context.Background(), key, &corev1.Secret{})
 	require.Error(t, err)
@@ -84,16 +76,11 @@ func TestSecretScopeClient_OtherErrorsAndHitsPassThrough(t *testing.T) {
 }
 
 // TestSecretScopeClient_ListConversion pins the same contract for List, which
-// the multi-namespace cache refuses with the sibling message.
+// the real multi-namespace cache refuses with the sibling message.
 func TestSecretScopeClient_ListConversion(t *testing.T) {
 	t.Parallel()
 
-	inner := fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
-		List: func(_ context.Context, _ client.WithWatch, _ client.ObjectList, _ ...client.ListOption) error {
-			return errOutOfScopeList
-		},
-	}).Build()
-	wrapped := &secretScopeClient{Client: inner}
+	_, wrapped := newScopedSecretCacheAndClient(t, "listed")
 
 	err := wrapped.List(context.Background(), &corev1.SecretList{}, client.InNamespace("unlisted"))
 	require.Error(t, err)
