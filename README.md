@@ -261,6 +261,8 @@ For security issues, please see [SECURITY.md](SECURITY.md).
 
 The proxy's config API (where the controller pushes routing changes) is authenticated, served over TLS with certificates the controller issues itself, and network-restricted by default — see the [Security reference](https://cf.k8s.lex.la/latest/reference/security/).
 
+The proxy reads its tunnel connector token from a mounted Secret file (`TUNNEL_TOKEN_FILE`), never from a process environment variable. Installations that only use the shared data plane can set `perGatewayDataPlanes.enabled=false` to drop the cluster-wide RBAC that exists only for per-Gateway data planes — including cluster-wide Secret access, which becomes namespaced Roles with the controller's cache scoped to match; Gateways requesting a dedicated plane are then refused with a clear condition — see the [Security reference](https://cf.k8s.lex.la/latest/reference/security/).
+
 For multi-tenant deployments — isolation boundaries, hostname-ownership enforcement, and per-Gateway data planes — see the [Multi-Tenancy guide](https://cf.k8s.lex.la/latest/guides/multi-tenancy/).
 
 ## License

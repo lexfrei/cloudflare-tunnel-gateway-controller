@@ -55,13 +55,18 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get", "list", "watch"]
-  # Services: read everywhere (backend resolution) plus full write for the
-  # per-Gateway data planes — the controller renders a headless config
-  # Service per opted-in Gateway (issue #479). Rendered objects are
-  # controller-owned via ownerReferences and deleted only when owned.
+  # Services: read everywhere (backend resolution) plus, when per-Gateway
+  # data planes are enabled, full write — the controller renders a headless
+  # config Service per opted-in Gateway (issue #479). Rendered objects are
+  # controller-owned via ownerReferences and deleted only when owned. With
+  # the planes off, nothing writes Services, so read-only.
   - apiGroups: [""]
     resources: ["services"]
+    {{- if (eq (include "cf-tunnel-gw-ctrl.perGatewayPlanesEnabled" .) "true") }}
     verbs: ["get", "list", "watch", "create", "update", "delete"]
+    {{- else }}
+    verbs: ["get", "list", "watch"]
+    {{- end }}
   # EndpointSlice: the ProxyEndpointReconciler watches EndpointSlices owned
   # by the proxy headless Service so that a newly-joined proxy pod gets
   # the cached config pushed to it immediately, rather than waiting for
@@ -75,22 +80,32 @@ rules:
   # proxy Deployment per opted-in Gateway — full write, cluster-wide,
   # because Gateways live in arbitrary namespaces. Rendered objects are
   # controller-owned via ownerReferences and deleted only when owned.
+  # With the planes off only reads stay cluster-wide; the shared-plane
+  # token-rotation patch moves to a Role in the release namespace
+  # (role-secrets.yaml), the one namespace it ever touches.
   - apiGroups: ["apps"]
     resources: ["deployments"]
+    {{- if (eq (include "cf-tunnel-gw-ctrl.perGatewayPlanesEnabled" .) "true") }}
     # patch IS used here (unlike services/HPA/NetworkPolicy): the proxy Secret
     # reconciler merge-patches the SHARED proxy Deployment's token-revision
     # annotations: its own metadata to record the revision, and the pod
     # template to roll it on tunnel-token rotation.
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    {{- else }}
+    verbs: ["get", "list", "watch"]
+    {{- end }}
+  {{- if (eq (include "cf-tunnel-gw-ctrl.perGatewayPlanesEnabled" .) "true") }}
   # HorizontalPodAutoscalers: rendered per opted-in Gateway when its
-  # GatewayConfig requests autoscaling (issue #479).
+  # GatewayConfig requests autoscaling (issue #479). Only the per-Gateway
+  # reconciler touches HPAs, so the whole rule exists only with the planes on.
   - apiGroups: ["autoscaling"]
     resources: ["horizontalpodautoscalers"]
     verbs: ["get", "list", "watch", "create", "update", "delete"]
   # NetworkPolicies: rendered per opted-in Gateway to lock the proxy's
   # config-API port to the controller (+ monitoring) namespaces — network-layer
   # defense-in-depth on the tenant config API. Controller-owned, GC'd by
-  # ownerReference.
+  # ownerReference. The shared proxy's NetworkPolicy is chart-rendered, not
+  # controller-written, so this rule too exists only with the planes on.
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     # No patch: written via CreateOrUpdate + Delete only (see deployments).
@@ -107,9 +122,15 @@ rules:
   # update/delete here: the token is never rotated, a per-Gateway certificate
   # is renewed into a new Secret, and the one Secret renewed in place, the
   # shared plane's certificate, gets update from role-config-tls.yaml.
+  # Cluster-wide only because rendered data planes live in arbitrary Gateway
+  # namespaces; with the planes off, Secret access moves entirely to
+  # namespaced Roles (role-secrets.yaml) and the controller's cache is scoped
+  # to match — the controller can then read no Secret outside the listed
+  # namespaces.
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch", "create"]
+  {{- end }}
   # ConfigMaps: BackendTLSPolicy can reference a ConfigMap holding the CA
   # bundle (internal/controller/backendtlspolicy_controller.go). Read-only.
   - apiGroups: [""]
