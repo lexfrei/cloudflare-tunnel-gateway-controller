@@ -167,7 +167,10 @@ tests:
           path: spec.template.spec.containers[0].imagePullPolicy
           value: "Always"
 
-  - it: should mount tunnel token from secret
+  # The connector token is delivered as a mounted Secret file read via
+  # TUNNEL_TOKEN_FILE — never a secretKeyRef env, which would sit in
+  # /proc/<pid>/environ for the pod's whole life.
+  - it: should mount the tunnel token file from the secret
     set:
       proxy:
         tunnelTokenSecretRef:
@@ -177,26 +180,55 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: TUNNEL_TOKEN
-            valueFrom:
-              secretKeyRef:
-                name: my-tunnel-secret
-                key: my-key
+            name: TUNNEL_TOKEN_FILE
+            value: /etc/cf-proxy/tunnel-token/tunnel-token
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: tunnel-token
+            secret:
+              secretName: my-tunnel-secret
+              items:
+                - key: my-key
+                  path: tunnel-token
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: tunnel-token
+            mountPath: /etc/cf-proxy/tunnel-token
+            readOnly: true
 
-  - it: should use default tunnel token key
+  - it: should project the default tunnel token key to the fixed file name
     set:
       proxy:
         tunnelTokenSecretRef:
           name: my-tunnel-secret
     asserts:
       - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: tunnel-token
+            secret:
+              secretName: my-tunnel-secret
+              items:
+                - key: tunnel-token
+                  path: tunnel-token
+
+  - it: should never wire the token through the TUNNEL_TOKEN env
+    set:
+      proxy:
+        tunnelTokenSecretRef:
+          name: my-tunnel-secret
+          key: my-key
+    asserts:
+      - notContains:
           path: spec.template.spec.containers[0].env
           content:
             name: TUNNEL_TOKEN
             valueFrom:
               secretKeyRef:
                 name: my-tunnel-secret
-                key: tunnel-token
+                key: my-key
 
   - it: should set config API and proxy ports
     set:

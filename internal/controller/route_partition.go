@@ -416,6 +416,22 @@ func (s *RouteSyncer) resolveInfraGateways(ctx context.Context) (*infraGateways,
 		listed:    gateways,
 	}
 
+	// Per-Gateway data planes disabled for the installation: every opted-in
+	// Gateway is refused as a whole, BEFORE any resolve — resolving would read
+	// the Gateway's connector-token Secret, which the scoped Secret cache
+	// cannot see, and fail noisily on every sync. Refused, not broken: the
+	// verdict is deterministic (the Gateway reconciler carries it as
+	// Accepted=False/PerGatewayDataPlanesDisabled), and refused routes are
+	// served from no partition rather than falling back to the shared plane.
+	if s.PerGatewayPlanesDisabled {
+		out.refused = make(map[string]bool, len(gateways))
+		for _, gateway := range gateways {
+			out.refused[gateway.Namespace+"/"+gateway.Name] = true
+		}
+
+		return out, nil
+	}
+
 	for _, gateway := range gateways {
 		key := gateway.Namespace + "/" + gateway.Name
 

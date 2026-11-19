@@ -155,6 +155,34 @@ gets the default instead of a nil-pointer failure.
 {{- end }}
 
 {{/*
+"true" when per-Gateway dedicated data planes are enabled. Read through dig
+for the same --reuse-values reason as configAPITLSEnabled: a values set from
+a release older than the toggle must keep the pre-toggle behaviour (enabled).
+*/}}
+{{- define "cf-tunnel-gw-ctrl.perGatewayPlanesEnabled" -}}
+{{- if dig "enabled" true (.Values.perGatewayDataPlanes | default dict) -}}true{{- end -}}
+{{- end }}
+
+{{/*
+The namespaces the controller may read Secrets in when per-Gateway data
+planes are off, deduplicated, release namespace first: the release namespace,
+the Cloudflare credentials Secret's namespace (when the chart knows it), and
+perGatewayDataPlanes.extraSecretNamespaces. Feeds both --secret-namespaces
+and the per-namespace Roles, so the cache scope and the RBAC can never
+disagree.
+*/}}
+{{- define "cf-tunnel-gw-ctrl.secretNamespaces" -}}
+{{- $namespaces := list .Release.Namespace -}}
+{{- with ((.Values.gatewayClassConfig | default dict).cloudflareCredentialsSecretRef | default dict).namespace -}}
+{{- $namespaces = append $namespaces . -}}
+{{- end -}}
+{{- range (.Values.perGatewayDataPlanes | default dict).extraSecretNamespaces -}}
+{{- $namespaces = append $namespaces . -}}
+{{- end -}}
+{{- $namespaces | uniq | join "," -}}
+{{- end }}
+
+{{/*
 Proxy labels
 */}}
 {{- define "cf-tunnel-gw-ctrl.proxyLabels" -}}

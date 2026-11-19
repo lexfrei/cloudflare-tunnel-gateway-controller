@@ -1,0 +1,190 @@
+suite: test the perGatewayDataPlanes RBAC toggle
+templates:
+  - clusterrole.yaml
+  - role-secrets.yaml
+  - deployment.yaml
+tests:
+  # With per-Gateway data planes off, the cluster-wide grants that exist only
+  # for them are left out entirely: no cluster-wide write on Services,
+  # Deployments, HPAs or NetworkPolicies, and NO cluster-wide Secret rule at
+  # all — on a shared-plane-only cluster the controller must not be able to
+  # read every Secret on the box.
+  - it: should drop every per-gateway write grant when disabled
+    template: clusterrole.yaml
+    set:
+      perGatewayDataPlanes:
+        enabled: false
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["services"]
+            verbs: ["get", "list", "watch"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["apps"]
+            resources: ["deployments"]
+            verbs: ["get", "list", "watch"]
+      - notContains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["services"]
+            verbs: ["get", "list", "watch", "create", "update", "delete"]
+      - notContains:
+          path: rules
+          content:
+            apiGroups: ["apps"]
+            resources: ["deployments"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+      # Whole rules, not just write verbs: nothing reads HPAs or
+      # NetworkPolicies when the per-Gateway reconciler is off.
+      - notContains:
+          path: rules
+          content:
+            apiGroups: ["autoscaling"]
+            resources: ["horizontalpodautoscalers"]
+          any: true
+      - notContains:
+          path: rules
+          content:
+            apiGroups: ["networking.k8s.io"]
+            resources: ["networkpolicies"]
+          any: true
+      - notContains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["secrets"]
+          any: true
+
+  # The default (enabled) keeps today's grants — pinned here only lightly,
+  # because rbac_test.yaml asserts the full default rule set and
+  # internal/rbacdrift pins it against deploy/rbac/role.yaml.
+  - it: should keep the cluster-wide secret rule when enabled
+    template: clusterrole.yaml
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["secrets"]
+            verbs: ["get", "list", "watch", "create"]
+
+  - it: should render no namespaced secret roles when enabled
+    template: role-secrets.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: should render the release-namespace role with secret and proxy-deployment grants when disabled
+    template: role-secrets.yaml
+    set:
+      perGatewayDataPlanes:
+        enabled: false
+    asserts:
+      - hasDocuments:
+          count: 2
+      # Document 0 is the Role, 1 its RoleBinding (template order).
+      - documentIndex: 0
+        isKind:
+          of: Role
+      - documentIndex: 0
+        equal:
+          path: metadata.namespace
+          value: NAMESPACE
+      - documentIndex: 0
+        contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["secrets"]
+            verbs: ["get", "list", "watch", "create"]
+      # The shared proxy Deployment's token-rotation merge-patch (issue #114)
+      # moves here from the ClusterRole, named to the one Deployment it rolls.
+      - documentIndex: 0
+        contains:
+          path: rules
+          content:
+            apiGroups: ["apps"]
+            resources: ["deployments"]
+            resourceNames: ["RELEASE-NAME-cloudflare-tunnel-gateway-controller-proxy"]
+            verbs: ["patch"]
+      - documentIndex: 1
+        isKind:
+          of: RoleBinding
+      - documentIndex: 1
+        equal:
+          path: roleRef.name
+          value: RELEASE-NAME-cloudflare-tunnel-gateway-controller-secrets
+
+  - it: should render read-only roles in the extra secret namespaces when disabled
+    template: role-secrets.yaml
+    set:
+      perGatewayDataPlanes:
+        enabled: false
+        extraSecretNamespaces:
+          - tenant-a
+    asserts:
+      - hasDocuments:
+          count: 4
+      # Documents 2 and 3 are tenant-a's Role and RoleBinding (template order,
+      # after the release namespace's pair).
+      - documentIndex: 2
+        isKind:
+          of: Role
+      - documentIndex: 2
+        equal:
+          path: metadata.namespace
+          value: tenant-a
+      - documentIndex: 2
+        contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["secrets"]
+            verbs: ["get", "list", "watch"]
+      # Read-only there: create (and the deployment patch) stay confined to
+      # the release namespace.
+      - documentIndex: 2
+        notContains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["secrets"]
+            verbs: ["get", "list", "watch", "create"]
+      - documentIndex: 3
+        isKind:
+          of: RoleBinding
+      - documentIndex: 3
+        equal:
+          path: metadata.namespace
+          value: tenant-a
+
+  - it: should wire the controller flags to match the namespaced roles when disabled
+    template: deployment.yaml
+    set:
+      perGatewayDataPlanes:
+        enabled: false
+        extraSecretNamespaces:
+          - tenant-a
+      gatewayClassConfig:
+        cloudflareCredentialsSecretRef:
+          name: cf-credentials
+          namespace: cf-creds
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--per-gateway-data-planes=false"
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--secret-namespaces=NAMESPACE,cf-creds,tenant-a"
+
+  - it: should pass no toggle flags when enabled
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: "--per-gateway-data-planes=false"

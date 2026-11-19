@@ -44,11 +44,14 @@ spec:
           image: {{ include "cf-tunnel-gw-ctrl.imageRef" (dict "image" .Values.proxy.image "appVersion" .Chart.AppVersion) | quote }}
           imagePullPolicy: {{ .Values.proxy.image.pullPolicy }}
           env:
-            - name: TUNNEL_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ required "proxy.tunnelTokenSecretRef.name is required" .Values.proxy.tunnelTokenSecretRef.name }}
-                  key: {{ .Values.proxy.tunnelTokenSecretRef.key | default "tunnel-token" }}
+            # The connector token is a mounted Secret file (see the
+            # tunnel-token volume below), never a secretKeyRef env: an env
+            # token sits in /proc/<pid>/environ for the pod's whole life and
+            # is routinely captured by crash dumps and debug tooling. The
+            # proxy reads it once at start, like upstream cloudflared's
+            # --token-file.
+            - name: TUNNEL_TOKEN_FILE
+              value: /etc/cf-proxy/tunnel-token/tunnel-token
             - name: PROXY_CONFIG_ADDR
               value: ":{{ .Values.proxy.configAPIPort }}"
             - name: PROXY_ADDR
@@ -121,12 +124,15 @@ spec:
             - name: PROXY_TRACING_SAMPLE_RATE
               value: {{ .Values.proxy.tracing.sampleRate | quote }}
             {{- end }}
-          {{- if (eq (include "cf-tunnel-gw-ctrl.configAPITLSEnabled" .) "true") }}
           volumeMounts:
+            - name: tunnel-token
+              mountPath: /etc/cf-proxy/tunnel-token
+              readOnly: true
+            {{- if (eq (include "cf-tunnel-gw-ctrl.configAPITLSEnabled" .) "true") }}
             - name: config-tls
               mountPath: /etc/cf-proxy/config-tls
               readOnly: true
-          {{- end }}
+            {{- end }}
           ports:
             - name: config-api
               containerPort: {{ .Values.proxy.configAPIPort }}
@@ -169,15 +175,24 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.proxy.resources | nindent 12 }}
-      {{- if (eq (include "cf-tunnel-gw-ctrl.configAPITLSEnabled" .) "true") }}
-      # The controller creates this Secret on its first issuance pass, run by
-      # the elected replica when leader election is on; until then the pod
-      # waits in ContainerCreating rather than serving plaintext.
       volumes:
+        # Only the token key is projected, so unrelated keys in the Secret
+        # never land on the pod's filesystem; the fixed file name keeps the
+        # mounted path independent of the (configurable) Secret key.
+        - name: tunnel-token
+          secret:
+            secretName: {{ required "proxy.tunnelTokenSecretRef.name is required" .Values.proxy.tunnelTokenSecretRef.name }}
+            items:
+              - key: {{ .Values.proxy.tunnelTokenSecretRef.key | default "tunnel-token" }}
+                path: tunnel-token
+        {{- if (eq (include "cf-tunnel-gw-ctrl.configAPITLSEnabled" .) "true") }}
+        # The controller creates this Secret on its first issuance pass, run by
+        # the elected replica when leader election is on; until then the pod
+        # waits in ContainerCreating rather than serving plaintext.
         - name: config-tls
           secret:
             secretName: {{ include "cf-tunnel-gw-ctrl.proxyConfigTLSSecretName" . }}
-      {{- end }}
+        {{- end }}
       {{- with .Values.proxy.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

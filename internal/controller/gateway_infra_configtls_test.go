@@ -50,8 +50,10 @@ func mountedLeaf(t *testing.T, c client.Client) string {
 	require.NoError(t, c.Get(context.Background(),
 		types.NamespacedName{Name: "cf-proxy-edge", Namespace: infraNamespace}, &deployment))
 
+	// The tunnel-token Secret volume is always rendered; the leaf is the
+	// config-tls volume specifically.
 	for _, volume := range deployment.Spec.Template.Spec.Volumes {
-		if volume.Secret != nil {
+		if volume.Name == "config-tls" && volume.Secret != nil {
 			return volume.Secret.SecretName
 		}
 	}

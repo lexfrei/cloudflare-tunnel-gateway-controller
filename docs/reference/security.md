@@ -66,7 +66,7 @@ The Cloudflare API token is sensitive and should be:
 
 ### RBAC Configuration
 
-The controller requires specific Kubernetes permissions:
+The controller requires specific Kubernetes permissions. The block below is the default scope, with per-Gateway dedicated data planes enabled; `perGatewayDataPlanes.enabled=false` renders a strictly smaller one (no cluster-wide Secret rule, no cluster-wide writes — see the admonitions further down):
 
 ```yaml
 # Minimum required permissions -- matches charts/.../templates/clusterrole.yaml
@@ -190,6 +190,10 @@ rules:
     Note that `list` and `watch` are not a milder grant than `get`: a List response carries the Secret contents, and the controller's informer cache holds every Secret in the cluster in memory. `create` is not read-only either — a Secret of type `kubernetes.io/service-account-token` carrying the `kubernetes.io/service-account.name` annotation is still populated with a working token by the control plane, so `create` together with the `get` above mints credentials for any ServiceAccount in any namespace.
 
     Concretely: anyone who can run code in the controller pod can read every Secret in the cluster and can escalate to any ServiceAccount in it. **The controller is a cluster-admin-equivalent workload** — restrict who can write to its release namespace, keep its ServiceAccount unshared, and verify the image signature before deploying (see [Container Image Verification](#container-image-verification)).
+
+    **A shared-plane-only installation can opt out of all of this.** Everything above exists for per-Gateway dedicated data planes; the shared plane's own Secrets live in enumerable namespaces. Setting the chart's `perGatewayDataPlanes.enabled=false` removes the cluster-wide Secret rule — and the cluster-wide write grants on Deployments, Services, HorizontalPodAutoscalers and NetworkPolicies — entirely: Secret access becomes namespaced Roles in the release namespace plus `perGatewayDataPlanes.extraSecretNamespaces` (for credentials Secrets kept elsewhere, listener `certificateRefs` and BackendTLSPolicy CA Secrets), the controller's informer cache is scoped to the same list (`--secret-namespaces`), and a Gateway requesting a dedicated plane is refused with `Accepted=False/PerGatewayDataPlanesDisabled`. A Secret reference outside the listed namespaces is treated exactly like a missing Secret (a deterministic refusal of that one reference, with the remedy in the message); add the namespace to the list to admit it.
+
+    Order matters when disabling on a cluster that already runs dedicated planes: tear them down first (delete the opted-in Gateways, or remove their `parametersRef` while the feature is still on). Once the write RBAC is withdrawn the controller cannot remove a leftover plane, whose connector keeps serving its last-pushed routes while its Gateway reports `Accepted=False` — the controller logs an Error for each leftover it finds at startup.
 
 ### Multi-Tenancy
 

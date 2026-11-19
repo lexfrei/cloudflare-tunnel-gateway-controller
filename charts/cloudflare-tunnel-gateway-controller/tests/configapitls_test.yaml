@@ -143,10 +143,19 @@ tests:
         configAPITLS:
           enabled: false
     asserts:
-      - notExists:
+      # The tunnel-token Secret volume is always rendered (the token is
+      # file-delivered); only the config-tls volume must disappear.
+      - notContains:
           path: spec.template.spec.volumes
-      - notExists:
+          content:
+            name: config-tls
+          any: true
+      - notContains:
           path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: config-tls
+            mountPath: /etc/cf-proxy/config-tls
+            readOnly: true
       - notContains:
           path: spec.template.spec.containers[0].env
           content:

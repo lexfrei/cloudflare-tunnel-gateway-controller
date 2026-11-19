@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-// proxyEnvVar matches every PROXY_* / TUNNEL_TOKEN environment-variable name the
-// proxy binary reads, whether via os.Getenv or a helper (envOrDefault,
+// proxyEnvVar matches every PROXY_* / TUNNEL_TOKEN* environment-variable name
+// the proxy binary reads, whether via os.Getenv or a helper (envOrDefault,
 // parseEnvDuration, isTruthyEnv, …) — they all pass the name as a string
 // literal.
-var proxyEnvVar = regexp.MustCompile(`"(PROXY_[A-Z0-9_]+|TUNNEL_TOKEN)"`)
+var proxyEnvVar = regexp.MustCompile(`"(PROXY_[A-Z0-9_]+|TUNNEL_TOKEN(?:_FILE)?)"`)
 
 // TestProxyEnvVarsDocumented locks the proxy's environment-variable surface to
 // its reference: every PROXY_* / TUNNEL_TOKEN name read in cmd/proxy/main.go

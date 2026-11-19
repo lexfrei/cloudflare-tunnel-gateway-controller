@@ -37,21 +37,22 @@ func TestProxyDeployment_ConfigTLSMountsTheLeaf(t *testing.T) {
 	spec := render.ProxyDeployment(input).Spec.Template.Spec
 	container := spec.Containers[0]
 
-	require.Len(t, spec.Volumes, 1)
-	require.NotNil(t, spec.Volumes[0].Secret)
-	assert.Equal(t, "cf-proxy-edge-config-tls-3", spec.Volumes[0].Secret.SecretName)
+	// Volume 0 is the always-present tunnel-token Secret; the leaf follows.
+	require.Len(t, spec.Volumes, 2)
+	require.NotNil(t, spec.Volumes[1].Secret)
+	assert.Equal(t, "cf-proxy-edge-config-tls-3", spec.Volumes[1].Secret.SecretName)
 
-	require.Len(t, container.VolumeMounts, 1)
-	assert.True(t, container.VolumeMounts[0].ReadOnly)
-	assert.Equal(t, spec.Volumes[0].Name, container.VolumeMounts[0].Name)
+	require.Len(t, container.VolumeMounts, 2)
+	assert.True(t, container.VolumeMounts[1].ReadOnly)
+	assert.Equal(t, spec.Volumes[1].Name, container.VolumeMounts[1].Name)
 
 	certFile, ok := envValue(&container, "PROXY_CONFIG_TLS_CERT_FILE")
 	require.True(t, ok)
-	assert.Equal(t, container.VolumeMounts[0].MountPath+"/tls.crt", certFile)
+	assert.Equal(t, container.VolumeMounts[1].MountPath+"/tls.crt", certFile)
 
 	keyFile, ok := envValue(&container, "PROXY_CONFIG_TLS_KEY_FILE")
 	require.True(t, ok)
-	assert.Equal(t, container.VolumeMounts[0].MountPath+"/tls.key", keyFile)
+	assert.Equal(t, container.VolumeMounts[1].MountPath+"/tls.key", keyFile)
 
 	for _, probe := range []*corev1.Probe{container.StartupProbe, container.LivenessProbe, container.ReadinessProbe} {
 		assert.Equal(t, corev1.URISchemeHTTPS, probe.HTTPGet.Scheme)
@@ -66,8 +67,11 @@ func TestProxyDeployment_NoConfigTLSKeepsThePlaintextWire(t *testing.T) {
 	spec := render.ProxyDeployment(testInput("edge")).Spec.Template.Spec
 	container := spec.Containers[0]
 
-	assert.Empty(t, spec.Volumes)
-	assert.Empty(t, container.VolumeMounts)
+	// Only the always-present tunnel-token volume remains; nothing TLS.
+	require.Len(t, spec.Volumes, 1)
+	assert.Equal(t, "tunnel-token", spec.Volumes[0].Name)
+	require.Len(t, container.VolumeMounts, 1)
+	assert.Equal(t, "tunnel-token", container.VolumeMounts[0].Name)
 
 	_, ok := envValue(&container, "PROXY_CONFIG_TLS_CERT_FILE")
 	assert.False(t, ok)

@@ -68,6 +68,24 @@
         }
       }
     },
+    "perGatewayDataPlanes": {
+      "type": "object",
+      "description": "Per-Gateway dedicated data planes: the installation-level switch and the RBAC that exists only for it",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Serve per-Gateway dedicated data planes; false leaves out the cluster-wide write RBAC and cluster-wide Secret access, moving Secret reads to namespaced Roles with the controller cache scoped to match",
+          "default": true
+        },
+        "extraSecretNamespaces": {
+          "type": "array",
+          "description": "Namespaces beyond the release namespace the controller may read Secrets in when enabled is false",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "controller": {
       "type": "object",
       "description": "Controller configuration",
