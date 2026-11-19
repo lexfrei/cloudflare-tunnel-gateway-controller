@@ -20,7 +20,7 @@ proxy:
     name: cloudflare-tunnel-token
 ```
 
-The `cloudflare-credentials` Secret must contain an `api-token` key; the `cloudflare-tunnel-token` Secret must contain a `tunnel-token` key. See [GatewayClassConfig](gatewayclassconfig.md) for the full credential layout.
+The `cloudflare-credentials` Secret must contain an `api-token` key; the `cloudflare-tunnel-token` Secret must contain a `tunnel-token` key. `cloudflareCredentialsSecretRef` is optional: leave its `name` empty to render a GatewayClassConfig without it and run in [no-API mode](gatewayclassconfig.md#no-api-mode). See [GatewayClassConfig](gatewayclassconfig.md) for the full credential layout.
 
 ### Controller Configuration
 

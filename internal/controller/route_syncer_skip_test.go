@@ -102,7 +102,7 @@ func newSkipTestSyncer(t *testing.T, api *fakeTunnelAPI) *RouteSyncer {
 	gccConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "cfg"},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "creds", Namespace: "default"},
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{Name: "creds", Namespace: "default"},
 			AccountID:                      "test-account",
 			TunnelID:                       "test-tunnel",
 		},

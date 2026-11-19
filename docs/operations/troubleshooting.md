@@ -43,13 +43,7 @@ kubectl get httproute --all-namespaces
 
     **Solution**: Use a valid UUID from the Cloudflare Zero Trust Dashboard (format: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` with lowercase hex digits a-f and 0-9 only)
 
-3. Missing API credentials:
-
-    ```text
-    Error: execution error at (...gatewayclassconfig.yaml:10:12): gatewayClassConfig.cloudflareCredentialsSecretRef.name is required
-    ```
-
-    **Solution**: Set `gatewayClassConfig.cloudflareCredentialsSecretRef.name` to the name of a Secret containing an `api-token` key
+3. Missing API credentials: `gatewayClassConfig.cloudflareCredentialsSecretRef.name` is optional. Left empty, the rendered GatewayClassConfig has no credentials ref and the controller runs in [no-API mode](../configuration/gatewayclassconfig.md#no-api-mode) — routing works, but the Cloudflare dashboard's ingress document is not maintained. If you expected the dashboard to follow your routes, set the value to the name of a Secret containing an `api-token` key.
 
 4. Missing proxy tunnel token:
 

@@ -25,8 +25,21 @@ type GatewayClassConfigSpec struct {
 	// CloudflareCredentialsSecretRef references a Secret containing Cloudflare API credentials.
 	// The Secret must hold a valid Cloudflare API token under the key named by
 	// Key, which defaults to "api-token".
-	// +kubebuilder:validation:Required
-	CloudflareCredentialsSecretRef SecretReference `json:"cloudflareCredentialsSecretRef"`
+	//
+	// Optional. Without it the controller runs in no-API mode: the shared
+	// data plane makes no Cloudflare API calls and its tunnel's ingress
+	// document goes unmanaged — the document only feeds the Cloudflare
+	// dashboard, and request routing is handled entirely by the in-process
+	// proxy, so Gateways, HTTPRoutes and GRPCRoutes work unchanged. Use it
+	// when another system owns the tunnel's configuration and the cluster
+	// should hold only the connector token. Per-Gateway dedicated data planes
+	// need an API credential to verify their tunnel claims, so in no-API mode
+	// they are refused unless their GatewayConfig carries its own credentials
+	// override — and a plane with an override keeps that credential in its
+	// namespace and keeps calling the API for its claim checks and document
+	// writes, so the cluster is API-silent only with no overrides anywhere.
+	// +optional
+	CloudflareCredentialsSecretRef *SecretReference `json:"cloudflareCredentialsSecretRef,omitempty"`
 
 	// AccountID is the Cloudflare account ID. Optional - if not specified, it will be
 	// read from the credentials secret ("account-id" key) or auto-detected if the API token

@@ -43,7 +43,7 @@ func TestGatewayClassConfig_DefaultGatewayConfigNameSchema(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: stringHashSuffix("default-plane", idx, tc.name)},
 				Spec: v1alpha1.GatewayClassConfigSpec{
 					TunnelID:                       "12345678-1234-1234-1234-123456789012",
-					CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "cloudflare-credentials"},
+					CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{Name: "cloudflare-credentials"},
 					PerGatewayDataPlanes: &v1alpha1.PerGatewayDataPlanes{
 						DefaultGatewayConfigName: tc.defaultName,
 					},

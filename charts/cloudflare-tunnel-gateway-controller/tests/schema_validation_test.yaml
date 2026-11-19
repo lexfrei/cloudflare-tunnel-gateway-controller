@@ -39,6 +39,42 @@ tests:
           path: spec.tunnelID
           value: "550e8400-e29b-41d4-a716-446655440000"
 
+  # The credentials ref is optional: an empty name renders a GatewayClassConfig
+  # with NO cloudflareCredentialsSecretRef (no-API mode — the controller makes
+  # no Cloudflare API calls and leaves the tunnel ingress document unmanaged).
+  # Both halves are pinned: present when named, absent when not.
+  - it: should include cloudflareCredentialsSecretRef when a Secret is named
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "550e8400-e29b-41d4-a716-446655440000"
+        cloudflareCredentialsSecretRef:
+          name: "cf-credentials"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - template: gatewayclassconfig.yaml
+        equal:
+          path: spec.cloudflareCredentialsSecretRef.name
+          value: "cf-credentials"
+
+  - it: should omit cloudflareCredentialsSecretRef when no Secret is named (no-API mode)
+    set:
+      gatewayClassConfig:
+        create: true
+        tunnelID: "550e8400-e29b-41d4-a716-446655440000"
+      proxy:
+        tunnelTokenSecretRef:
+          name: tunnel-token
+    asserts:
+      - template: gatewayclassconfig.yaml
+        isKind:
+          of: GatewayClassConfig
+      - template: gatewayclassconfig.yaml
+        notExists:
+          path: spec.cloudflareCredentialsSecretRef
+
   # allowSharedTunnels is a security default: a dedicated data plane claiming a
   # tunnel it does not own is refused unless the operator opts in. Both halves
   # of that contract are pinned — absent by default, present when asked for.

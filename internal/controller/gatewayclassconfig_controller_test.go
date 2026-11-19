@@ -71,7 +71,7 @@ func TestGatewayClassConfigReconciler_Reconcile_Valid(t *testing.T) {
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
 			TunnelID: "test-tunnel-id",
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
@@ -145,7 +145,7 @@ func TestGatewayClassConfigReconciler_Reconcile_SkipsObservedGenerationRegressio
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config", Generation: 3},
 		Spec: v1alpha1.GatewayClassConfigSpec{
 			TunnelID: "test-tunnel-id",
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
@@ -207,7 +207,7 @@ func TestGatewayClassConfigReconciler_SecondReconcileWithNoChangeSkipsWrite(t *t
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config", Generation: 1},
 		Spec: v1alpha1.GatewayClassConfigSpec{
 			TunnelID: "test-tunnel-id",
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
@@ -269,7 +269,7 @@ func TestGatewayClassConfigReconciler_Reconcile_MissingCredentialsSecret(t *test
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
 			TunnelID: "test-tunnel-id",
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "non-existent-secret",
 				Namespace: "default",
 			},
@@ -342,7 +342,7 @@ func TestGatewayClassConfigReconciler_Reconcile_MissingAPITokenKey(t *testing.T)
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
 			TunnelID: "test-tunnel-id",
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
@@ -403,7 +403,7 @@ func TestGatewayClassConfigReconciler_SecretToConfigs(t *testing.T) {
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
 			TunnelID: "tunnel-1",
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
@@ -416,7 +416,7 @@ func TestGatewayClassConfigReconciler_SecretToConfigs(t *testing.T) {
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
 			TunnelID: "tunnel-2",
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "other-secret",
 				Namespace: "default",
 			},
@@ -617,7 +617,7 @@ func TestGatewayClassConfigReconciler_DefaultNamespace(t *testing.T) {
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
 			TunnelID: "test-tunnel-id",
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name: "cf-credentials",
 				// No namespace specified
 			},

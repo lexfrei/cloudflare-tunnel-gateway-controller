@@ -44,7 +44,9 @@ Report vulnerabilities via email:
 
 ### API Token Management
 
-The Cloudflare API token is sensitive and should be:
+An account-scoped Cloudflare Tunnel token can read every tunnel's connector token in the account, so the strongest posture is to not hold one at all: omit `cloudflareCredentialsSecretRef` and run in [no-API mode](../configuration/gatewayclassconfig.md#no-api-mode), where the cluster holds only its own tunnel's connector token and the dashboard-only ingress document is managed elsewhere (or not at all). Routing does not depend on it. That posture also means supplying no per-`GatewayConfig` credential overrides: an override is stored in its namespace and used against the API like any credential.
+
+Where the token is used, it is sensitive and should be:
 
 1. **Stored in Kubernetes Secret**
 

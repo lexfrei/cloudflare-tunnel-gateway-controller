@@ -1267,7 +1267,7 @@ func TestHTTPRouteReconciler_MapperIntegration(t *testing.T) {
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
 			TunnelID: "test-tunnel-id",
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},

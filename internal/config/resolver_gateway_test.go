@@ -96,7 +96,7 @@ func classFixtures() []runtime.Object {
 			ObjectMeta: metav1.ObjectMeta{Name: "class-config"},
 			Spec: v1alpha1.GatewayClassConfigSpec{
 				TunnelID: "99999999-9999-4999-8999-999999999999",
-				CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+				CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 					Name:      "class-credentials",
 					Namespace: "cf-system",
 				},
@@ -184,6 +184,74 @@ func TestResolveForGateway_HappyPath_ClassCredentialFallback(t *testing.T) {
 	assert.Equal(t, "edge-tunnel-token", resolved.TunnelTokenSecret.Name)
 	require.NotNil(t, resolved.GatewayConfig)
 	assert.Equal(t, "edge-config", resolved.GatewayConfig.Name)
+}
+
+// noAPIClassFixtures is classFixtures with no credentials ref on the class
+// config (no-API mode) and no credentials Secret.
+func noAPIClassFixtures() []runtime.Object {
+	fixtures := classFixtures()
+	classConfig, ok := fixtures[1].(*v1alpha1.GatewayClassConfig)
+	if !ok {
+		panic("classFixtures()[1] is not the GatewayClassConfig")
+	}
+
+	classConfig.Spec.CloudflareCredentialsSecretRef = nil
+
+	return fixtures[:2]
+}
+
+// TestResolveForGateway_NoAPIMode_RefusedWithoutCredential pins the no-API-mode
+// policy for dedicated data planes: with no class credentials and no
+// GatewayConfig override there is no credential to verify the tunnel claim
+// with, so the Gateway is refused deterministically (InvalidParameters), not
+// retried.
+func TestResolveForGateway_NoAPIMode_RefusedWithoutCredential(t *testing.T) {
+	t.Parallel()
+
+	gwConfig := &v1alpha1.GatewayConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: testGwNamespace},
+		Spec: v1alpha1.GatewayConfigSpec{
+			TunnelTokenSecretRef: v1alpha1.LocalSecretReference{Name: "edge-tunnel-token"},
+		},
+	}
+
+	objects := append(noAPIClassFixtures(), gwConfig, tokenSecret(t), generatedAuthSecret())
+	resolver := newGatewayResolver(t, objects...)
+
+	resolved, err := resolver.ResolveForGateway(context.Background(),
+		gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"))
+	require.Error(t, err)
+	assert.Nil(t, resolved)
+	assert.ErrorIs(t, err, config.ErrInvalidParameters)
+	assert.Contains(t, err.Error(), "no-API mode")
+}
+
+// TestResolveForGateway_NoAPIMode_OverrideStillServes pins the exception: a
+// GatewayConfig carrying its own credentials override has a credential to
+// verify its claim with, so no-API mode on the class does not refuse it.
+func TestResolveForGateway_NoAPIMode_OverrideStillServes(t *testing.T) {
+	t.Parallel()
+
+	gwConfig := &v1alpha1.GatewayConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: testGwNamespace},
+		Spec: v1alpha1.GatewayConfigSpec{
+			TunnelTokenSecretRef:           v1alpha1.LocalSecretReference{Name: "edge-tunnel-token"},
+			CloudflareCredentialsSecretRef: &v1alpha1.LocalSecretReference{Name: "edge-credentials"},
+		},
+	}
+	override := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "edge-credentials", Namespace: testGwNamespace},
+		Data:       map[string][]byte{"api-token": []byte("override-api-token")},
+	}
+
+	objects := append(noAPIClassFixtures(), gwConfig, override, tokenSecret(t), generatedAuthSecret())
+	resolver := newGatewayResolver(t, objects...)
+
+	resolved, err := resolver.ResolveForGateway(context.Background(),
+		gatewayWithInfra("cf.k8s.lex.la", "GatewayConfig", "edge-config"))
+	require.NoError(t, err)
+	require.NotNil(t, resolved)
+	assert.Equal(t, "override-api-token", resolved.APIToken)
 }
 
 // TestResolveForGateway_TunnelIDIsCanonicalLowercase pins that the resolved

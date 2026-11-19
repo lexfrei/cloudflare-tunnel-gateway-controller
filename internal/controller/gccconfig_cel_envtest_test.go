@@ -81,7 +81,7 @@ func TestGatewayClassConfig_AccountIDCELValidation(t *testing.T) {
 				},
 				Spec: v1alpha1.GatewayClassConfigSpec{
 					TunnelID: "12345678-1234-1234-1234-123456789012",
-					CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+					CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 						Name: "cloudflare-credentials",
 					},
 					AccountID: tc.accountID,

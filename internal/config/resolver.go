@@ -356,8 +356,17 @@ func (r *Resolver) resolveConfig(ctx context.Context, config *v1alpha1.GatewayCl
 		ConfigName:                config.Name,
 	}
 
-	// Resolve Cloudflare credentials from Secret
+	// No credentials ref means no-API mode: the controller makes no Cloudflare
+	// API calls and leaves the tunnel's ingress document unmanaged. The
+	// document only feeds the dashboard — the proxy routes every request — so
+	// an empty APIToken is a valid resolution, not an error. AccountID may
+	// still come from the spec, though nothing consumes it without a token.
 	credentialsRef := config.Spec.CloudflareCredentialsSecretRef
+	if credentialsRef == nil {
+		resolved.AccountID = config.Spec.AccountID
+
+		return resolved, nil
+	}
 
 	credentialsSecret, err := r.getSecret(ctx, credentialsRef.Name, credentialsRef.Namespace)
 	if err != nil {
