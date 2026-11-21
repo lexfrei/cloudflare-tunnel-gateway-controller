@@ -2271,10 +2271,14 @@ type ObservabilityTelemetryQueryResponseEventsEventsMetadata struct {
 	Duration int64 `json:"duration"`
 	// Span end time as a Unix epoch in milliseconds.
 	EndTime int64 `json:"endTime"`
+	// Span end time as a Unix epoch in nanoseconds.
+	EndTimeNS string `json:"endTimeNs"`
 	// Error message, present when the log represents an error.
 	Error string `json:"error"`
 	// Templatized version of the error message used for grouping similar errors.
 	ErrorTemplate string `json:"errorTemplate"`
+	// Size of the stored telemetry event in bytes.
+	EventSize int64 `json:"eventSize"`
 	// Content-based fingerprint used to group similar events.
 	Fingerprint string `json:"fingerprint"`
 	// Log level (e.g. log, debug, info, warn, error).
@@ -2304,12 +2308,22 @@ type ObservabilityTelemetryQueryResponseEventsEventsMetadata struct {
 	SpanID string `json:"spanId"`
 	// Human-readable name for this span.
 	SpanName string `json:"spanName"`
+	// OpenTelemetry span status. Present only on spans. `unset` when the span did not
+	// set a status, including spans recorded before status was captured.
+	SpanStatus ObservabilityTelemetryQueryResponseEventsEventsMetadataSpanStatus `json:"spanStatus"`
+	// OpenTelemetry span status message. Present only on spans when the status is
+	// `error` and a message was set.
+	SpanStatusMessage string `json:"spanStatusMessage"`
 	// Stack / deployment identifier.
 	StackID string `json:"stackId"`
 	// Span start time as a Unix epoch in milliseconds.
 	StartTime int64 `json:"startTime"`
+	// Span start time as a Unix epoch in nanoseconds.
+	StartTimeNS string `json:"startTimeNs"`
 	// HTTP response status code returned by the Worker.
 	StatusCode int64 `json:"statusCode"`
+	// Event time as a Unix epoch in nanoseconds.
+	TimestampNS string `json:"timestampNs"`
 	// Total duration of the entire trace in milliseconds.
 	TraceDuration int64 `json:"traceDuration"`
 	// Distributed trace ID linking spans across services.
@@ -2329,40 +2343,46 @@ type ObservabilityTelemetryQueryResponseEventsEventsMetadata struct {
 // metadata for the struct
 // [ObservabilityTelemetryQueryResponseEventsEventsMetadata]
 type observabilityTelemetryQueryResponseEventsEventsMetadataJSON struct {
-	ID              apijson.Field
-	Account         apijson.Field
-	CloudService    apijson.Field
-	ColdStart       apijson.Field
-	Cost            apijson.Field
-	Duration        apijson.Field
-	EndTime         apijson.Field
-	Error           apijson.Field
-	ErrorTemplate   apijson.Field
-	Fingerprint     apijson.Field
-	Level           apijson.Field
-	Message         apijson.Field
-	MessageTemplate apijson.Field
-	MetricName      apijson.Field
-	Origin          apijson.Field
-	ParentSpanID    apijson.Field
-	Provider        apijson.Field
-	RayID           apijson.Field
-	Region          apijson.Field
-	RequestID       apijson.Field
-	Service         apijson.Field
-	SpanID          apijson.Field
-	SpanName        apijson.Field
-	StackID         apijson.Field
-	StartTime       apijson.Field
-	StatusCode      apijson.Field
-	TraceDuration   apijson.Field
-	TraceID         apijson.Field
-	TransactionName apijson.Field
-	Trigger         apijson.Field
-	Type            apijson.Field
-	URL             apijson.Field
-	raw             string
-	ExtraFields     map[string]apijson.Field
+	ID                apijson.Field
+	Account           apijson.Field
+	CloudService      apijson.Field
+	ColdStart         apijson.Field
+	Cost              apijson.Field
+	Duration          apijson.Field
+	EndTime           apijson.Field
+	EndTimeNS         apijson.Field
+	Error             apijson.Field
+	ErrorTemplate     apijson.Field
+	EventSize         apijson.Field
+	Fingerprint       apijson.Field
+	Level             apijson.Field
+	Message           apijson.Field
+	MessageTemplate   apijson.Field
+	MetricName        apijson.Field
+	Origin            apijson.Field
+	ParentSpanID      apijson.Field
+	Provider          apijson.Field
+	RayID             apijson.Field
+	Region            apijson.Field
+	RequestID         apijson.Field
+	Service           apijson.Field
+	SpanID            apijson.Field
+	SpanName          apijson.Field
+	SpanStatus        apijson.Field
+	SpanStatusMessage apijson.Field
+	StackID           apijson.Field
+	StartTime         apijson.Field
+	StartTimeNS       apijson.Field
+	StatusCode        apijson.Field
+	TimestampNS       apijson.Field
+	TraceDuration     apijson.Field
+	TraceID           apijson.Field
+	TransactionName   apijson.Field
+	Trigger           apijson.Field
+	Type              apijson.Field
+	URL               apijson.Field
+	raw               string
+	ExtraFields       map[string]apijson.Field
 }
 
 func (r *ObservabilityTelemetryQueryResponseEventsEventsMetadata) UnmarshalJSON(data []byte) (err error) {
@@ -2371,6 +2391,24 @@ func (r *ObservabilityTelemetryQueryResponseEventsEventsMetadata) UnmarshalJSON(
 
 func (r observabilityTelemetryQueryResponseEventsEventsMetadataJSON) RawJSON() string {
 	return r.raw
+}
+
+// OpenTelemetry span status. Present only on spans. `unset` when the span did not
+// set a status, including spans recorded before status was captured.
+type ObservabilityTelemetryQueryResponseEventsEventsMetadataSpanStatus string
+
+const (
+	ObservabilityTelemetryQueryResponseEventsEventsMetadataSpanStatusUnset ObservabilityTelemetryQueryResponseEventsEventsMetadataSpanStatus = "unset"
+	ObservabilityTelemetryQueryResponseEventsEventsMetadataSpanStatusOk    ObservabilityTelemetryQueryResponseEventsEventsMetadataSpanStatus = "ok"
+	ObservabilityTelemetryQueryResponseEventsEventsMetadataSpanStatusError ObservabilityTelemetryQueryResponseEventsEventsMetadataSpanStatus = "error"
+)
+
+func (r ObservabilityTelemetryQueryResponseEventsEventsMetadataSpanStatus) IsKnown() bool {
+	switch r {
+	case ObservabilityTelemetryQueryResponseEventsEventsMetadataSpanStatusUnset, ObservabilityTelemetryQueryResponseEventsEventsMetadataSpanStatusOk, ObservabilityTelemetryQueryResponseEventsEventsMetadataSpanStatusError:
+		return true
+	}
+	return false
 }
 
 // Raw log payload. May be a string or a structured object depending on how the log
@@ -2417,7 +2455,10 @@ type ObservabilityTelemetryQueryResponseEventsEventsWorkers struct {
 	// This field can have the runtime type of [map[string]interface{}].
 	Event          interface{}                                                          `json:"event"`
 	ExecutionModel ObservabilityTelemetryQueryResponseEventsEventsWorkersExecutionModel `json:"executionModel"`
-	Outcome        string                                                               `json:"outcome"`
+	// This field can have the runtime type of
+	// [ObservabilityTelemetryQueryResponseEventsEventsWorkersObjectGateway].
+	Gateway interface{} `json:"gateway"`
+	Outcome string      `json:"outcome"`
 	// This field can have the runtime type of
 	// [ObservabilityTelemetryQueryResponseEventsEventsWorkersObjectPreview].
 	Preview   interface{} `json:"preview"`
@@ -2445,6 +2486,7 @@ type observabilityTelemetryQueryResponseEventsEventsWorkersJSON struct {
 	Entrypoint               apijson.Field
 	Event                    apijson.Field
 	ExecutionModel           apijson.Field
+	Gateway                  apijson.Field
 	Outcome                  apijson.Field
 	Preview                  apijson.Field
 	RequestID                apijson.Field
@@ -2512,6 +2554,7 @@ type ObservabilityTelemetryQueryResponseEventsEventsWorkersObject struct {
 	Entrypoint      string                                                                     `json:"entrypoint"`
 	Event           map[string]interface{}                                                     `json:"event"`
 	ExecutionModel  ObservabilityTelemetryQueryResponseEventsEventsWorkersObjectExecutionModel `json:"executionModel"`
+	Gateway         ObservabilityTelemetryQueryResponseEventsEventsWorkersObjectGateway        `json:"gateway"`
 	Outcome         string                                                                     `json:"outcome"`
 	Preview         ObservabilityTelemetryQueryResponseEventsEventsWorkersObjectPreview        `json:"preview"`
 	RequestID       string                                                                     `json:"requestId"`
@@ -2532,6 +2575,7 @@ type observabilityTelemetryQueryResponseEventsEventsWorkersObjectJSON struct {
 	Entrypoint      apijson.Field
 	Event           apijson.Field
 	ExecutionModel  apijson.Field
+	Gateway         apijson.Field
 	Outcome         apijson.Field
 	Preview         apijson.Field
 	RequestID       apijson.Field
@@ -2592,6 +2636,29 @@ func (r ObservabilityTelemetryQueryResponseEventsEventsWorkersObjectExecutionMod
 		return true
 	}
 	return false
+}
+
+type ObservabilityTelemetryQueryResponseEventsEventsWorkersObjectGateway struct {
+	RequestID   string                                                                  `json:"requestId" api:"required"`
+	ExtraFields map[string]interface{}                                                  `json:"-" api:"extrafields"`
+	JSON        observabilityTelemetryQueryResponseEventsEventsWorkersObjectGatewayJSON `json:"-"`
+}
+
+// observabilityTelemetryQueryResponseEventsEventsWorkersObjectGatewayJSON contains
+// the JSON metadata for the struct
+// [ObservabilityTelemetryQueryResponseEventsEventsWorkersObjectGateway]
+type observabilityTelemetryQueryResponseEventsEventsWorkersObjectGatewayJSON struct {
+	RequestID   apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *ObservabilityTelemetryQueryResponseEventsEventsWorkersObjectGateway) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r observabilityTelemetryQueryResponseEventsEventsWorkersObjectGatewayJSON) RawJSON() string {
+	return r.raw
 }
 
 type ObservabilityTelemetryQueryResponseEventsEventsWorkersObjectPreview struct {
@@ -2901,10 +2968,14 @@ type ObservabilityTelemetryQueryResponseInvocationsMetadata struct {
 	Duration int64 `json:"duration"`
 	// Span end time as a Unix epoch in milliseconds.
 	EndTime int64 `json:"endTime"`
+	// Span end time as a Unix epoch in nanoseconds.
+	EndTimeNS string `json:"endTimeNs"`
 	// Error message, present when the log represents an error.
 	Error string `json:"error"`
 	// Templatized version of the error message used for grouping similar errors.
 	ErrorTemplate string `json:"errorTemplate"`
+	// Size of the stored telemetry event in bytes.
+	EventSize int64 `json:"eventSize"`
 	// Content-based fingerprint used to group similar events.
 	Fingerprint string `json:"fingerprint"`
 	// Log level (e.g. log, debug, info, warn, error).
@@ -2934,12 +3005,22 @@ type ObservabilityTelemetryQueryResponseInvocationsMetadata struct {
 	SpanID string `json:"spanId"`
 	// Human-readable name for this span.
 	SpanName string `json:"spanName"`
+	// OpenTelemetry span status. Present only on spans. `unset` when the span did not
+	// set a status, including spans recorded before status was captured.
+	SpanStatus ObservabilityTelemetryQueryResponseInvocationsMetadataSpanStatus `json:"spanStatus"`
+	// OpenTelemetry span status message. Present only on spans when the status is
+	// `error` and a message was set.
+	SpanStatusMessage string `json:"spanStatusMessage"`
 	// Stack / deployment identifier.
 	StackID string `json:"stackId"`
 	// Span start time as a Unix epoch in milliseconds.
 	StartTime int64 `json:"startTime"`
+	// Span start time as a Unix epoch in nanoseconds.
+	StartTimeNS string `json:"startTimeNs"`
 	// HTTP response status code returned by the Worker.
 	StatusCode int64 `json:"statusCode"`
+	// Event time as a Unix epoch in nanoseconds.
+	TimestampNS string `json:"timestampNs"`
 	// Total duration of the entire trace in milliseconds.
 	TraceDuration int64 `json:"traceDuration"`
 	// Distributed trace ID linking spans across services.
@@ -2958,40 +3039,46 @@ type ObservabilityTelemetryQueryResponseInvocationsMetadata struct {
 // observabilityTelemetryQueryResponseInvocationsMetadataJSON contains the JSON
 // metadata for the struct [ObservabilityTelemetryQueryResponseInvocationsMetadata]
 type observabilityTelemetryQueryResponseInvocationsMetadataJSON struct {
-	ID              apijson.Field
-	Account         apijson.Field
-	CloudService    apijson.Field
-	ColdStart       apijson.Field
-	Cost            apijson.Field
-	Duration        apijson.Field
-	EndTime         apijson.Field
-	Error           apijson.Field
-	ErrorTemplate   apijson.Field
-	Fingerprint     apijson.Field
-	Level           apijson.Field
-	Message         apijson.Field
-	MessageTemplate apijson.Field
-	MetricName      apijson.Field
-	Origin          apijson.Field
-	ParentSpanID    apijson.Field
-	Provider        apijson.Field
-	RayID           apijson.Field
-	Region          apijson.Field
-	RequestID       apijson.Field
-	Service         apijson.Field
-	SpanID          apijson.Field
-	SpanName        apijson.Field
-	StackID         apijson.Field
-	StartTime       apijson.Field
-	StatusCode      apijson.Field
-	TraceDuration   apijson.Field
-	TraceID         apijson.Field
-	TransactionName apijson.Field
-	Trigger         apijson.Field
-	Type            apijson.Field
-	URL             apijson.Field
-	raw             string
-	ExtraFields     map[string]apijson.Field
+	ID                apijson.Field
+	Account           apijson.Field
+	CloudService      apijson.Field
+	ColdStart         apijson.Field
+	Cost              apijson.Field
+	Duration          apijson.Field
+	EndTime           apijson.Field
+	EndTimeNS         apijson.Field
+	Error             apijson.Field
+	ErrorTemplate     apijson.Field
+	EventSize         apijson.Field
+	Fingerprint       apijson.Field
+	Level             apijson.Field
+	Message           apijson.Field
+	MessageTemplate   apijson.Field
+	MetricName        apijson.Field
+	Origin            apijson.Field
+	ParentSpanID      apijson.Field
+	Provider          apijson.Field
+	RayID             apijson.Field
+	Region            apijson.Field
+	RequestID         apijson.Field
+	Service           apijson.Field
+	SpanID            apijson.Field
+	SpanName          apijson.Field
+	SpanStatus        apijson.Field
+	SpanStatusMessage apijson.Field
+	StackID           apijson.Field
+	StartTime         apijson.Field
+	StartTimeNS       apijson.Field
+	StatusCode        apijson.Field
+	TimestampNS       apijson.Field
+	TraceDuration     apijson.Field
+	TraceID           apijson.Field
+	TransactionName   apijson.Field
+	Trigger           apijson.Field
+	Type              apijson.Field
+	URL               apijson.Field
+	raw               string
+	ExtraFields       map[string]apijson.Field
 }
 
 func (r *ObservabilityTelemetryQueryResponseInvocationsMetadata) UnmarshalJSON(data []byte) (err error) {
@@ -3000,6 +3087,24 @@ func (r *ObservabilityTelemetryQueryResponseInvocationsMetadata) UnmarshalJSON(d
 
 func (r observabilityTelemetryQueryResponseInvocationsMetadataJSON) RawJSON() string {
 	return r.raw
+}
+
+// OpenTelemetry span status. Present only on spans. `unset` when the span did not
+// set a status, including spans recorded before status was captured.
+type ObservabilityTelemetryQueryResponseInvocationsMetadataSpanStatus string
+
+const (
+	ObservabilityTelemetryQueryResponseInvocationsMetadataSpanStatusUnset ObservabilityTelemetryQueryResponseInvocationsMetadataSpanStatus = "unset"
+	ObservabilityTelemetryQueryResponseInvocationsMetadataSpanStatusOk    ObservabilityTelemetryQueryResponseInvocationsMetadataSpanStatus = "ok"
+	ObservabilityTelemetryQueryResponseInvocationsMetadataSpanStatusError ObservabilityTelemetryQueryResponseInvocationsMetadataSpanStatus = "error"
+)
+
+func (r ObservabilityTelemetryQueryResponseInvocationsMetadataSpanStatus) IsKnown() bool {
+	switch r {
+	case ObservabilityTelemetryQueryResponseInvocationsMetadataSpanStatusUnset, ObservabilityTelemetryQueryResponseInvocationsMetadataSpanStatusOk, ObservabilityTelemetryQueryResponseInvocationsMetadataSpanStatusError:
+		return true
+	}
+	return false
 }
 
 // Raw log payload. May be a string or a structured object depending on how the log
@@ -3046,7 +3151,10 @@ type ObservabilityTelemetryQueryResponseInvocationsWorkers struct {
 	// This field can have the runtime type of [map[string]interface{}].
 	Event          interface{}                                                         `json:"event"`
 	ExecutionModel ObservabilityTelemetryQueryResponseInvocationsWorkersExecutionModel `json:"executionModel"`
-	Outcome        string                                                              `json:"outcome"`
+	// This field can have the runtime type of
+	// [ObservabilityTelemetryQueryResponseInvocationsWorkersObjectGateway].
+	Gateway interface{} `json:"gateway"`
+	Outcome string      `json:"outcome"`
 	// This field can have the runtime type of
 	// [ObservabilityTelemetryQueryResponseInvocationsWorkersObjectPreview].
 	Preview   interface{} `json:"preview"`
@@ -3074,6 +3182,7 @@ type observabilityTelemetryQueryResponseInvocationsWorkersJSON struct {
 	Entrypoint               apijson.Field
 	Event                    apijson.Field
 	ExecutionModel           apijson.Field
+	Gateway                  apijson.Field
 	Outcome                  apijson.Field
 	Preview                  apijson.Field
 	RequestID                apijson.Field
@@ -3140,6 +3249,7 @@ type ObservabilityTelemetryQueryResponseInvocationsWorkersObject struct {
 	Entrypoint      string                                                                    `json:"entrypoint"`
 	Event           map[string]interface{}                                                    `json:"event"`
 	ExecutionModel  ObservabilityTelemetryQueryResponseInvocationsWorkersObjectExecutionModel `json:"executionModel"`
+	Gateway         ObservabilityTelemetryQueryResponseInvocationsWorkersObjectGateway        `json:"gateway"`
 	Outcome         string                                                                    `json:"outcome"`
 	Preview         ObservabilityTelemetryQueryResponseInvocationsWorkersObjectPreview        `json:"preview"`
 	RequestID       string                                                                    `json:"requestId"`
@@ -3160,6 +3270,7 @@ type observabilityTelemetryQueryResponseInvocationsWorkersObjectJSON struct {
 	Entrypoint      apijson.Field
 	Event           apijson.Field
 	ExecutionModel  apijson.Field
+	Gateway         apijson.Field
 	Outcome         apijson.Field
 	Preview         apijson.Field
 	RequestID       apijson.Field
@@ -3220,6 +3331,29 @@ func (r ObservabilityTelemetryQueryResponseInvocationsWorkersObjectExecutionMode
 		return true
 	}
 	return false
+}
+
+type ObservabilityTelemetryQueryResponseInvocationsWorkersObjectGateway struct {
+	RequestID   string                                                                 `json:"requestId" api:"required"`
+	ExtraFields map[string]interface{}                                                 `json:"-" api:"extrafields"`
+	JSON        observabilityTelemetryQueryResponseInvocationsWorkersObjectGatewayJSON `json:"-"`
+}
+
+// observabilityTelemetryQueryResponseInvocationsWorkersObjectGatewayJSON contains
+// the JSON metadata for the struct
+// [ObservabilityTelemetryQueryResponseInvocationsWorkersObjectGateway]
+type observabilityTelemetryQueryResponseInvocationsWorkersObjectGatewayJSON struct {
+	RequestID   apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *ObservabilityTelemetryQueryResponseInvocationsWorkersObjectGateway) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r observabilityTelemetryQueryResponseInvocationsWorkersObjectGatewayJSON) RawJSON() string {
+	return r.raw
 }
 
 type ObservabilityTelemetryQueryResponseInvocationsWorkersObjectPreview struct {

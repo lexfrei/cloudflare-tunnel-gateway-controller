@@ -180,6 +180,10 @@ type SettingBlockSenderNewResponse struct {
 	ID        string    `json:"id" format:"uuid"`
 	Comments  string    `json:"comments" api:"nullable"`
 	CreatedAt time.Time `json:"created_at" format:"date-time"`
+	// Timestamp at which the pattern expires. After this time, Email Security ignores
+	// the pattern. The value must lie in the future. Send `null` to clear the
+	// expiration.
+	ExpiresAt time.Time `json:"expires_at" api:"nullable" format:"date-time"`
 	// Whether `pattern` is a regular expression instead of a literal value.
 	IsRegex bool `json:"is_regex"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
@@ -215,6 +219,7 @@ type settingBlockSenderNewResponseJSON struct {
 	ID           apijson.Field
 	Comments     apijson.Field
 	CreatedAt    apijson.Field
+	ExpiresAt    apijson.Field
 	IsRegex      apijson.Field
 	LastModified apijson.Field
 	ModifiedAt   apijson.Field
@@ -266,6 +271,10 @@ type SettingBlockSenderListResponse struct {
 	ID        string    `json:"id" format:"uuid"`
 	Comments  string    `json:"comments" api:"nullable"`
 	CreatedAt time.Time `json:"created_at" format:"date-time"`
+	// Timestamp at which the pattern expires. After this time, Email Security ignores
+	// the pattern. The value must lie in the future. Send `null` to clear the
+	// expiration.
+	ExpiresAt time.Time `json:"expires_at" api:"nullable" format:"date-time"`
 	// Whether `pattern` is a regular expression instead of a literal value.
 	IsRegex bool `json:"is_regex"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
@@ -301,6 +310,7 @@ type settingBlockSenderListResponseJSON struct {
 	ID           apijson.Field
 	Comments     apijson.Field
 	CreatedAt    apijson.Field
+	ExpiresAt    apijson.Field
 	IsRegex      apijson.Field
 	LastModified apijson.Field
 	ModifiedAt   apijson.Field
@@ -423,6 +433,10 @@ type SettingBlockSenderBatchResponsePatch struct {
 	ID        string    `json:"id" format:"uuid"`
 	Comments  string    `json:"comments" api:"nullable"`
 	CreatedAt time.Time `json:"created_at" format:"date-time"`
+	// Timestamp at which the pattern expires. After this time, Email Security ignores
+	// the pattern. The value must lie in the future. Send `null` to clear the
+	// expiration.
+	ExpiresAt time.Time `json:"expires_at" api:"nullable" format:"date-time"`
 	// Whether `pattern` is a regular expression instead of a literal value.
 	IsRegex bool `json:"is_regex"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
@@ -458,6 +472,7 @@ type settingBlockSenderBatchResponsePatchJSON struct {
 	ID           apijson.Field
 	Comments     apijson.Field
 	CreatedAt    apijson.Field
+	ExpiresAt    apijson.Field
 	IsRegex      apijson.Field
 	LastModified apijson.Field
 	ModifiedAt   apijson.Field
@@ -509,6 +524,10 @@ type SettingBlockSenderBatchResponsePost struct {
 	ID        string    `json:"id" format:"uuid"`
 	Comments  string    `json:"comments" api:"nullable"`
 	CreatedAt time.Time `json:"created_at" format:"date-time"`
+	// Timestamp at which the pattern expires. After this time, Email Security ignores
+	// the pattern. The value must lie in the future. Send `null` to clear the
+	// expiration.
+	ExpiresAt time.Time `json:"expires_at" api:"nullable" format:"date-time"`
 	// Whether `pattern` is a regular expression instead of a literal value.
 	IsRegex bool `json:"is_regex"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
@@ -544,6 +563,7 @@ type settingBlockSenderBatchResponsePostJSON struct {
 	ID           apijson.Field
 	Comments     apijson.Field
 	CreatedAt    apijson.Field
+	ExpiresAt    apijson.Field
 	IsRegex      apijson.Field
 	LastModified apijson.Field
 	ModifiedAt   apijson.Field
@@ -595,6 +615,10 @@ type SettingBlockSenderBatchResponsePut struct {
 	ID        string    `json:"id" format:"uuid"`
 	Comments  string    `json:"comments" api:"nullable"`
 	CreatedAt time.Time `json:"created_at" format:"date-time"`
+	// Timestamp at which the pattern expires. After this time, Email Security ignores
+	// the pattern. The value must lie in the future. Send `null` to clear the
+	// expiration.
+	ExpiresAt time.Time `json:"expires_at" api:"nullable" format:"date-time"`
 	// Whether `pattern` is a regular expression instead of a literal value.
 	IsRegex bool `json:"is_regex"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
@@ -630,6 +654,7 @@ type settingBlockSenderBatchResponsePutJSON struct {
 	ID           apijson.Field
 	Comments     apijson.Field
 	CreatedAt    apijson.Field
+	ExpiresAt    apijson.Field
 	IsRegex      apijson.Field
 	LastModified apijson.Field
 	ModifiedAt   apijson.Field
@@ -681,6 +706,10 @@ type SettingBlockSenderEditResponse struct {
 	ID        string    `json:"id" format:"uuid"`
 	Comments  string    `json:"comments" api:"nullable"`
 	CreatedAt time.Time `json:"created_at" format:"date-time"`
+	// Timestamp at which the pattern expires. After this time, Email Security ignores
+	// the pattern. The value must lie in the future. Send `null` to clear the
+	// expiration.
+	ExpiresAt time.Time `json:"expires_at" api:"nullable" format:"date-time"`
 	// Whether `pattern` is a regular expression instead of a literal value.
 	IsRegex bool `json:"is_regex"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
@@ -716,6 +745,7 @@ type settingBlockSenderEditResponseJSON struct {
 	ID           apijson.Field
 	Comments     apijson.Field
 	CreatedAt    apijson.Field
+	ExpiresAt    apijson.Field
 	IsRegex      apijson.Field
 	LastModified apijson.Field
 	ModifiedAt   apijson.Field
@@ -767,6 +797,10 @@ type SettingBlockSenderGetResponse struct {
 	ID        string    `json:"id" format:"uuid"`
 	Comments  string    `json:"comments" api:"nullable"`
 	CreatedAt time.Time `json:"created_at" format:"date-time"`
+	// Timestamp at which the pattern expires. After this time, Email Security ignores
+	// the pattern. The value must lie in the future. Send `null` to clear the
+	// expiration.
+	ExpiresAt time.Time `json:"expires_at" api:"nullable" format:"date-time"`
 	// Whether `pattern` is a regular expression instead of a literal value.
 	IsRegex bool `json:"is_regex"`
 	// Deprecated, use `modified_at` instead. End of life: November 1, 2026.
@@ -802,6 +836,7 @@ type settingBlockSenderGetResponseJSON struct {
 	ID           apijson.Field
 	Comments     apijson.Field
 	CreatedAt    apijson.Field
+	ExpiresAt    apijson.Field
 	IsRegex      apijson.Field
 	LastModified apijson.Field
 	ModifiedAt   apijson.Field
@@ -872,6 +907,10 @@ type SettingBlockSenderNewParams struct {
 	//   but it may appear on existing entries.
 	PatternType param.Field[SettingBlockSenderNewParamsPatternType] `json:"pattern_type" api:"required"`
 	Comments    param.Field[string]                                 `json:"comments"`
+	// Timestamp at which the pattern expires. After this time, Email Security ignores
+	// the pattern. The value must lie in the future. Send `null` to clear the
+	// expiration.
+	ExpiresAt param.Field[time.Time] `json:"expires_at" format:"date-time"`
 }
 
 func (r SettingBlockSenderNewParams) MarshalJSON() (data []byte, err error) {
@@ -1051,6 +1090,9 @@ type SettingBlockSenderListParams struct {
 	AccountID param.Field[string] `path:"account_id" api:"required"`
 	// The sorting direction.
 	Direction param.Field[SettingBlockSenderListParamsDirection] `query:"direction"`
+	// Filter to return only expired patterns (`true`) or only patterns that still
+	// apply (`false`). Omit to return both.
+	Expired param.Field[bool] `query:"expired"`
 	// Field to sort by.
 	Order param.Field[SettingBlockSenderListParamsOrder] `query:"order"`
 	// Current page within paginated list of results.
@@ -1299,6 +1341,10 @@ func (r SettingBlockSenderBatchParamsDelete) MarshalJSON() (data []byte, err err
 // A blocked sender pattern.
 type SettingBlockSenderBatchParamsPatch struct {
 	Comments param.Field[string] `json:"comments"`
+	// Timestamp at which the pattern expires. After this time, Email Security ignores
+	// the pattern. The value must lie in the future. Send `null` to clear the
+	// expiration.
+	ExpiresAt param.Field[time.Time] `json:"expires_at" format:"date-time"`
 	// Whether `pattern` is a regular expression instead of a literal value.
 	IsRegex param.Field[bool] `json:"is_regex"`
 	// The pattern value to match. The format depends on `pattern_type`: a valid email
@@ -1378,6 +1424,10 @@ type SettingBlockSenderBatchParamsPost struct {
 	//   but it may appear on existing entries.
 	PatternType param.Field[SettingBlockSenderBatchParamsPostsPatternType] `json:"pattern_type" api:"required"`
 	Comments    param.Field[string]                                        `json:"comments"`
+	// Timestamp at which the pattern expires. After this time, Email Security ignores
+	// the pattern. The value must lie in the future. Send `null` to clear the
+	// expiration.
+	ExpiresAt param.Field[time.Time] `json:"expires_at" format:"date-time"`
 }
 
 func (r SettingBlockSenderBatchParamsPost) MarshalJSON() (data []byte, err error) {
@@ -1436,6 +1486,10 @@ type SettingBlockSenderBatchParamsPut struct {
 	//   but it may appear on existing entries.
 	PatternType param.Field[SettingBlockSenderBatchParamsPutsPatternType] `json:"pattern_type" api:"required"`
 	Comments    param.Field[string]                                       `json:"comments"`
+	// Timestamp at which the pattern expires. After this time, Email Security ignores
+	// the pattern. The value must lie in the future. Send `null` to clear the
+	// expiration.
+	ExpiresAt param.Field[time.Time] `json:"expires_at" format:"date-time"`
 }
 
 func (r SettingBlockSenderBatchParamsPut) MarshalJSON() (data []byte, err error) {
@@ -1613,6 +1667,10 @@ type SettingBlockSenderEditParams struct {
 	// Identifier.
 	AccountID param.Field[string] `path:"account_id" api:"required"`
 	Comments  param.Field[string] `json:"comments"`
+	// Timestamp at which the pattern expires. After this time, Email Security ignores
+	// the pattern. The value must lie in the future. Send `null` to clear the
+	// expiration.
+	ExpiresAt param.Field[time.Time] `json:"expires_at" format:"date-time"`
 	// Whether `pattern` is a regular expression instead of a literal value.
 	IsRegex param.Field[bool] `json:"is_regex"`
 	// The pattern value to match. The format depends on `pattern_type`: a valid email

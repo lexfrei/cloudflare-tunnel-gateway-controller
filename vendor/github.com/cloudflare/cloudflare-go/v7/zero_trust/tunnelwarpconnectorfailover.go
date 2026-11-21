@@ -13,7 +13,6 @@ import (
 	"github.com/cloudflare/cloudflare-go/v7/internal/param"
 	"github.com/cloudflare/cloudflare-go/v7/internal/requestconfig"
 	"github.com/cloudflare/cloudflare-go/v7/option"
-	"github.com/cloudflare/cloudflare-go/v7/shared"
 )
 
 // TunnelWARPConnectorFailoverService contains methods and other services that help
@@ -35,8 +34,8 @@ func NewTunnelWARPConnectorFailoverService(opts ...option.RequestOption) (r *Tun
 	return
 }
 
-// Triggers a manual failover for a specific WARP Connector Tunnel, setting the
-// specified client as the active connector. The tunnel must be configured for high
+// Triggers a manual failover for a specific Mesh node, setting the specified
+// client as the active connector. The tunnel must be configured for high
 // availability (HA) and the client must be linked to the tunnel.
 func (r *TunnelWARPConnectorFailoverService) Update(ctx context.Context, tunnelID string, params TunnelWARPConnectorFailoverUpdateParams, opts ...option.RequestOption) (res *TunnelWARPConnectorFailoverUpdateResponse, err error) {
 	var env TunnelWARPConnectorFailoverUpdateResponseEnvelope
@@ -72,9 +71,9 @@ func (r TunnelWARPConnectorFailoverUpdateParams) MarshalJSON() (data []byte, err
 }
 
 type TunnelWARPConnectorFailoverUpdateResponseEnvelope struct {
-	Errors   []shared.ResponseInfo                     `json:"errors" api:"required"`
-	Messages []shared.ResponseInfo                     `json:"messages" api:"required"`
-	Result   TunnelWARPConnectorFailoverUpdateResponse `json:"result" api:"required,nullable"`
+	Errors   []TunnelWARPConnectorFailoverUpdateResponseEnvelopeErrors   `json:"errors" api:"required"`
+	Messages []TunnelWARPConnectorFailoverUpdateResponseEnvelopeMessages `json:"messages" api:"required"`
+	Result   TunnelWARPConnectorFailoverUpdateResponse                   `json:"result" api:"required,nullable"`
 	// Whether the API call was successful
 	Success TunnelWARPConnectorFailoverUpdateResponseEnvelopeSuccess `json:"success" api:"required"`
 	JSON    tunnelWARPConnectorFailoverUpdateResponseEnvelopeJSON    `json:"-"`
@@ -96,6 +95,60 @@ func (r *TunnelWARPConnectorFailoverUpdateResponseEnvelope) UnmarshalJSON(data [
 }
 
 func (r tunnelWARPConnectorFailoverUpdateResponseEnvelopeJSON) RawJSON() string {
+	return r.raw
+}
+
+type TunnelWARPConnectorFailoverUpdateResponseEnvelopeErrors struct {
+	Code    int64  `json:"code" api:"required"`
+	Message string `json:"message" api:"required"`
+	// Optional error-specific context.
+	Context map[string]interface{}                                      `json:"context"`
+	JSON    tunnelWARPConnectorFailoverUpdateResponseEnvelopeErrorsJSON `json:"-"`
+}
+
+// tunnelWARPConnectorFailoverUpdateResponseEnvelopeErrorsJSON contains the JSON
+// metadata for the struct
+// [TunnelWARPConnectorFailoverUpdateResponseEnvelopeErrors]
+type tunnelWARPConnectorFailoverUpdateResponseEnvelopeErrorsJSON struct {
+	Code        apijson.Field
+	Message     apijson.Field
+	Context     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *TunnelWARPConnectorFailoverUpdateResponseEnvelopeErrors) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r tunnelWARPConnectorFailoverUpdateResponseEnvelopeErrorsJSON) RawJSON() string {
+	return r.raw
+}
+
+type TunnelWARPConnectorFailoverUpdateResponseEnvelopeMessages struct {
+	Code    int64  `json:"code" api:"required"`
+	Message string `json:"message" api:"required"`
+	// Optional error-specific context.
+	Context map[string]interface{}                                        `json:"context"`
+	JSON    tunnelWARPConnectorFailoverUpdateResponseEnvelopeMessagesJSON `json:"-"`
+}
+
+// tunnelWARPConnectorFailoverUpdateResponseEnvelopeMessagesJSON contains the JSON
+// metadata for the struct
+// [TunnelWARPConnectorFailoverUpdateResponseEnvelopeMessages]
+type tunnelWARPConnectorFailoverUpdateResponseEnvelopeMessagesJSON struct {
+	Code        apijson.Field
+	Message     apijson.Field
+	Context     apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *TunnelWARPConnectorFailoverUpdateResponseEnvelopeMessages) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r tunnelWARPConnectorFailoverUpdateResponseEnvelopeMessagesJSON) RawJSON() string {
 	return r.raw
 }
 
