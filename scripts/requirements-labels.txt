@@ -4,5 +4,5 @@
 #
 # Used by the validate job in .github/workflows/labels.yaml.
 
-PyYAML==6.0.3
+PyYAML==6.0.4
 pytest==9.1.1
