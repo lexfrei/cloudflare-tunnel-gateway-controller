@@ -459,6 +459,7 @@ Before creating a PR, verify all checklist items from `.github/pull_request_temp
 
 3. **Code Quality**
    - Commit messages follow semantic format (`type(scope): description`)
+   - Every commit signed off and AI assistance disclosed per `CONTRIBUTING.md` → Sign-off and AI Disclosure
    - No secrets or credentials in code
    - Breaking changes documented (if any)
 
