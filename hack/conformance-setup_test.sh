@@ -117,15 +117,35 @@ fi
 # error instead of the check's message. The PATH here mirrors the system
 # directories minus the one tool, since /bin and /usr/bin both carry it on a
 # merged-/usr host.
-for missing in xxd curl; do
-  mirror="${tmp}/no-${missing}"
+# mirror_path <mirror> <missing> <dir>... links every entry of each dir into
+# mirror except <missing>; the first dir to carry a name wins.
+mirror_path() {
+  local mirror="$1" missing="$2" dir bin name
+  shift 2
   mkdir -p "${mirror}"
-  for dir in /usr/bin /bin; do
+  for dir in "$@"; do
     for bin in "${dir}"/*; do
       name="${bin##*/}"
-      [[ "${name}" == "${missing}" || -e "${mirror}/${name}" ]] || ln -s "${bin}" "${mirror}/${name}"
+      # -L, not -e: -e follows the link and is false for a dangling one.
+      [[ "${name}" == "${missing}" || -L "${mirror}/${name}" ]] || ln -s "${bin}" "${mirror}/${name}" || return 1
     done
   done
+}
+
+# A dangling symlink in a system directory (ubuntu-26.04 ships one) seen
+# through both halves of a merged /usr must not abort the mirror.
+dangling_src="${tmp}/dangling-src"
+mkdir -p "${dangling_src}"
+ln -s "${tmp}/nowhere" "${dangling_src}/broken"
+if (mirror_path "${tmp}/dangling-mirror" xxd "${dangling_src}" "${dangling_src}") 2>/dev/null; then
+  pass "a dangling system symlink does not abort the PATH mirror"
+else
+  flunk "a dangling system symlink does not abort the PATH mirror"
+fi
+
+for missing in xxd curl; do
+  mirror="${tmp}/no-${missing}"
+  mirror_path "${mirror}" "${missing}" /usr/bin /bin
   out="$(system_path="${mirror}" run_prereq Linux)"
   if grep --quiet "${missing} is not installed" <<< "${out}"; then
     pass "a host without ${missing} gets the prerequisite message"
