@@ -61,6 +61,35 @@ gatewayClassConfig:
     # as the default.
     defaultGatewayConfigName: ""
 
+# -- Per-Gateway dedicated data planes (issue #479): the installation-level
+# switch for the feature and the RBAC that exists only for it.
+perGatewayDataPlanes:
+  # -- Serve per-Gateway dedicated data planes. This is what grants the
+  # controller cluster-wide create/update/delete on Deployments, Services,
+  # HorizontalPodAutoscalers and NetworkPolicies, and cluster-wide Secret
+  # access — rendered data planes live in arbitrary Gateway namespaces. Set
+  # false on clusters that only use the shared data plane: those grants are
+  # left out entirely, Secret access moves to namespaced Roles (the release
+  # namespace plus `extraSecretNamespaces`) with the controller's cache scoped
+  # to match, and a Gateway requesting a dedicated plane is refused with
+  # Accepted=False/PerGatewayDataPlanesDisabled instead of silently never
+  # working. Tear existing dedicated planes down BEFORE disabling (delete the
+  # opted-in Gateways, or remove their parametersRef while the feature is
+  # still on): with the write RBAC withdrawn the controller cannot remove a
+  # leftover plane, which keeps serving its last-pushed routes — the
+  # controller logs an Error for each one it finds at startup.
+  enabled: true
+  # -- (list) Namespaces, beyond the release namespace, the controller may
+  # read Secrets in when `enabled` is false: Cloudflare credentials Secrets
+  # kept outside the release namespace, Gateway listener/backend-TLS
+  # certificateRefs, and BackendTLSPolicy CA Secrets. Each gets a read-only
+  # Role + RoleBinding, and the controller's Secret cache is restricted to
+  # this list plus the release namespace (a Secret read outside it fails
+  # closed). Ignored when `enabled` is true — Secret access is cluster-wide
+  # then. The namespace of `gatewayClassConfig.cloudflareCredentialsSecretRef`
+  # is included automatically.
+  extraSecretNamespaces: []
+
 # -- Controller configuration
 controller:
   # -- Name of the GatewayClass resource to create

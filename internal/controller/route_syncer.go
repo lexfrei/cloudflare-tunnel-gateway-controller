@@ -80,6 +80,15 @@ type RouteSyncer struct {
 	// still applies).
 	ViewStore *mergeViewStore
 
+	// PerGatewayPlanesDisabled mirrors --per-gateway-data-planes=false: no
+	// dedicated data plane exists or will be rendered, so every opted-in
+	// Gateway is refused as a whole — its routes are served from NO partition,
+	// never silently from the shared plane — and its GatewayConfig is not
+	// resolved at all (the connector-token Secret lives in a namespace the
+	// scoped Secret cache cannot read). Set by the manager after construction,
+	// like ViewStore.
+	PerGatewayPlanesDisabled bool
+
 	// syncMu protects concurrent calls to SyncAllRoutes.
 	// Both HTTPRouteReconciler and GRPCRouteReconciler may call SyncAllRoutes
 	// concurrently, and this mutex ensures serialized access to Cloudflare API.
@@ -1717,6 +1726,14 @@ func (s *RouteSyncer) applyPlaneRefusals(
 	infra *infraGateways,
 	resolvedConfig *config.ResolvedConfig,
 ) {
+	// Planes disabled: resolveInfraGateways already refused every opted-in
+	// Gateway, and there is nothing left to arbitrate — collecting tunnel
+	// claims would parse each Gateway's connector token, a Secret read the
+	// scoped cache cannot serve.
+	if s.PerGatewayPlanesDisabled {
+		return
+	}
+
 	applyGatewayRefusals(infra)
 
 	claims := collectTunnelClaims(ctx, infra.listed, s.ConfigResolver, resolvedConfig.TunnelID)

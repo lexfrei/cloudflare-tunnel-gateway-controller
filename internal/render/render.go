@@ -93,6 +93,14 @@ const (
 	configTLSNameSuffix = "-config-tls"
 	configTLSVolumeName = "config-tls"
 	configTLSMountPath  = "/etc/cf-proxy/config-tls"
+	// The connector token is mounted as a file and named to the proxy via
+	// TUNNEL_TOKEN_FILE — never a secretKeyRef env, which would leave the
+	// token readable in /proc/<pid>/environ. The Secret's
+	// (configurable) key is projected to the fixed tunnelTokenKey path, so
+	// the mounted file name does not move with the key.
+	tunnelTokenVolumeName = "tunnel-token"
+	//nolint:gosec // G101 false positive: this is a mount PATH, not a credential
+	tunnelTokenMountPath = "/etc/cf-proxy/tunnel-token"
 	// secretVolumeDefaultMode is the apiserver default, rendered explicitly so
 	// the full-spec apply converges.
 	secretVolumeDefaultMode int32 = 0o644
@@ -361,9 +369,10 @@ func ProxyDeployment(input *Input) *appsv1.Deployment {
 
 	// Hash BOTH rotation-relevant tokens into the pod template so rotating
 	// either Secret produces a different template and rolls the pods. Both
-	// reach the proxy via SecretKeyRef env vars (read once at start), so
-	// without this a rotated token would strand the running pod on the old
-	// value while the controller starts using the new one.
+	// are read once at proxy start (the tunnel token from its mounted file,
+	// the auth token from a SecretKeyRef env), so without this a rotated
+	// token would strand the running pod on the old value while the
+	// controller starts using the new one.
 	podAnnotations[tokenHashAnnotation] = hashToken(input.TunnelToken)
 	podAnnotations[authTokenHashAnnotation] = hashToken(input.AuthToken)
 
@@ -406,7 +415,7 @@ func ProxyDeployment(input *Input) *appsv1.Deployment {
 					AutomountServiceAccountToken: new(false),
 					SecurityContext:              podSecurityContext(),
 					Containers:                   []corev1.Container{proxyContainer(input)},
-					Volumes:                      configTLSVolumes(input),
+					Volumes:                      proxyVolumes(input),
 					// apiserver-defaulted pod fields, rendered explicitly (see
 					// the Strategy comment above).
 					RestartPolicy:            corev1.RestartPolicyAlways,
@@ -454,7 +463,7 @@ func proxyContainer(input *Input) corev1.Container {
 		TerminationMessagePolicy: corev1.TerminationMessageReadFile,
 		SecurityContext:          containerSecurityContext(),
 		Env:                      proxyEnv(input),
-		VolumeMounts:             configTLSVolumeMounts(input),
+		VolumeMounts:             proxyVolumeMounts(input),
 		Ports: []corev1.ContainerPort{
 			{Name: configPortName, ContainerPort: configAPIPort(input.Defaults.ConfigAPIPort), Protocol: corev1.ProtocolTCP},
 			{Name: proxyPortName, ContainerPort: proxyPort, Protocol: corev1.ProtocolTCP},
@@ -476,26 +485,46 @@ func probeScheme(input *Input) corev1.URIScheme {
 	return corev1.URISchemeHTTP
 }
 
-func configTLSVolumes(input *Input) []corev1.Volume {
-	if input.ConfigTLSSecretName == "" {
-		return nil
+// proxyVolumes renders the tunnel-token Secret volume plus, when config API
+// TLS is on, the serving-certificate volume. Only the token key is projected,
+// so unrelated keys in the Secret never land on the pod's filesystem.
+func proxyVolumes(input *Input) []corev1.Volume {
+	volumes := make([]corev1.Volume, 1, 2)
+	volumes[0] = corev1.Volume{
+		Name: tunnelTokenVolumeName,
+		Secret: &corev1.SecretVolumeSource{
+			SecretName: input.Config.Spec.TunnelTokenSecretRef.Name,
+			Items: []corev1.KeyToPath{{
+				Key:  input.Config.Spec.TunnelTokenSecretRef.KeyOr(tunnelTokenKey),
+				Path: tunnelTokenKey,
+			}},
+			DefaultMode: new(secretVolumeDefaultMode),
+		},
 	}
 
-	return []corev1.Volume{{
+	if input.ConfigTLSSecretName == "" {
+		return volumes
+	}
+
+	return append(volumes, corev1.Volume{
 		Name: configTLSVolumeName,
 		Secret: &corev1.SecretVolumeSource{
 			SecretName:  input.ConfigTLSSecretName,
 			DefaultMode: new(secretVolumeDefaultMode),
 		},
-	}}
+	})
 }
 
-func configTLSVolumeMounts(input *Input) []corev1.VolumeMount {
+// proxyVolumeMounts mirrors proxyVolumes on the container side.
+func proxyVolumeMounts(input *Input) []corev1.VolumeMount {
+	mounts := make([]corev1.VolumeMount, 1, 2)
+	mounts[0] = corev1.VolumeMount{Name: tunnelTokenVolumeName, MountPath: tunnelTokenMountPath, ReadOnly: true}
+
 	if input.ConfigTLSSecretName == "" {
-		return nil
+		return mounts
 	}
 
-	return []corev1.VolumeMount{{Name: configTLSVolumeName, MountPath: configTLSMountPath, ReadOnly: true}}
+	return append(mounts, corev1.VolumeMount{Name: configTLSVolumeName, MountPath: configTLSMountPath, ReadOnly: true})
 }
 
 func proxyImage(input *Input) string {
@@ -506,20 +535,19 @@ func proxyImage(input *Input) string {
 	return input.Defaults.ProxyImage
 }
 
-// proxyEnv wires the connector token (and optional knobs) exactly like the
-// chart does for the shared proxy. Binary defaults (the proxy port, an
-// unchanged config-API port, grace period, metrics-on) are deliberately not
-// rendered.
+// proxyEnv points the proxy at its mounted connector-token file and wires the
+// optional knobs, exactly like the chart does for the shared proxy. Binary
+// defaults (the proxy port, an unchanged config-API port, grace period,
+// metrics-on) are deliberately not rendered.
 func proxyEnv(input *Input) []corev1.EnvVar {
+	// The connector token is a mounted file (see proxyVolumes), never a
+	// secretKeyRef env: an env token sits in /proc/<pid>/environ for the
+	// pod's whole life and is routinely captured by crash dumps and debug
+	// tooling.
 	env := []corev1.EnvVar{
 		{
-			Name: "TUNNEL_TOKEN",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					Name: input.Config.Spec.TunnelTokenSecretRef.Name,
-					Key:  input.Config.Spec.TunnelTokenSecretRef.KeyOr(tunnelTokenKey),
-				},
-			},
+			Name:  "TUNNEL_TOKEN_FILE",
+			Value: tunnelTokenMountPath + "/" + tunnelTokenKey,
 		},
 	}
 

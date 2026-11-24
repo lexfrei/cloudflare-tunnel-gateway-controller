@@ -150,19 +150,51 @@ func TestProxyDeployment_CoreShape(t *testing.T) {
 	container := deployment.Spec.Template.Spec.Containers[0]
 	assert.Equal(t, "ghcr.io/lexfrei/cloudflare-tunnel-gateway-controller-proxy:v9.9.9", container.Image)
 
-	var tokenEnv *corev1.EnvVar
+	// The connector token is delivered as a mounted Secret file, never a
+	// secretKeyRef env: an env token is readable via /proc/<pid>/environ and
+	// routinely captured by crash dumps and debug tooling.
+	var tokenEnv, legacyEnv *corev1.EnvVar
 
 	for i := range container.Env {
-		if container.Env[i].Name == "TUNNEL_TOKEN" {
+		switch container.Env[i].Name {
+		case "TUNNEL_TOKEN_FILE":
 			tokenEnv = &container.Env[i]
+		case "TUNNEL_TOKEN":
+			legacyEnv = &container.Env[i]
 		}
 	}
 
-	require.NotNil(t, tokenEnv, "TUNNEL_TOKEN env must be present")
-	require.NotNil(t, tokenEnv.ValueFrom)
-	require.NotNil(t, tokenEnv.ValueFrom.SecretKeyRef)
-	assert.Equal(t, "edge-token", tokenEnv.ValueFrom.SecretKeyRef.Name)
-	assert.Equal(t, "tunnel-token", tokenEnv.ValueFrom.SecretKeyRef.Key)
+	require.NotNil(t, tokenEnv, "TUNNEL_TOKEN_FILE env must be present")
+	assert.Equal(t, "/etc/cf-proxy/tunnel-token/tunnel-token", tokenEnv.Value)
+	assert.Nil(t, legacyEnv, "the token must not be wired through the TUNNEL_TOKEN env")
+
+	var tokenMount *corev1.VolumeMount
+
+	for i := range container.VolumeMounts {
+		if container.VolumeMounts[i].Name == "tunnel-token" {
+			tokenMount = &container.VolumeMounts[i]
+		}
+	}
+
+	require.NotNil(t, tokenMount, "the tunnel-token Secret volume must be mounted")
+	assert.Equal(t, "/etc/cf-proxy/tunnel-token", tokenMount.MountPath)
+	assert.True(t, tokenMount.ReadOnly)
+
+	var tokenVolume *corev1.Volume
+
+	for i := range deployment.Spec.Template.Spec.Volumes {
+		if deployment.Spec.Template.Spec.Volumes[i].Name == "tunnel-token" {
+			tokenVolume = &deployment.Spec.Template.Spec.Volumes[i]
+		}
+	}
+
+	require.NotNil(t, tokenVolume, "the tunnel-token Secret volume must be rendered")
+	require.NotNil(t, tokenVolume.Secret)
+	assert.Equal(t, "edge-token", tokenVolume.Secret.SecretName)
+	require.Len(t, tokenVolume.Secret.Items, 1,
+		"only the token key is projected, so unrelated keys in the Secret never land on disk")
+	assert.Equal(t, "tunnel-token", tokenVolume.Secret.Items[0].Key)
+	assert.Equal(t, "tunnel-token", tokenVolume.Secret.Items[0].Path)
 
 	require.NotNil(t, deployment.Spec.Template.Spec.TerminationGracePeriodSeconds)
 	assert.Equal(t, int64(45), *deployment.Spec.Template.Spec.TerminationGracePeriodSeconds,

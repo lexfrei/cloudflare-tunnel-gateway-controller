@@ -76,6 +76,17 @@ type ProxySecretReconciler struct {
 	// `app.kubernetes.io/component=proxy`.
 	DeploymentLabelKey   string
 	DeploymentLabelValue string
+
+	// DeploymentName, when set, restricts the roll to the one Deployment of
+	// that name (--proxy-deployment-name; the chart passes its own proxy's).
+	// The label selector alone matches EVERY release's proxy sharing the
+	// namespace, and under the namespace-scoped RBAC patching a
+	// foreign release's is Forbidden — identifying our own target by name
+	// means foreign Deployments are never touched at all, and every patch
+	// failure on the one that IS ours (including Forbidden, e.g. an admission
+	// denial) propagates for retry rather than being mistaken for someone
+	// else's. Empty keeps the label-only behaviour for hand-built installs.
+	DeploymentName string
 }
 
 // NewProxySecretReconciler parses the controller config's
@@ -156,6 +167,20 @@ func (r *ProxySecretReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	for idx := range deployments.Items {
 		dep := &deployments.Items[idx]
 		if controlledByGateway(dep) {
+			continue
+		}
+
+		// Another release's proxy in the same namespace matches the generic
+		// label too; when our own target is named, foreign Deployments are
+		// not ours to roll — their release's controller does that — and under
+		// the namespace-scoped RBAC patching them is Forbidden
+		// anyway. Skipping BY NAME (not by swallowing Forbidden) keeps every
+		// patch failure on our own Deployment — an admission denial or a
+		// temporarily lost permission included — propagating for retry.
+		if r.DeploymentName != "" && dep.Name != r.DeploymentName {
+			logger.Debug("skipping a proxy Deployment that is not this release's --proxy-deployment-name target",
+				"deployment", dep.Namespace+"/"+dep.Name)
+
 			continue
 		}
 

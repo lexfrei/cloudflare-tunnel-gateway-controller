@@ -122,20 +122,73 @@ func configAPIAuthFor(tunnelToken string) configAPIAuth {
 }
 
 // errTunnelTokenEmpty is the sentinel resolveTunnelToken returns when
-// TUNNEL_TOKEN is set but empty.
+// TUNNEL_TOKEN is set but empty, or when the TUNNEL_TOKEN_FILE file holds
+// nothing.
 var errTunnelTokenEmpty = errors.New("TUNNEL_TOKEN is set but empty")
 
-// resolveTunnelToken reads TUNNEL_TOKEN and reports whether tunnel mode was
-// asked for. Unset selects standalone mode, which is how it is requested.
+// errTunnelTokenFileEmpty is the sentinel for TUNNEL_TOKEN_FILE set to an
+// empty path.
+var errTunnelTokenFileEmpty = errors.New("TUNNEL_TOKEN_FILE is set but empty")
+
+// errTunnelTokenAmbiguous is the sentinel for TUNNEL_TOKEN and
+// TUNNEL_TOKEN_FILE both being set.
+var errTunnelTokenAmbiguous = errors.New("TUNNEL_TOKEN and TUNNEL_TOKEN_FILE are both set; configure exactly one")
+
+// resolveTunnelToken reads the connector token and reports whether tunnel
+// mode was asked for. Neither variable set selects standalone mode, which is
+// how it is requested.
 //
-// Set but empty is refused. The run mode is chosen on the token being
-// non-empty, so an empty one does not merely fail — it selects standalone, the
-// mode that still starts without a config-API token. A tunnel deployment whose
-// token resolved to nothing would come up as an unauthenticated local proxy.
+// Two delivery paths, exactly one of which may be configured:
+//   - TUNNEL_TOKEN_FILE names a file holding the token — the chart's path: a
+//     mounted Secret, like upstream cloudflared's --token-file, so the token
+//     never sits in the process environment (readable via /proc/<pid>/environ
+//     and routinely captured by crash dumps and debug tooling);
+//   - TUNNEL_TOKEN carries the value directly, kept for hand-built
+//     deployments and local runs.
+//
+// Set but empty — either variable, or an empty file — is refused. The run
+// mode is chosen on the token being non-empty, so an empty one does not
+// merely fail — it selects standalone, the mode that still starts without a
+// config-API token. A tunnel deployment whose token resolved to nothing would
+// come up as an unauthenticated local proxy. Both set is refused too:
+// silently preferring one source would keep a stale token serving after the
+// operator switched to the other.
 func resolveTunnelToken() (string, error) {
 	token, isSet := os.LookupEnv("TUNNEL_TOKEN")
+
+	path, pathIsSet := os.LookupEnv("TUNNEL_TOKEN_FILE")
+	if pathIsSet {
+		if isSet {
+			return "", errTunnelTokenAmbiguous
+		}
+
+		return readTunnelTokenFile(path)
+	}
+
 	if isSet && token == "" {
 		return "", errTunnelTokenEmpty
+	}
+
+	return token, nil
+}
+
+// readTunnelTokenFile reads the connector token from the file
+// TUNNEL_TOKEN_FILE names. Surrounding whitespace is trimmed: Secret files
+// written with `kubectl create secret --from-file` or heredocs routinely
+// carry a trailing newline that is not part of the token.
+func readTunnelTokenFile(path string) (string, error) {
+	if path == "" {
+		return "", errTunnelTokenFileEmpty
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading TUNNEL_TOKEN_FILE: %w", err)
+	}
+
+	token := strings.TrimSpace(string(data))
+	if token == "" {
+		return "", fmt.Errorf("%w: %s holds no token", errTunnelTokenEmpty, path)
 	}
 
 	return token, nil

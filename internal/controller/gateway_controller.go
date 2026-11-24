@@ -148,6 +148,16 @@ type GatewayReconciler struct {
 	// ViewStore caches the per-Gateway ListenerSet merge view across reconciles.
 	// Shared with the route and ListenerSet reconcilers (issue #332). May be nil.
 	ViewStore *mergeViewStore
+
+	// PerGatewayPlanesDisabled mirrors --per-gateway-data-planes=false (the
+	// chart's perGatewayDataPlanes.enabled=false): the installation holds no
+	// RBAC for rendering dedicated data planes, the infra reconciler is not
+	// running, and the Secret cache is scoped to an explicit namespace list.
+	// A Gateway requesting a dedicated plane is refused with
+	// Accepted=False/PerGatewayDataPlanesDisabled — refused loudly, because
+	// silently not rendering the plane would leave a healthy-looking Gateway
+	// whose routes never work.
+	PerGatewayPlanesDisabled bool
 }
 
 func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -196,12 +206,17 @@ func (r *GatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	r.warnInvalidAllowedListeners(&gateway)
 
-	if routebinding.RequestsFrontendValidation(&gateway) {
-		return ctrl.Result{}, r.refuseFrontendValidation(ctx, &gateway)
+	if refused, err := r.refuseInvalidSpec(ctx, &gateway); refused {
+		return ctrl.Result{}, err
 	}
 
-	if addressType, unsupported := routebinding.UnsupportedAddressType(&gateway); unsupported {
-		return ctrl.Result{}, r.refuseUnsupportedAddress(ctx, &gateway, addressType)
+	// Decided BEFORE resolveGatewayConfig: when per-Gateway data planes are
+	// disabled the Secret cache is scoped to an explicit namespace list, so
+	// resolving the Gateway's connector token (which lives in its own
+	// namespace) would fail transiently and leave the Gateway requeueing
+	// forever instead of carrying the refusal it deserves.
+	if result, handled, err := r.refuseDisabledDedicatedPlane(ctx, &gateway); handled {
+		return result, err
 	}
 
 	resolvedConfig, perGatewayMode, err := r.resolveGatewayConfig(ctx, &gateway)
@@ -366,6 +381,97 @@ func (r *GatewayReconciler) refuseOverQuota(
 	r.reportQuotaRefusal(ctx, gateway, *capacity)
 
 	return ctrl.Result{RequeueAfter: configErrorRequeueDelay, Priority: new(priorityGateway)}, true
+}
+
+// refuseInvalidSpec settles the two spec-level refusals a Gateway can earn
+// before any configuration is resolved: requesting frontend (client
+// certificate) validation, which the Cloudflare edge owns, and requesting an
+// unsupported address type. refused reports that the verdict is written and
+// the reconcile must stop.
+func (r *GatewayReconciler) refuseInvalidSpec(ctx context.Context, gateway *gatewayv1.Gateway) (bool, error) {
+	if routebinding.RequestsFrontendValidation(gateway) {
+		return true, r.refuseFrontendValidation(ctx, gateway)
+	}
+
+	if addressType, unsupported := routebinding.UnsupportedAddressType(gateway); unsupported {
+		return true, r.refuseUnsupportedAddress(ctx, gateway, addressType)
+	}
+
+	return false, nil
+}
+
+// refuseDisabledDedicatedPlane reports a Gateway that requests a dedicated
+// data plane while per-Gateway data planes are disabled for the whole
+// installation (--per-gateway-data-planes=false). The infra reconciler is not
+// running and the RBAC for rendering a plane is not granted, so the request
+// can never be served; refusing it with a clear condition is what tells the
+// operator, instead of a healthy-looking Gateway whose routes silently never
+// work. handled mirrors refuseDedicatedPlane: when true the caller must not
+// go on to write an Accepted status.
+//
+// Decided from the Gateway's spec and its class alone (UsesDedicatedPlane) —
+// deliberately never from the GatewayConfig's Secrets, which the scoped
+// Secret cache cannot read.
+func (r *GatewayReconciler) refuseDisabledDedicatedPlane(
+	ctx context.Context,
+	gateway *gatewayv1.Gateway,
+) (ctrl.Result, bool, error) {
+	if !r.PerGatewayPlanesDisabled {
+		return ctrl.Result{}, false, nil
+	}
+
+	dedicated, err := r.ConfigResolver.UsesDedicatedPlane(ctx, gateway)
+	if err != nil {
+		result, statusErr := r.handleResolveError(ctx, gateway,
+			errors.Wrap(err, "GatewayClass configuration"), "deciding the gateway's data plane")
+
+		return result, true, statusErr
+	}
+
+	if !dedicated {
+		return ctrl.Result{}, false, nil
+	}
+
+	// No requeue on success: only a spec edit or a controller restart with
+	// the flag flipped — both events of their own — can change the verdict. A
+	// failed status write IS returned, though: swallowing it would leave the
+	// Gateway with no condition at all and nothing scheduled to retry, so the
+	// operator's only trace of the refusal would be one controller log line.
+	return ctrl.Result{}, true, r.reportPlanesDisabledRefusal(ctx, gateway)
+}
+
+// reportPlanesDisabledRefusal makes the refusal impossible to miss: an Error
+// log, a Warning Event, and Accepted=False/PerGatewayDataPlanesDisabled with
+// the remedy in the message. Same report-once shape as the quota refusal: the
+// condition is what persists, so log and Event only when the verdict is new.
+// A failed condition write is returned for the caller to propagate (backoff
+// retry), not merely logged.
+func (r *GatewayReconciler) reportPlanesDisabledRefusal(ctx context.Context, gateway *gatewayv1.Gateway) error {
+	logger := log.FromContext(ctx)
+	err := planesDisabledError()
+
+	if !isRefusalReported(gateway, perGatewayPlanesDisabledMessage) {
+		logger.Error(err, "refusing a Gateway that requests a dedicated data plane while per-Gateway data planes are disabled",
+			"gateway", gateway.Namespace+"/"+gateway.Name)
+
+		if r.Recorder != nil {
+			r.Recorder.Eventf(gateway, nil, corev1.EventTypeWarning,
+				reasonPerGatewayPlanesDisabled, eventActionDecideDataPlane, "%s", err.Error())
+		}
+	}
+
+	return errors.Wrap(r.setConfigErrorStatus(ctx, gateway, err), "writing the disabled-planes refusal status")
+}
+
+// planesDisabledError builds the error the refusal is reported through.
+// Marked and classified rather than wrapped, for the reasons
+// tunnelRefusalError explains.
+//
+//nolint:wrapcheck // classifying rather than wrapping is the point, per above
+func planesDisabledError() error {
+	return config.MarkInvalidParameters(
+		errors.Mark(errors.New(perGatewayPlanesDisabledMessage), errPerGatewayPlanesDisabled),
+	)
 }
 
 // reportQuotaRefusal makes a capacity refusal impossible to miss: an Error log
@@ -549,6 +655,33 @@ const reasonDataPlaneQuotaExceeded = "DataPlaneQuotaExceeded"
 // the operator's dedicated data-plane cap, so the status writer can say so with
 // its own reason rather than the generic InvalidParameters.
 var errDataPlaneQuotaExceeded = errors.New("dedicated data-plane cap reached")
+
+// reasonPerGatewayPlanesDisabled names both the Accepted=False reason and the
+// Warning Event raised when a Gateway requests a dedicated data plane in an
+// installation that disabled them (--per-gateway-data-planes=false, the
+// chart's perGatewayDataPlanes.enabled=false). Implementation-specific for
+// the same reason as reasonDataPlaneQuotaExceeded: nothing is wrong with the
+// Gateway's spec, the installation just does not run the feature.
+const reasonPerGatewayPlanesDisabled = "PerGatewayDataPlanesDisabled"
+
+// perGatewayPlanesDisabledMessage is the Accepted=False message of a Gateway
+// refused because the installation disabled per-Gateway data planes. It names
+// the remedy on both sides — the tenant's and the operator's — and must fit
+// maxConditionMessageLength with refusedConditionPrefix.
+const perGatewayPlanesDisabledMessage = "per-Gateway data planes are disabled in this installation " +
+	"(chart value perGatewayDataPlanes.enabled=false). Use the shared data plane (remove " +
+	"spec.infrastructure.parametersRef or the class default GatewayConfig), or re-enable them."
+
+// errPerGatewayPlanesDisabled marks a Gateway refused because the installation
+// disabled per-Gateway data planes, so the status writer can say so with its
+// own reason rather than the generic InvalidParameters.
+var errPerGatewayPlanesDisabled = errors.New(perGatewayPlanesDisabledMessage)
+
+// eventActionDecideDataPlane labels the installation-level data-plane
+// decision: distinct from arbitration (who owns a tunnel) and the quota (how
+// many planes a namespace may hold) — this one asks whether dedicated planes
+// exist here at all.
+const eventActionDecideDataPlane = "DecideDataPlane"
 
 // eventActionArbitrate labels the tunnel-ownership decision. Distinct from the
 // infra reconciler's render action: this layer decides, it does not render.
@@ -1214,14 +1347,7 @@ func (r *GatewayReconciler) setConfigErrorStatus(
 		priorStatus := freshGateway.Status.DeepCopy()
 		now := metav1.Now()
 
-		prefix := "Failed to resolve Gateway configuration: "
-		if errors.Is(configErr, errTunnelClaimRefused) || errors.Is(configErr, errDataPlaneQuotaExceeded) ||
-			errors.Is(configErr, errFrontendValidationRefused) || errors.Is(configErr, errUnsupportedAddress) {
-			// Nothing failed to resolve; the Gateway was refused.
-			prefix = refusedConditionPrefix
-		}
-
-		errMsg := truncateMessage(prefix + configErr.Error())
+		errMsg := truncateMessage(configErrorPrefix(configErr) + configErr.Error())
 
 		// Clear addresses on config error (no valid tunnel to point to).
 		//
@@ -1309,6 +1435,19 @@ func (r *GatewayReconciler) applyConfigErrorListenerStatuses(
 	return nil
 }
 
+// configErrorPrefix picks the condition-message prefix for a config error: a
+// refusal (nothing failed to resolve; the Gateway was judged and turned away)
+// gets refusedConditionPrefix, everything else reports a resolve failure.
+func configErrorPrefix(configErr error) string {
+	if errors.Is(configErr, errTunnelClaimRefused) || errors.Is(configErr, errDataPlaneQuotaExceeded) ||
+		errors.Is(configErr, errFrontendValidationRefused) || errors.Is(configErr, errUnsupportedAddress) ||
+		errors.Is(configErr, errPerGatewayPlanesDisabled) {
+		return refusedConditionPrefix
+	}
+
+	return "Failed to resolve Gateway configuration: "
+}
+
 // configErrorReasons picks the Accepted, Programmed and listener-Programmed
 // reasons for a config error.
 //
@@ -1329,6 +1468,17 @@ func configErrorReasons(configErr error) configErrorReasonSet {
 	if errors.Is(configErr, errDataPlaneQuotaExceeded) {
 		return configErrorReasonSet{
 			accepted:   reasonDataPlaneQuotaExceeded,
+			programmed: string(gatewayv1.GatewayReasonNoResources),
+			listener:   string(gatewayv1.ListenerReasonPending),
+		}
+	}
+
+	// The same shape as the quota: nothing is wrong with the Gateway's spec,
+	// the installation just runs no dedicated planes — Programmed=NoResources
+	// (infrastructure that is not there), listeners Pending.
+	if errors.Is(configErr, errPerGatewayPlanesDisabled) {
+		return configErrorReasonSet{
+			accepted:   reasonPerGatewayPlanesDisabled,
 			programmed: string(gatewayv1.GatewayReasonNoResources),
 			listener:   string(gatewayv1.ListenerReasonPending),
 		}
