@@ -57,7 +57,7 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout PR code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -113,12 +113,18 @@ jobs:
         # release. The action also persists ~/.cache/golangci-lint
         # automatically when version is pinned (see action docs).
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
+        # A run without a warm cache peaks near 17 GB unbounded, more than
+        # the 16 GB runner has, and the runner dies mid-step. The soft limit
+        # keeps it near 9 GB at the cost of extra GC time, which a 5m
+        # timeout no longer covers.
+        env:
+          GOMEMLIMIT: 8GiB
         with:
           version: v2.14.0
           # --build-tags makes the linter compile the tag-gated test packages
           # (test/e2e, test/conformance, envtest suites) that a plain run
           # silently skips. Issue #402.
-          args: --timeout=5m --build-tags e2e,conformance,envtest
+          args: --timeout=15m --build-tags e2e,conformance,envtest
 
       - name: markdownlint
         uses: DavidAnson/markdownlint-cli2-action@696eb3f2509270d7b882d2aa68347bc676e7af34 # v25
