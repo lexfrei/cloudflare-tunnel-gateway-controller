@@ -61,8 +61,13 @@ type(scope): brief description
 
 Optional longer explanation.
 
-Co-Authored-By: Your Name <your@email.com>
+Signed-off-by: Your Name <your@email.com>
 ```
+
+### Sign-off and AI Disclosure
+
+- **Sign off every commit** with `git commit --signoff`, which adds the `Signed-off-by` line. A DCO check runs on every pull request, and maintainers do not merge a pull request until it passes. The sign-off certifies the [Developer Certificate of Origin](https://developercertificate.org/): you have the right to submit the change under the project license.
+- **Disclose AI assistance** with exactly one trailer line, `Assisted-by: LLM`, in the commit message. Do not name a model or vendor in any trailer or byline: no `Co-Authored-By: <model> <noreply@...>`, no `Generated-by`, no "Generated with <tool>" line in commit messages or PR bodies, and no links to assistant sessions or transcripts. Reviewers learn that AI was involved, and the permanent history does not advertise a vendor.
 
 ### Types
 

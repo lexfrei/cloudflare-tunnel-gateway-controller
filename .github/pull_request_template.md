@@ -26,6 +26,7 @@ Brief description of what this PR does and why.
 ## Checklist
 
 - [ ] Commit messages follow semantic format (`type(scope): description`)
+- [ ] Every commit is signed off and discloses AI assistance per [Sign-off and AI Disclosure](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/CONTRIBUTING.md#sign-off-and-ai-disclosure)
 - [ ] No secrets or credentials in code
 - [ ] Breaking changes documented (if any)
 - [ ] Related issues referenced (if any)

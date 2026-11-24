@@ -59,8 +59,10 @@ type(scope): brief description
 
 Optional longer explanation.
 
-Co-Authored-By: Your Name <your@email.com>
+Signed-off-by: Your Name <your@email.com>
 ```
+
+Every commit needs a sign-off, and AI assistance is disclosed with one fixed trailer: the rules are in [Sign-off and AI Disclosure](https://github.com/lexfrei/cloudflare-tunnel-gateway-controller/blob/master/CONTRIBUTING.md#sign-off-and-ai-disclosure).
 
 ### Types
 
