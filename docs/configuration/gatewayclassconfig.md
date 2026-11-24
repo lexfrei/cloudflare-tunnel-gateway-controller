@@ -6,7 +6,7 @@ GatewayClassConfig is a cluster-scoped Custom Resource Definition (CRD) that pro
 
 The GatewayClassConfig is referenced by a GatewayClass via `spec.parametersRef` and carries the contract the controller needs for Cloudflare API calls:
 
-- Cloudflare API credentials
+- Cloudflare API credentials (optional — omit them for [no-API mode](#no-api-mode))
 - Tunnel ID
 - Optional account ID override
 
@@ -27,7 +27,8 @@ spec:
   # Optional: Cloudflare Account ID (32-character lowercase hex; auto-detected if not specified)
   accountId: "0123456789abcdef0123456789abcdef"
 
-  # Required: Reference to Secret containing API token
+  # Optional: Reference to Secret containing API token
+  # (omit for no-API mode — see below)
   cloudflareCredentialsSecretRef:
     name: cloudflare-credentials
     # key: api-token  # Default: "api-token"
@@ -93,9 +94,9 @@ spec:
     defaultGatewayConfigName: edge-config
 ```
 
-### `spec.cloudflareCredentialsSecretRef` (required)
+### `spec.cloudflareCredentialsSecretRef` (optional)
 
-Reference to a Kubernetes Secret containing the Cloudflare API token.
+Reference to a Kubernetes Secret containing the Cloudflare API token. Omit it to run in [no-API mode](#no-api-mode).
 
 ```yaml
 spec:
@@ -117,6 +118,29 @@ type: Opaque
 stringData:
   api-token: "YOUR_API_TOKEN"
 ```
+
+## No-API mode
+
+Leave `spec.cloudflareCredentialsSecretRef` unset and the controller makes **no Cloudflare API calls for the shared data plane**. With no `GatewayConfig` credential override anywhere (the common case — see the last bullet), that is no API calls at all: the cluster holds only the tunnel's connector token (`proxy.tunnelTokenSecretRef`), which can run that one tunnel and nothing else, and no account-wide credential ever reaches it.
+
+```yaml
+apiVersion: cf.k8s.lex.la/v1alpha1
+kind: GatewayClassConfig
+metadata:
+  name: cloudflare-tunnel-config
+spec:
+  tunnelID: "550e8400-e29b-41d4-a716-446655440000"
+  # no cloudflareCredentialsSecretRef: no-API mode
+```
+
+What this changes, and what it does not:
+
+- **Routing is unaffected.** The [in-process L7 proxy](../guides/l7-proxy.md) serves every request from the pushed HTTPRoute/GRPCRoute configuration; the tunnel ingress document the API would be used for only feeds the Cloudflare dashboard. Gateways go `Accepted`/`Programmed`, publish their `<tunnelID>.cfargotunnel.com` address, and routes are matched and filtered exactly as with credentials.
+- **The tunnel ingress document is not managed.** Whatever the dashboard shows is whoever owns the tunnel's business — typically the central system that created the tunnel. The Gateway's `Programmed` condition message says so (`the tunnel ingress document is not managed`).
+- **The account ID is never needed.** `spec.accountId` may stay unset; nothing is auto-detected because nothing is called.
+- **Per-Gateway dedicated data planes are refused** (`Accepted=False`, reason `InvalidParameters`) unless their `GatewayConfig` carries its own `cloudflareCredentialsSecretRef`: a dedicated plane's tunnel claim is [verified against Cloudflare](../guides/per-gateway-isolation.md) before its document is written, and with no credential there is nothing to verify with. The shared data plane is unaffected. Note that a plane which does carry an override is **not** covered by the no-API guarantee: its credential sits in its namespace, its tunnel claim is checked against Cloudflare, and its tunnel's ingress document is written as in API mode.
+
+Use this when a central authority owns the tunnel, its configuration and DNS, and the cluster should hold no credential that can read or write other tunnels in the account — which also means supplying no `GatewayConfig` credential overrides. The owner should leave a catch-all rule (for example `http_status:404`) in the tunnel's remote configuration — Cloudflare requires one — and need never update it as routes change.
 
 ## Proxy configuration
 
@@ -232,7 +256,7 @@ flowchart LR
 
 1. GatewayClass references GatewayClassConfig via `parametersRef`
 2. Controller reads GatewayClassConfig
-3. Controller fetches the referenced credentials Secret
+3. Controller fetches the referenced credentials Secret (skipped in [no-API mode](#no-api-mode))
 4. Controller resolves the account ID: `spec.accountId` first, then the `account-id` key in the credentials Secret, then auto-detection via the Cloudflare API
 5. Resolved configuration is used by controllers
 

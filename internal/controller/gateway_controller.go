@@ -814,7 +814,7 @@ func (r *GatewayReconciler) updateStatus(
 			},
 		}
 
-		certErr = r.applyTopLevelGatewayConditions(ctx, &freshGateway, gwView, perGatewayMode, tunnelHostname, now)
+		certErr = r.applyTopLevelGatewayConditions(ctx, &freshGateway, gwView, perGatewayMode, cfg, tunnelHostname, now)
 
 		countErr, err = r.applyListenerStatuses(ctx, &freshGateway, gwView, now)
 		if err != nil {
@@ -844,6 +844,7 @@ func (r *GatewayReconciler) applyTopLevelGatewayConditions(
 	gateway *gatewayv1.Gateway,
 	gwView *gatewayListenerView,
 	perGatewayMode bool,
+	cfg *config.ResolvedConfig,
 	tunnelHostname string,
 	now metav1.Time,
 ) error {
@@ -851,13 +852,21 @@ func (r *GatewayReconciler) applyTopLevelGatewayConditions(
 
 	accepted := gatewayAcceptedCondition(gwView, gateway, now)
 
+	programmedMessage := "Gateway programmed in Cloudflare Tunnel"
+	// No-API mode: programming is real (the proxy serves the routes), but the
+	// dashboard-facing ingress document is left alone — say so where an
+	// operator comparing the dashboard with the cluster will look first.
+	if cfg.APIToken == "" {
+		programmedMessage += "; the tunnel ingress document is not managed (no Cloudflare API credentials configured)"
+	}
+
 	programmed := metav1.Condition{
 		Type:               string(gatewayv1.GatewayConditionProgrammed),
 		Status:             metav1.ConditionTrue,
 		ObservedGeneration: gateway.Generation,
 		LastTransitionTime: now,
 		Reason:             string(gatewayv1.GatewayReasonProgrammed),
-		Message:            "Gateway programmed in Cloudflare Tunnel",
+		Message:            programmedMessage,
 	}
 
 	// A dedicated data plane is only "programmed" once it can actually carry

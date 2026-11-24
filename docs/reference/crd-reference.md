@@ -12,7 +12,7 @@ GatewayClassConfig provides tunnel configuration for the controller. It is refer
 
 ### Spec
 
-The spec carries only the contract the controller needs for Cloudflare API calls: `tunnelID`, `cloudflareCredentialsSecretRef`, and the optional `accountId`, `allowSharedTunnels`, `maxDataPlanesPerNamespace` and `perGatewayDataPlanes`. Every field is described in [GatewayClassConfigSpec](api.md#gatewayclassconfigspec). Proxy-side configuration (tunnel token, replicas, liveness probes) lives in the Helm chart `proxy.*` values; see [Helm chart reference](helm-chart.md). For the data-plane cap, see also the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md).
+The spec carries only the contract the controller needs for Cloudflare API calls: `tunnelID`, and the optional `cloudflareCredentialsSecretRef` (omit it for [no-API mode](../configuration/gatewayclassconfig.md#no-api-mode)), `accountId`, `allowSharedTunnels`, `maxDataPlanesPerNamespace` and `perGatewayDataPlanes`. Every field is described in [GatewayClassConfigSpec](api.md#gatewayclassconfigspec). Proxy-side configuration (tunnel token, replicas, liveness probes) lives in the Helm chart `proxy.*` values; see [Helm chart reference](helm-chart.md). For the data-plane cap, see also the [Per-Gateway Isolation guide](../guides/per-gateway-isolation.md).
 
 ### Example
 
@@ -33,7 +33,7 @@ spec:
 
 GatewayClassConfig has a `status.conditions` subresource. The reconciler emits:
 
-- `SecretsResolved` — `True` when the referenced credentials Secret exists and carries the expected key, `False` otherwise.
+- `SecretsResolved` — `True` when the referenced credentials Secret exists and carries the expected key, or when no Secret is referenced (no-API mode); `False` otherwise.
 - `Valid` — `True` when all validation checks pass; `False` with the first failure message otherwise.
 
 ## GatewayConfig

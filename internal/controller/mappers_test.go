@@ -191,7 +191,7 @@ func TestConfigMapper_MapSecretToRequests_ValidSecret(t *testing.T) {
 			Name: "test-config",
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
@@ -251,7 +251,7 @@ func TestConfigMapper_MapSecretToRequests_WrongSecret(t *testing.T) {
 			Name: "test-config",
 		},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
@@ -453,7 +453,7 @@ func TestSecretMatchesConfig_CredentialsSecret(t *testing.T) {
 
 	cfg := &v1alpha1.GatewayClassConfig{
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
@@ -475,7 +475,7 @@ func TestSecretMatchesConfig_CredentialsSecretEmptyNamespace(t *testing.T) {
 
 	cfg := &v1alpha1.GatewayClassConfig{
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "",
 			},
@@ -497,7 +497,7 @@ func TestSecretMatchesConfig_NoMatch(t *testing.T) {
 
 	cfg := &v1alpha1.GatewayClassConfig{
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
@@ -519,7 +519,7 @@ func TestSecretMatchesConfig_WrongNamespace(t *testing.T) {
 
 	cfg := &v1alpha1.GatewayClassConfig{
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-credentials",
 				Namespace: "default",
 			},
@@ -581,7 +581,7 @@ func TestConfigMapper_MapSecretToRequests_GatewayClientCertSecret_SameNs(t *test
 	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
 			TunnelID:                       "test-tunnel",
 		},
 	}
@@ -665,7 +665,7 @@ func TestConfigMapper_MapSecretToRequests_GatewayClientCertSecret_CrossNsWithGra
 	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
 			TunnelID:                       "test-tunnel",
 		},
 	}
@@ -738,7 +738,7 @@ func TestConfigMapper_MapSecretToRequests_GatewayClientCertSecret_CrossNsWithout
 	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
 			TunnelID:                       "test-tunnel",
 		},
 	}
@@ -813,7 +813,7 @@ func TestConfigMapper_MapSecretToRequests_GatewayClientCertSecret_CrossNsTransie
 	gatewayClassConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{Name: "cf-credentials", Namespace: "default"},
 			TunnelID:                       "test-tunnel",
 		},
 	}

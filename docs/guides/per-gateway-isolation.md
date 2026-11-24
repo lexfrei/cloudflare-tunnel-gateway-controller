@@ -89,7 +89,7 @@ Turning the default on for a class that already serves Gateways moves every Gate
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `tunnelTokenSecretRef` | yes | Connector-token Secret in the SAME namespace (key `tunnel-token` by default). Token rotation rolls the proxy pods automatically. |
-| `cloudflareCredentialsSecretRef` | no | API-token override for this Gateway's tunnel-document writes and for checking its tunnel claim, from a Secret in the SAME namespace (key `api-token` by default); defaults to the GatewayClass → GatewayClassConfig credentials. |
+| `cloudflareCredentialsSecretRef` | no | API-token override for this Gateway's tunnel-document writes and for checking its tunnel claim, from a Secret in the SAME namespace (key `api-token` by default); defaults to the GatewayClass → GatewayClassConfig credentials. With neither (the class runs in [no-API mode](../configuration/gatewayclassconfig.md#no-api-mode)), the Gateway is refused with `Accepted=False`/`InvalidParameters`: a dedicated plane's tunnel claim can only be verified with an API credential. |
 | `authTokenSecretRef` | no | Bearer token (key `auth-token`) protecting this plane's config API; the controller pushes with it. |
 | `replicas` | no | Fixed replica count; default 2 (the HA floor — one connector pod is a tunnel availability hazard), max 100. Mutually exclusive with `autoscaling`. |
 | `autoscaling` | no | Renders a HorizontalPodAutoscaler — see below. `minReplicas`/`maxReplicas` cap at 100. |

@@ -36,7 +36,7 @@ func listenerTransitionFixtures() (*gatewayv1.GatewayClass, *v1alpha1.GatewayCla
 	classConfig := &v1alpha1.GatewayClassConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-config"},
 		Spec: v1alpha1.GatewayClassConfigSpec{
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 				Name:      "cf-creds",
 				Namespace: "default",
 			},

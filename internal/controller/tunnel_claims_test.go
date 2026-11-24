@@ -266,7 +266,7 @@ func claimsClassConfig() *v1alpha1.GatewayClassConfig {
 		ObjectMeta: metav1.ObjectMeta{Name: "class-config"},
 		Spec: v1alpha1.GatewayClassConfigSpec{
 			TunnelID:                       claimsClassTunnel,
-			CloudflareCredentialsSecretRef: v1alpha1.SecretReference{Name: "creds", Namespace: "default"},
+			CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{Name: "creds", Namespace: "default"},
 		},
 	}
 }

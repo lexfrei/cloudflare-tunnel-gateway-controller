@@ -434,8 +434,13 @@ func (m *ConfigMapper) gatewayReferencesSecret(ctx context.Context, gateway *gat
 }
 
 // SecretMatchesConfig checks if a Secret is referenced by the GatewayClassConfig.
+// A config with no credentials ref (no-API mode) references no Secret.
 func SecretMatchesConfig(secret *corev1.Secret, cfg *v1alpha1.GatewayClassConfig) bool {
 	credRef := cfg.Spec.CloudflareCredentialsSecretRef
+	if credRef == nil {
+		return false
+	}
+
 	if secret.Name == credRef.Name && (credRef.Namespace == "" || credRef.Namespace == secret.Namespace) {
 		return true
 	}

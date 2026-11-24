@@ -15,9 +15,15 @@ gatewayClassConfig:
   # parametersRef and reports Accepted=False.
   name: ""
 
-  # -- Reference to Secret containing Cloudflare API credentials (REQUIRED)
+  # -- Reference to Secret containing Cloudflare API credentials
   # The Secret must hold a valid Cloudflare API token under the key named by `key`, which defaults to "api-token".
   # Optionally, it can contain an "account-id" key; if not present, account ID is auto-detected.
+  # Optional: leave `name` empty for no-API mode — the shared data plane makes
+  # no Cloudflare API calls and its tunnel's dashboard-only ingress document
+  # goes unmanaged; routing is unaffected (the in-process proxy serves every
+  # request). Per-Gateway dedicated data planes then need their own
+  # GatewayConfig credentials override (which is stored and used like any
+  # credential), or are refused.
   cloudflareCredentialsSecretRef:
     # -- Name of the Secret containing API credentials
     name: ""

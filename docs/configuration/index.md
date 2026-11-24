@@ -77,7 +77,7 @@ flowchart LR
 | `--proxy-endpoints` | CLI flag | Proxy config-API URLs (required; the chart wires this to the proxy headless Service) |
 | `tunnelID` | GatewayClassConfig | Cloudflare Tunnel UUID |
 | `accountId` | GatewayClassConfig | Optional account ID override (auto-detected otherwise) |
-| `cloudflareCredentialsSecretRef` | GatewayClassConfig | API token Secret reference |
+| `cloudflareCredentialsSecretRef` | GatewayClassConfig | API token Secret reference (optional — omit for [no-API mode](gatewayclassconfig.md#no-api-mode)) |
 | `allowSharedTunnels` | GatewayClassConfig | Permit dedicated data planes to share one tunnel across namespaces (default `false`; refused otherwise) |
 | `maxDataPlanesPerNamespace` | GatewayClassConfig | Cap on dedicated data planes per namespace (unset means no cap; `0` is rejected) |
 | `perGatewayDataPlanes.defaultGatewayConfigName` | GatewayClassConfig | GatewayConfig, in each Gateway's own namespace, that gives every Gateway of the class without its own `parametersRef` a dedicated data plane (unset keeps the shared plane) |

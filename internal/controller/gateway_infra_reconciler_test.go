@@ -73,7 +73,7 @@ func infraFixtures(t *testing.T) []runtime.Object {
 			ObjectMeta: metav1.ObjectMeta{Name: "class-config"},
 			Spec: v1alpha1.GatewayClassConfigSpec{
 				TunnelID: "99999999-9999-4999-8999-999999999999",
-				CloudflareCredentialsSecretRef: v1alpha1.SecretReference{
+				CloudflareCredentialsSecretRef: &v1alpha1.SecretReference{
 					Name: "class-credentials", Namespace: "cf-system",
 				},
 			},
