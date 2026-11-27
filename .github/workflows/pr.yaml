@@ -120,7 +120,7 @@ jobs:
         env:
           GOMEMLIMIT: 8GiB
         with:
-          version: v2.14.0
+          version: v2.15.0
           # --build-tags makes the linter compile the tag-gated test packages
           # (test/e2e, test/conformance, envtest suites) that a plain run
           # silently skips. Issue #402.
