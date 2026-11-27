@@ -114,7 +114,8 @@ type DispatchNamespaceScriptBindingGetResponse struct {
 	// [Learn more](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/importKey#format).
 	Format DispatchNamespaceScriptBindingGetResponseFormat `json:"format"`
 	// Enables Gateway identity for the binding. Requires network_id to be
-	// "cf1:network" and cannot be combined with tunnel_id.
+	// "cf1:network" and cannot be combined with tunnel_id or an explicit
+	// "cf1:vnet:<UUID>" network_id.
 	Identity DispatchNamespaceScriptBindingGetResponseIdentity `json:"identity"`
 	// Name of the Vectorize index to bind to.
 	IndexName string `json:"index_name"`
@@ -134,8 +135,9 @@ type DispatchNamespaceScriptBindingGetResponse struct {
 	Namespace string `json:"namespace"`
 	// Namespace identifier tag.
 	NamespaceID string `json:"namespace_id"`
-	// Identifier of the network to bind to. Only "cf1:network" is currently supported.
-	// Mutually exclusive with tunnel_id.
+	// Identifier of the network to bind to. Use "cf1:network" to select the account's
+	// default virtual network at runtime, or "cf1:vnet:<UUID>" to select an explicit
+	// virtual network in the Worker's account. Mutually exclusive with tunnel_id.
 	NetworkID string `json:"network_id"`
 	// The old name of the inherited binding. If set, the binding will be renamed from
 	// `old_name` to `name` in the new version. If not set, the binding will keep the
@@ -174,9 +176,13 @@ type DispatchNamespaceScriptBindingGetResponse struct {
 	// This field can have the runtime type of
 	// [[]DispatchNamespaceScriptBindingGetResponseWorkersBindingKindSecretKeyUsage].
 	Usages interface{} `json:"usages"`
-	// Identifier for the version to inherit the binding from, which can be the version
-	// ID or the literal "latest" to inherit from the latest version. Defaults to
-	// inheriting the binding from the latest version.
+	// Identifier for the version to inherit the binding from. This can be a version
+	// ID, or the literal "latest" to inherit from the most recently uploaded version,
+	// which may not be the deployed version. Defaults to "latest". Only the Workers
+	// API version endpoints under
+	// `/accounts/{account_id}/workers/workers/{worker_id}/versions` accept a version
+	// ID. Other endpoints, including script upload and script version upload, accept
+	// only "latest" and reject a version ID with error 10057.
 	VersionID string `json:"version_id"`
 	// Name of the Workflow to bind to.
 	WorkflowName string                                        `json:"workflow_name"`
@@ -288,7 +294,8 @@ func (r *DispatchNamespaceScriptBindingGetResponse) UnmarshalJSON(data []byte) (
 // [DispatchNamespaceScriptBindingGetResponseWorkersBindingKindWorkflow],
 // [DispatchNamespaceScriptBindingGetResponseWorkersBindingKindWasmModule],
 // [DispatchNamespaceScriptBindingGetResponseWorkersBindingKindVPCService],
-// [DispatchNamespaceScriptBindingGetResponseWorkersBindingKindVPCNetwork].
+// [DispatchNamespaceScriptBindingGetResponseWorkersBindingKindVPCNetwork],
+// [DispatchNamespaceScriptBindingGetResponseWorkersBindingKindWorkerLoader].
 func (r DispatchNamespaceScriptBindingGetResponse) AsUnion() DispatchNamespaceScriptBindingGetResponseUnion {
 	return r.union
 }
@@ -332,8 +339,9 @@ func (r DispatchNamespaceScriptBindingGetResponse) AsUnion() DispatchNamespaceSc
 // [DispatchNamespaceScriptBindingGetResponseWorkersBindingKindSecretKey],
 // [DispatchNamespaceScriptBindingGetResponseWorkersBindingKindWorkflow],
 // [DispatchNamespaceScriptBindingGetResponseWorkersBindingKindWasmModule],
-// [DispatchNamespaceScriptBindingGetResponseWorkersBindingKindVPCService] or
-// [DispatchNamespaceScriptBindingGetResponseWorkersBindingKindVPCNetwork].
+// [DispatchNamespaceScriptBindingGetResponseWorkersBindingKindVPCService],
+// [DispatchNamespaceScriptBindingGetResponseWorkersBindingKindVPCNetwork] or
+// [DispatchNamespaceScriptBindingGetResponseWorkersBindingKindWorkerLoader].
 type DispatchNamespaceScriptBindingGetResponseUnion interface {
 	implementsDispatchNamespaceScriptBindingGetResponse()
 }
@@ -531,6 +539,11 @@ func init() {
 			TypeFilter:         gjson.JSON,
 			Type:               reflect.TypeOf(DispatchNamespaceScriptBindingGetResponseWorkersBindingKindVPCNetwork{}),
 			DiscriminatorValue: "vpc_network",
+		},
+		apijson.UnionVariant{
+			TypeFilter:         gjson.JSON,
+			Type:               reflect.TypeOf(DispatchNamespaceScriptBindingGetResponseWorkersBindingKindWorkerLoader{}),
+			DiscriminatorValue: "worker_loader",
 		},
 	)
 }
@@ -1262,9 +1275,13 @@ type DispatchNamespaceScriptBindingGetResponseWorkersBindingKindInherit struct {
 	// `old_name` to `name` in the new version. If not set, the binding will keep the
 	// same name between versions.
 	OldName string `json:"old_name"`
-	// Identifier for the version to inherit the binding from, which can be the version
-	// ID or the literal "latest" to inherit from the latest version. Defaults to
-	// inheriting the binding from the latest version.
+	// Identifier for the version to inherit the binding from. This can be a version
+	// ID, or the literal "latest" to inherit from the most recently uploaded version,
+	// which may not be the deployed version. Defaults to "latest". Only the Workers
+	// API version endpoints under
+	// `/accounts/{account_id}/workers/workers/{worker_id}/versions` accept a version
+	// ID. Other endpoints, including script upload and script version upload, accept
+	// only "latest" and reject a version ID with error 10057.
 	VersionID string                                                                 `json:"version_id"`
 	JSON      dispatchNamespaceScriptBindingGetResponseWorkersBindingKindInheritJSON `json:"-"`
 }
@@ -2521,10 +2538,12 @@ type DispatchNamespaceScriptBindingGetResponseWorkersBindingKindVPCNetwork struc
 	// The kind of resource that the binding provides.
 	Type DispatchNamespaceScriptBindingGetResponseWorkersBindingKindVPCNetworkType `json:"type" api:"required"`
 	// Enables Gateway identity for the binding. Requires network_id to be
-	// "cf1:network" and cannot be combined with tunnel_id.
+	// "cf1:network" and cannot be combined with tunnel_id or an explicit
+	// "cf1:vnet:<UUID>" network_id.
 	Identity DispatchNamespaceScriptBindingGetResponseWorkersBindingKindVPCNetworkIdentity `json:"identity"`
-	// Identifier of the network to bind to. Only "cf1:network" is currently supported.
-	// Mutually exclusive with tunnel_id.
+	// Identifier of the network to bind to. Use "cf1:network" to select the account's
+	// default virtual network at runtime, or "cf1:vnet:<UUID>" to select an explicit
+	// virtual network in the Worker's account. Mutually exclusive with tunnel_id.
 	NetworkID string `json:"network_id"`
 	// UUID of the Cloudflare Tunnel to bind to. Mutually exclusive with network_id.
 	TunnelID string                                                                    `json:"tunnel_id"`
@@ -2571,7 +2590,8 @@ func (r DispatchNamespaceScriptBindingGetResponseWorkersBindingKindVPCNetworkTyp
 }
 
 // Enables Gateway identity for the binding. Requires network_id to be
-// "cf1:network" and cannot be combined with tunnel_id.
+// "cf1:network" and cannot be combined with tunnel_id or an explicit
+// "cf1:vnet:<UUID>" network_id.
 type DispatchNamespaceScriptBindingGetResponseWorkersBindingKindVPCNetworkIdentity string
 
 const (
@@ -2581,6 +2601,50 @@ const (
 func (r DispatchNamespaceScriptBindingGetResponseWorkersBindingKindVPCNetworkIdentity) IsKnown() bool {
 	switch r {
 	case DispatchNamespaceScriptBindingGetResponseWorkersBindingKindVPCNetworkIdentityRuntimeEmailAlpha:
+		return true
+	}
+	return false
+}
+
+type DispatchNamespaceScriptBindingGetResponseWorkersBindingKindWorkerLoader struct {
+	// A JavaScript variable name for the binding.
+	Name string `json:"name" api:"required"`
+	// The kind of resource that the binding provides.
+	Type DispatchNamespaceScriptBindingGetResponseWorkersBindingKindWorkerLoaderType `json:"type" api:"required"`
+	JSON dispatchNamespaceScriptBindingGetResponseWorkersBindingKindWorkerLoaderJSON `json:"-"`
+}
+
+// dispatchNamespaceScriptBindingGetResponseWorkersBindingKindWorkerLoaderJSON
+// contains the JSON metadata for the struct
+// [DispatchNamespaceScriptBindingGetResponseWorkersBindingKindWorkerLoader]
+type dispatchNamespaceScriptBindingGetResponseWorkersBindingKindWorkerLoaderJSON struct {
+	Name        apijson.Field
+	Type        apijson.Field
+	raw         string
+	ExtraFields map[string]apijson.Field
+}
+
+func (r *DispatchNamespaceScriptBindingGetResponseWorkersBindingKindWorkerLoader) UnmarshalJSON(data []byte) (err error) {
+	return apijson.UnmarshalRoot(data, r)
+}
+
+func (r dispatchNamespaceScriptBindingGetResponseWorkersBindingKindWorkerLoaderJSON) RawJSON() string {
+	return r.raw
+}
+
+func (r DispatchNamespaceScriptBindingGetResponseWorkersBindingKindWorkerLoader) implementsDispatchNamespaceScriptBindingGetResponse() {
+}
+
+// The kind of resource that the binding provides.
+type DispatchNamespaceScriptBindingGetResponseWorkersBindingKindWorkerLoaderType string
+
+const (
+	DispatchNamespaceScriptBindingGetResponseWorkersBindingKindWorkerLoaderTypeWorkerLoader DispatchNamespaceScriptBindingGetResponseWorkersBindingKindWorkerLoaderType = "worker_loader"
+)
+
+func (r DispatchNamespaceScriptBindingGetResponseWorkersBindingKindWorkerLoaderType) IsKnown() bool {
+	switch r {
+	case DispatchNamespaceScriptBindingGetResponseWorkersBindingKindWorkerLoaderTypeWorkerLoader:
 		return true
 	}
 	return false
@@ -2628,11 +2692,12 @@ const (
 	DispatchNamespaceScriptBindingGetResponseTypeWasmModule             DispatchNamespaceScriptBindingGetResponseType = "wasm_module"
 	DispatchNamespaceScriptBindingGetResponseTypeVPCService             DispatchNamespaceScriptBindingGetResponseType = "vpc_service"
 	DispatchNamespaceScriptBindingGetResponseTypeVPCNetwork             DispatchNamespaceScriptBindingGetResponseType = "vpc_network"
+	DispatchNamespaceScriptBindingGetResponseTypeWorkerLoader           DispatchNamespaceScriptBindingGetResponseType = "worker_loader"
 )
 
 func (r DispatchNamespaceScriptBindingGetResponseType) IsKnown() bool {
 	switch r {
-	case DispatchNamespaceScriptBindingGetResponseTypeAI, DispatchNamespaceScriptBindingGetResponseTypeAISearch, DispatchNamespaceScriptBindingGetResponseTypeAISearchNamespace, DispatchNamespaceScriptBindingGetResponseTypeMessaging, DispatchNamespaceScriptBindingGetResponseTypeAnalyticsEngine, DispatchNamespaceScriptBindingGetResponseTypeArtifacts, DispatchNamespaceScriptBindingGetResponseTypeAssets, DispatchNamespaceScriptBindingGetResponseTypeBrowser, DispatchNamespaceScriptBindingGetResponseTypeD1, DispatchNamespaceScriptBindingGetResponseTypeDataBlob, DispatchNamespaceScriptBindingGetResponseTypeDispatchNamespace, DispatchNamespaceScriptBindingGetResponseTypeDurableObjectNamespace, DispatchNamespaceScriptBindingGetResponseTypeHyperdrive, DispatchNamespaceScriptBindingGetResponseTypeInherit, DispatchNamespaceScriptBindingGetResponseTypeImages, DispatchNamespaceScriptBindingGetResponseTypeJson, DispatchNamespaceScriptBindingGetResponseTypeKVNamespace, DispatchNamespaceScriptBindingGetResponseTypeMedia, DispatchNamespaceScriptBindingGetResponseTypeMTLSCertificate, DispatchNamespaceScriptBindingGetResponseTypePlainText, DispatchNamespaceScriptBindingGetResponseTypePipelines, DispatchNamespaceScriptBindingGetResponseTypeK2, DispatchNamespaceScriptBindingGetResponseTypeQueue, DispatchNamespaceScriptBindingGetResponseTypeRatelimit, DispatchNamespaceScriptBindingGetResponseTypeR2Bucket, DispatchNamespaceScriptBindingGetResponseTypeSecretText, DispatchNamespaceScriptBindingGetResponseTypeSendEmail, DispatchNamespaceScriptBindingGetResponseTypeService, DispatchNamespaceScriptBindingGetResponseTypeTextBlob, DispatchNamespaceScriptBindingGetResponseTypeVectorize, DispatchNamespaceScriptBindingGetResponseTypeVersionMetadata, DispatchNamespaceScriptBindingGetResponseTypeSecretsStoreSecret, DispatchNamespaceScriptBindingGetResponseTypeFlagship, DispatchNamespaceScriptBindingGetResponseTypeSecretKey, DispatchNamespaceScriptBindingGetResponseTypeWorkflow, DispatchNamespaceScriptBindingGetResponseTypeWasmModule, DispatchNamespaceScriptBindingGetResponseTypeVPCService, DispatchNamespaceScriptBindingGetResponseTypeVPCNetwork:
+	case DispatchNamespaceScriptBindingGetResponseTypeAI, DispatchNamespaceScriptBindingGetResponseTypeAISearch, DispatchNamespaceScriptBindingGetResponseTypeAISearchNamespace, DispatchNamespaceScriptBindingGetResponseTypeMessaging, DispatchNamespaceScriptBindingGetResponseTypeAnalyticsEngine, DispatchNamespaceScriptBindingGetResponseTypeArtifacts, DispatchNamespaceScriptBindingGetResponseTypeAssets, DispatchNamespaceScriptBindingGetResponseTypeBrowser, DispatchNamespaceScriptBindingGetResponseTypeD1, DispatchNamespaceScriptBindingGetResponseTypeDataBlob, DispatchNamespaceScriptBindingGetResponseTypeDispatchNamespace, DispatchNamespaceScriptBindingGetResponseTypeDurableObjectNamespace, DispatchNamespaceScriptBindingGetResponseTypeHyperdrive, DispatchNamespaceScriptBindingGetResponseTypeInherit, DispatchNamespaceScriptBindingGetResponseTypeImages, DispatchNamespaceScriptBindingGetResponseTypeJson, DispatchNamespaceScriptBindingGetResponseTypeKVNamespace, DispatchNamespaceScriptBindingGetResponseTypeMedia, DispatchNamespaceScriptBindingGetResponseTypeMTLSCertificate, DispatchNamespaceScriptBindingGetResponseTypePlainText, DispatchNamespaceScriptBindingGetResponseTypePipelines, DispatchNamespaceScriptBindingGetResponseTypeK2, DispatchNamespaceScriptBindingGetResponseTypeQueue, DispatchNamespaceScriptBindingGetResponseTypeRatelimit, DispatchNamespaceScriptBindingGetResponseTypeR2Bucket, DispatchNamespaceScriptBindingGetResponseTypeSecretText, DispatchNamespaceScriptBindingGetResponseTypeSendEmail, DispatchNamespaceScriptBindingGetResponseTypeService, DispatchNamespaceScriptBindingGetResponseTypeTextBlob, DispatchNamespaceScriptBindingGetResponseTypeVectorize, DispatchNamespaceScriptBindingGetResponseTypeVersionMetadata, DispatchNamespaceScriptBindingGetResponseTypeSecretsStoreSecret, DispatchNamespaceScriptBindingGetResponseTypeFlagship, DispatchNamespaceScriptBindingGetResponseTypeSecretKey, DispatchNamespaceScriptBindingGetResponseTypeWorkflow, DispatchNamespaceScriptBindingGetResponseTypeWasmModule, DispatchNamespaceScriptBindingGetResponseTypeVPCService, DispatchNamespaceScriptBindingGetResponseTypeVPCNetwork, DispatchNamespaceScriptBindingGetResponseTypeWorkerLoader:
 		return true
 	}
 	return false
@@ -2658,7 +2723,8 @@ func (r DispatchNamespaceScriptBindingGetResponseFormat) IsKnown() bool {
 }
 
 // Enables Gateway identity for the binding. Requires network_id to be
-// "cf1:network" and cannot be combined with tunnel_id.
+// "cf1:network" and cannot be combined with tunnel_id or an explicit
+// "cf1:vnet:<UUID>" network_id.
 type DispatchNamespaceScriptBindingGetResponseIdentity string
 
 const (

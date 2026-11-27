@@ -69,18 +69,19 @@ import (
 	"github.com/cloudflare/cloudflare-go/v7/intel"
 	"github.com/cloudflare/cloudflare-go/v7/internal/requestconfig"
 	"github.com/cloudflare/cloudflare-go/v7/ips"
+	"github.com/cloudflare/cloudflare-go/v7/k2"
 	"github.com/cloudflare/cloudflare-go/v7/keyless_certificates"
 	"github.com/cloudflare/cloudflare-go/v7/kv"
 	"github.com/cloudflare/cloudflare-go/v7/leaked_credential_checks"
 	"github.com/cloudflare/cloudflare-go/v7/load_balancers"
 	"github.com/cloudflare/cloudflare-go/v7/logpush"
 	"github.com/cloudflare/cloudflare-go/v7/logs"
-	"github.com/cloudflare/cloudflare-go/v7/magic_cloud_networking"
 	"github.com/cloudflare/cloudflare-go/v7/magic_network_monitoring"
 	"github.com/cloudflare/cloudflare-go/v7/magic_transit"
 	"github.com/cloudflare/cloudflare-go/v7/managed_defense"
 	"github.com/cloudflare/cloudflare-go/v7/managed_transforms"
 	"github.com/cloudflare/cloudflare-go/v7/memberships"
+	"github.com/cloudflare/cloudflare-go/v7/monetization"
 	"github.com/cloudflare/cloudflare-go/v7/moq"
 	"github.com/cloudflare/cloudflare-go/v7/mtls_certificates"
 	"github.com/cloudflare/cloudflare-go/v7/network_interconnects"
@@ -141,8 +142,18 @@ import (
 // interacting with the cloudflare API. You should not instantiate this client
 // directly, and instead use the [NewClient] method instead.
 type Client struct {
-	Options                 []option.RequestOption
-	Accounts                *accounts.AccountService
+	Options  []option.RequestOption
+	Accounts *accounts.AccountService
+	// User API tokens can list and create Organizations, but reading, updating, or
+	// deleting an Organization requires a Global API key and your registered email
+	// address. The `cloudflare_organization` Terraform resource therefore requires a
+	// Global API key for its full lifecycle.
+	//
+	// See
+	// [Organizations authentication limitations](https://developers.cloudflare.com/fundamentals/organizations/limitations/#api-authentication)
+	// for credential compatibility by operation. Each endpoint’s **Security** section
+	// lists its supported authentication methods, with **Accepted Permissions** where
+	// applicable.
 	Organizations           *organizations.OrganizationService
 	Tenants                 *tenants.TenantService
 	OriginCACertificates    *origin_ca_certificates.OriginCACertificateService
@@ -210,7 +221,7 @@ type Client struct {
 	MagicTransit           *magic_transit.MagicTransitService
 	DDoSProtection         *ddos_protection.DDoSProtectionService
 	MagicNetworkMonitoring *magic_network_monitoring.MagicNetworkMonitoringService
-	MagicCloudNetworking   *magic_cloud_networking.MagicCloudNetworkingService
+	Monetization           *monetization.MonetizationService
 	NetworkInterconnects   *network_interconnects.NetworkInterconnectService
 	MTLSCertificates       *mtls_certificates.MTLSCertificateService
 	Pages                  *pages.PageService
@@ -475,6 +486,7 @@ type Client struct {
 	CustomPages                 *custom_pages.CustomPageService
 	SecretsStore                *secrets_store.SecretsStoreService
 	Pipelines                   *pipelines.PipelineService
+	K2                          *k2.K2Service
 	SchemaValidation            *schema_validation.SchemaValidationService
 	TokenValidation             *token_validation.TokenValidationService
 	FieldExtractors             *field_extractors.FieldExtractorService
@@ -581,7 +593,7 @@ func NewClient(opts ...option.RequestOption) (r *Client) {
 	r.MagicTransit = magic_transit.NewMagicTransitService(opts...)
 	r.DDoSProtection = ddos_protection.NewDDoSProtectionService(opts...)
 	r.MagicNetworkMonitoring = magic_network_monitoring.NewMagicNetworkMonitoringService(opts...)
-	r.MagicCloudNetworking = magic_cloud_networking.NewMagicCloudNetworkingService(opts...)
+	r.Monetization = monetization.NewMonetizationService(opts...)
 	r.NetworkInterconnects = network_interconnects.NewNetworkInterconnectService(opts...)
 	r.MTLSCertificates = mtls_certificates.NewMTLSCertificateService(opts...)
 	r.Pages = pages.NewPageService(opts...)
@@ -643,6 +655,7 @@ func NewClient(opts ...option.RequestOption) (r *Client) {
 	r.CustomPages = custom_pages.NewCustomPageService(opts...)
 	r.SecretsStore = secrets_store.NewSecretsStoreService(opts...)
 	r.Pipelines = pipelines.NewPipelineService(opts...)
+	r.K2 = k2.NewK2Service(opts...)
 	r.SchemaValidation = schema_validation.NewSchemaValidationService(opts...)
 	r.TokenValidation = token_validation.NewTokenValidationService(opts...)
 	r.FieldExtractors = field_extractors.NewFieldExtractorService(opts...)

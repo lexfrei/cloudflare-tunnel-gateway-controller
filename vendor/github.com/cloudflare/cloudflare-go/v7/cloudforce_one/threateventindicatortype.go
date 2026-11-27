@@ -36,7 +36,9 @@ func NewThreatEventIndicatorTypeService(opts ...option.RequestOption) (r *Threat
 	return
 }
 
-// Lists indicator types across multiple datasets
+// Lists the indicator types used in the datasets given by `datasetIds`, which
+// accepts dataset UUIDs or one scope value used alone. Without `datasetIds`, every
+// dataset you can read is included, analytics datasets too.
 func (r *ThreatEventIndicatorTypeService) List(ctx context.Context, params ThreatEventIndicatorTypeListParams, opts ...option.RequestOption) (res *ThreatEventIndicatorTypeListResponse, err error) {
 	opts = slices.Concat(r.Options, opts)
 	if params.AccountID.Value == "" {
@@ -95,9 +97,11 @@ func (r threatEventIndicatorTypeListResponseItemsJSON) RawJSON() string {
 type ThreatEventIndicatorTypeListParams struct {
 	// Account ID.
 	AccountID param.Field[string] `path:"account_id" api:"required"`
-	// Dataset UUIDs to query, or one standalone scope value: 'all'/'\*', 'analytics'
-	// for isAnalytics=true datasets, or 'operational' for isAnalytics=false datasets.
-	// If not provided, queries all accessible datasets.
+	// Dataset UUIDs to query, or one standalone scope value: 'operational' for
+	// readable intelligence datasets (isAnalytics=false), 'analytics' for readable
+	// analytics datasets (isAnalytics=true), or 'all'/'\*' for every readable dataset
+	// including analytics datasets. If not provided, queries all accessible datasets,
+	// including analytics datasets.
 	DatasetIDs param.Field[[]string] `query:"datasetIds"`
 }
 
