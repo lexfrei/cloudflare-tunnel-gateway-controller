@@ -402,15 +402,11 @@ github.com/go-viper/mapstructure/v2/internal/errors
 # github.com/gobwas/httphead v0.1.0
 ## explicit; go 1.15
 github.com/gobwas/httphead
-# github.com/gobwas/pool v0.2.1
-## explicit
-github.com/gobwas/pool
-github.com/gobwas/pool/internal/pmath
-github.com/gobwas/pool/pbufio
-github.com/gobwas/pool/pbytes
-# github.com/gobwas/ws v1.2.1
-## explicit; go 1.15
+# github.com/gobwas/ws v1.5.0
+## explicit; go 1.26
 github.com/gobwas/ws
+github.com/gobwas/ws/internal/pool
+github.com/gobwas/ws/internal/saferio
 github.com/gobwas/ws/wsutil
 # github.com/goccy/go-json v0.10.5
 ## explicit; go 1.19
