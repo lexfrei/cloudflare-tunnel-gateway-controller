@@ -310,6 +310,7 @@ type LogpushJobDataset string
 const (
 	LogpushJobDatasetAccessRequests                  LogpushJobDataset = "access_requests"
 	LogpushJobDatasetAccountAbuseProtectionEvents    LogpushJobDataset = "account_abuse_protection_events"
+	LogpushJobDatasetAIGatewayEvents                 LogpushJobDataset = "ai_gateway_events"
 	LogpushJobDatasetAuditLogs                       LogpushJobDataset = "audit_logs"
 	LogpushJobDatasetAuditLogsV2                     LogpushJobDataset = "audit_logs_v2"
 	LogpushJobDatasetBISOUserActions                 LogpushJobDataset = "biso_user_actions"
@@ -349,7 +350,7 @@ const (
 
 func (r LogpushJobDataset) IsKnown() bool {
 	switch r {
-	case LogpushJobDatasetAccessRequests, LogpushJobDatasetAccountAbuseProtectionEvents, LogpushJobDatasetAuditLogs, LogpushJobDatasetAuditLogsV2, LogpushJobDatasetBISOUserActions, LogpushJobDatasetCasbFindings, LogpushJobDatasetDevicePostureResults, LogpushJobDatasetDEXApplicationTests, LogpushJobDatasetDEXDeviceStateEvents, LogpushJobDatasetDLPForensicCopies, LogpushJobDatasetDNSFirewallLogs, LogpushJobDatasetDNSLogs, LogpushJobDatasetEmailSecurityAlerts, LogpushJobDatasetEmailSecurityPostDeliveryEvents, LogpushJobDatasetFirewallEvents, LogpushJobDatasetGatewayDNS, LogpushJobDatasetGatewayHTTP, LogpushJobDatasetGatewayNetwork, LogpushJobDatasetHTTPRequests, LogpushJobDatasetIPSECLogs, LogpushJobDatasetMagicBGPLogs, LogpushJobDatasetMagicIDsDetections, LogpushJobDatasetMcpPortalLogs, LogpushJobDatasetMNMFlowLogs, LogpushJobDatasetNELReports, LogpushJobDatasetNetworkAnalyticsLogs, LogpushJobDatasetPageShieldEvents, LogpushJobDatasetSinkholeHTTPLogs, LogpushJobDatasetSpectrumEvents, LogpushJobDatasetSSHLogs, LogpushJobDatasetTurnstileEvents, LogpushJobDatasetWARPConfigChanges, LogpushJobDatasetWARPToggleChanges, LogpushJobDatasetWebsocketAnalytics, LogpushJobDatasetWorkersTraceEvents, LogpushJobDatasetZarazEvents, LogpushJobDatasetZeroTrustNetworkSessions:
+	case LogpushJobDatasetAccessRequests, LogpushJobDatasetAccountAbuseProtectionEvents, LogpushJobDatasetAIGatewayEvents, LogpushJobDatasetAuditLogs, LogpushJobDatasetAuditLogsV2, LogpushJobDatasetBISOUserActions, LogpushJobDatasetCasbFindings, LogpushJobDatasetDevicePostureResults, LogpushJobDatasetDEXApplicationTests, LogpushJobDatasetDEXDeviceStateEvents, LogpushJobDatasetDLPForensicCopies, LogpushJobDatasetDNSFirewallLogs, LogpushJobDatasetDNSLogs, LogpushJobDatasetEmailSecurityAlerts, LogpushJobDatasetEmailSecurityPostDeliveryEvents, LogpushJobDatasetFirewallEvents, LogpushJobDatasetGatewayDNS, LogpushJobDatasetGatewayHTTP, LogpushJobDatasetGatewayNetwork, LogpushJobDatasetHTTPRequests, LogpushJobDatasetIPSECLogs, LogpushJobDatasetMagicBGPLogs, LogpushJobDatasetMagicIDsDetections, LogpushJobDatasetMcpPortalLogs, LogpushJobDatasetMNMFlowLogs, LogpushJobDatasetNELReports, LogpushJobDatasetNetworkAnalyticsLogs, LogpushJobDatasetPageShieldEvents, LogpushJobDatasetSinkholeHTTPLogs, LogpushJobDatasetSpectrumEvents, LogpushJobDatasetSSHLogs, LogpushJobDatasetTurnstileEvents, LogpushJobDatasetWARPConfigChanges, LogpushJobDatasetWARPToggleChanges, LogpushJobDatasetWebsocketAnalytics, LogpushJobDatasetWorkersTraceEvents, LogpushJobDatasetZarazEvents, LogpushJobDatasetZeroTrustNetworkSessions:
 		return true
 	}
 	return false
@@ -462,8 +463,7 @@ type OutputOptions struct {
 	// you are interested in.
 	FieldNames []string `json:"field_names"`
 	// If set to true, subrequests will be merged into the parent request. Only
-	// supported for the `http_requests` dataset. Not supported for account-scoped
-	// jobs.
+	// supported for the `http_requests` dataset.
 	MergeSubrequests bool `json:"merge_subrequests" api:"nullable"`
 	// Specifies the output type, such as `ndjson` or `csv`. This sets default values
 	// for the rest of the settings, depending on the chosen output type. Some
@@ -572,8 +572,7 @@ type OutputOptionsParam struct {
 	// you are interested in.
 	FieldNames param.Field[[]string] `json:"field_names"`
 	// If set to true, subrequests will be merged into the parent request. Only
-	// supported for the `http_requests` dataset. Not supported for account-scoped
-	// jobs.
+	// supported for the `http_requests` dataset.
 	MergeSubrequests param.Field[bool] `json:"merge_subrequests"`
 	// Specifies the output type, such as `ndjson` or `csv`. This sets default values
 	// for the rest of the settings, depending on the chosen output type. Some
@@ -697,6 +696,7 @@ type JobNewParamsDataset string
 const (
 	JobNewParamsDatasetAccessRequests                  JobNewParamsDataset = "access_requests"
 	JobNewParamsDatasetAccountAbuseProtectionEvents    JobNewParamsDataset = "account_abuse_protection_events"
+	JobNewParamsDatasetAIGatewayEvents                 JobNewParamsDataset = "ai_gateway_events"
 	JobNewParamsDatasetAuditLogs                       JobNewParamsDataset = "audit_logs"
 	JobNewParamsDatasetAuditLogsV2                     JobNewParamsDataset = "audit_logs_v2"
 	JobNewParamsDatasetBISOUserActions                 JobNewParamsDataset = "biso_user_actions"
@@ -736,7 +736,7 @@ const (
 
 func (r JobNewParamsDataset) IsKnown() bool {
 	switch r {
-	case JobNewParamsDatasetAccessRequests, JobNewParamsDatasetAccountAbuseProtectionEvents, JobNewParamsDatasetAuditLogs, JobNewParamsDatasetAuditLogsV2, JobNewParamsDatasetBISOUserActions, JobNewParamsDatasetCasbFindings, JobNewParamsDatasetDevicePostureResults, JobNewParamsDatasetDEXApplicationTests, JobNewParamsDatasetDEXDeviceStateEvents, JobNewParamsDatasetDLPForensicCopies, JobNewParamsDatasetDNSFirewallLogs, JobNewParamsDatasetDNSLogs, JobNewParamsDatasetEmailSecurityAlerts, JobNewParamsDatasetEmailSecurityPostDeliveryEvents, JobNewParamsDatasetFirewallEvents, JobNewParamsDatasetGatewayDNS, JobNewParamsDatasetGatewayHTTP, JobNewParamsDatasetGatewayNetwork, JobNewParamsDatasetHTTPRequests, JobNewParamsDatasetIPSECLogs, JobNewParamsDatasetMagicBGPLogs, JobNewParamsDatasetMagicIDsDetections, JobNewParamsDatasetMcpPortalLogs, JobNewParamsDatasetMNMFlowLogs, JobNewParamsDatasetNELReports, JobNewParamsDatasetNetworkAnalyticsLogs, JobNewParamsDatasetPageShieldEvents, JobNewParamsDatasetSinkholeHTTPLogs, JobNewParamsDatasetSpectrumEvents, JobNewParamsDatasetSSHLogs, JobNewParamsDatasetTurnstileEvents, JobNewParamsDatasetWARPConfigChanges, JobNewParamsDatasetWARPToggleChanges, JobNewParamsDatasetWebsocketAnalytics, JobNewParamsDatasetWorkersTraceEvents, JobNewParamsDatasetZarazEvents, JobNewParamsDatasetZeroTrustNetworkSessions:
+	case JobNewParamsDatasetAccessRequests, JobNewParamsDatasetAccountAbuseProtectionEvents, JobNewParamsDatasetAIGatewayEvents, JobNewParamsDatasetAuditLogs, JobNewParamsDatasetAuditLogsV2, JobNewParamsDatasetBISOUserActions, JobNewParamsDatasetCasbFindings, JobNewParamsDatasetDevicePostureResults, JobNewParamsDatasetDEXApplicationTests, JobNewParamsDatasetDEXDeviceStateEvents, JobNewParamsDatasetDLPForensicCopies, JobNewParamsDatasetDNSFirewallLogs, JobNewParamsDatasetDNSLogs, JobNewParamsDatasetEmailSecurityAlerts, JobNewParamsDatasetEmailSecurityPostDeliveryEvents, JobNewParamsDatasetFirewallEvents, JobNewParamsDatasetGatewayDNS, JobNewParamsDatasetGatewayHTTP, JobNewParamsDatasetGatewayNetwork, JobNewParamsDatasetHTTPRequests, JobNewParamsDatasetIPSECLogs, JobNewParamsDatasetMagicBGPLogs, JobNewParamsDatasetMagicIDsDetections, JobNewParamsDatasetMcpPortalLogs, JobNewParamsDatasetMNMFlowLogs, JobNewParamsDatasetNELReports, JobNewParamsDatasetNetworkAnalyticsLogs, JobNewParamsDatasetPageShieldEvents, JobNewParamsDatasetSinkholeHTTPLogs, JobNewParamsDatasetSpectrumEvents, JobNewParamsDatasetSSHLogs, JobNewParamsDatasetTurnstileEvents, JobNewParamsDatasetWARPConfigChanges, JobNewParamsDatasetWARPToggleChanges, JobNewParamsDatasetWebsocketAnalytics, JobNewParamsDatasetWorkersTraceEvents, JobNewParamsDatasetZarazEvents, JobNewParamsDatasetZeroTrustNetworkSessions:
 		return true
 	}
 	return false
